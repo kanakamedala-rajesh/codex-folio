@@ -1,10 +1,10 @@
-# VS CodexFolio implementation plan
+# VenkataSudha CodexFolio implementation plan
 
 Status: accepted implementation baseline; Phase 0 initiated
 
 ## 1. Outcome
 
-VS CodexFolio will be a local-first companion for the installed Codex application. Its primary answer is: **Can I continue working, and which Identity Profile should I use?**
+VenkataSudha CodexFolio will be a local-first companion for the installed Codex application. Its primary answer is: **Can I continue working, and which Identity Profile should I use?**
 
 The MVP is one native Go executable containing:
 

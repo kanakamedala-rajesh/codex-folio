@@ -22,7 +22,7 @@ Enterprise administrators and centrally managed deployments are not MVP users. F
 
 ## Product Purpose
 
-VS CodexFolio is an independent, local-first Codex companion combining a CLI identity launcher with a responsive usage dashboard. It reduces routine reauthentication, makes quota and local usage understandable across Identity Profiles, and provides a safe path for continuing interrupted repository work.
+VenkataSudha CodexFolio is an independent, local-first Codex companion combining a CLI identity launcher with a responsive usage dashboard. It reduces routine reauthentication, makes quota and local usage understandable across Identity Profiles, and provides a safe path for continuing interrupted repository work.
 
 CodexFolio always launches and complements the user's installed Codex executable. It is not a Codex client, terminal UI, session engine, model router, repository manager, or replacement authentication implementation. Codex continues to own those behaviors and may evolve independently; CodexFolio integrates through documented or explicitly experimental, version-gated adapter seams.
 
@@ -66,7 +66,7 @@ CodexFolio unifies three capabilities that neighboring account switchers or usag
 
 ## Brand Commitments
 
-- Working product name: **VS CodexFolio**.
+- Working product name: **VenkataSudha CodexFolio**.
 - CLI command: `codex-folio`.
 - Description: “Switch local Codex identities and see usage in one place.”
 - Public materials must state that CodexFolio is independent and is not affiliated with or endorsed by OpenAI.

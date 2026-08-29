@@ -1,8 +1,8 @@
-# VS CodexFolio Architecture
+# VenkataSudha CodexFolio Architecture
 
 ## Architectural style
 
-VS CodexFolio is a modular monolith: one repository, one Go module, one frontend workspace, one native executable, and one user-scoped state-owning service. It uses ports and adapters only at real external seams. The objective is a small set of deep module interfaces with high leverage and locality, not a layer or interface for every type.
+VenkataSudha CodexFolio is a modular monolith: one repository, one Go module, one frontend workspace, one native executable, and one user-scoped state-owning service. It uses ports and adapters only at real external seams. The objective is a small set of deep module interfaces with high leverage and locality, not a layer or interface for every type.
 
 The executable has several process roles selected by commands—interactive CLI, foreground launcher, on-demand/persistent service, migration helper—but they share one compiled implementation and release version.
 

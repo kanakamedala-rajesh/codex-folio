@@ -1,4 +1,4 @@
-# VS CodexFolio
+# VenkataSudha CodexFolio
 
 A local companion for launching Codex under different identities and understanding their usage without repeated routine authentication.
 

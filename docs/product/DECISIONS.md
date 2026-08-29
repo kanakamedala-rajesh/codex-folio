@@ -19,7 +19,7 @@
 15. **Collection lifecycle:** Collect on demand by default. Offer an explicit service installation for periodic snapshots and native limit alerts; never install autostart silently.
 16. **CLI launch:** The companion command opens an interactive Identity Profile selector by default and provides `launch <profile> -- <codex arguments>` for deterministic use. Shell interception is optional and reversible; the installer never replaces the Codex binary automatically.
 17. **Experimental compatibility:** Exact Continuation is available only for tested Codex versions. It requires stopped relevant processes, staged backup, App Server validation, automatic rollback, and Safe Continuation fallback.
-18. **Working name:** Use VS CodexFolio with CLI command `codex-folio`, subject to formal collision and trademark clearance before release.
+18. **Working name:** Use VenkataSudha CodexFolio with CLI command `codex-folio`, subject to formal collision and trademark clearance before release.
 19. **Analytics retention:** Store normalized metadata and aggregates in local SQLite for 13 months by default, configurable from 30 days to unlimited. Do not copy raw transcripts; provide safe export and an explicit CLI purge operation.
 20. **Profile onboarding:** `codex-folio profile add <alias>` uses browser authentication when available, falls back to device-code authentication, and supports explicit `--browser` and `--device-code` overrides. Ordinary switching reuses Codex-managed persistent authentication.
 21. **Local identity management:** The dashboard supports create, read, update, and delete operations on local Identity Profiles with appropriate confirmation and recovery controls. These operations do not modify remote user or workspace information.

@@ -1,6 +1,6 @@
-# VS CodexFolio
+# VenkataSudha CodexFolio
 
-VS CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation.
+VenkataSudha CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation.
 
 The project is in Phase 0: the product and architecture baseline has been promoted, but application implementation has not started.
 
@@ -14,3 +14,15 @@ The project is in Phase 0: the product and architecture baseline has been promot
 - [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md): modular-monolith architecture.
 - [`docs/design/DASHBOARD-BRIEF.md`](docs/design/DASHBOARD-BRIEF.md): comp-first dashboard direction.
 - [`docs/research/`](docs/research/): supporting technical research.
+
+## Development
+
+The Phase 0 scaffold uses pinned Go 1.27.0, Node.js 24.18.0, and npm 11.16.0
+toolchains. See [`docs/development/BUILDING.md`](docs/development/BUILDING.md)
+for setup, focused checks, version output, and the canonical verification
+command:
+
+```sh
+npm --prefix web ci
+node scripts/verify.mjs
+```

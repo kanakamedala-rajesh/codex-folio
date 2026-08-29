@@ -1,4 +1,4 @@
-# VS CodexFolio acceptance criteria
+# VenkataSudha CodexFolio acceptance criteria
 
 Status: accepted implementation evidence contract
 

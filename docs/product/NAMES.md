@@ -24,13 +24,13 @@ The user did not accept this as a final name: `vsharbor` loses the direct relati
 
 ## Revised shortlist
 
-### Adopted working name: VS CodexFolio
+### Adopted working name: VenkataSudha CodexFolio
 
 CLI command: `codex-folio`
 
 “Folio” describes a portfolio of Codex identities, work contexts, and usage views. The executable retains an obvious Codex relationship and remains suitable for frequent terminal use.
 
-> VS CodexFolio — switch local Codex identities and see usage in one place.
+> VenkataSudha CodexFolio — switch local Codex identities and see usage in one place.
 
 A narrow current search found no obvious exact software, GitHub, or package collision. The name and command are adopted for planning, subject to release-time package, domain, and trademark checks.
 
