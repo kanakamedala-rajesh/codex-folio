@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   errorCodeFailures,
+  gitPath,
   goConstantFailures,
   historicalRetiredCodeFailures,
 } from "./check-error-codes.mjs";
@@ -18,6 +19,17 @@ const validRegistry = {
     },
   ],
 };
+
+test("Git object paths use forward slashes on every host", () => {
+  assert.equal(
+    gitPath("internal\\apperrors\\codes.json"),
+    "internal/apperrors/codes.json",
+  );
+  assert.equal(
+    gitPath("internal/apperrors/codes.json"),
+    "internal/apperrors/codes.json",
+  );
+});
 
 test("a well-formed registry is accepted", () => {
   assert.deepEqual(errorCodeFailures(validRegistry), []);

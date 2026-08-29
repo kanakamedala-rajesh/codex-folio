@@ -168,8 +168,12 @@ export function historicalRetiredCodeFailures(registry, historicalRegistries) {
   });
 }
 
+export function gitPath(path) {
+  return path.replaceAll("\\", "/");
+}
+
 function registryHistory(root, path) {
-  const repositoryPath = relative(root, path);
+  const repositoryPath = gitPath(relative(root, path));
   const revisions = runGit(root, ["rev-list", "HEAD", "--", repositoryPath])
     .trim()
     .split("\n")
