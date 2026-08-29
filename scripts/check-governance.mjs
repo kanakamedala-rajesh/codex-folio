@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -130,7 +130,7 @@ function brokenLocalLinks(markdownFile) {
     const pathTarget = decodeURIComponent(rawTarget.split("#", 1)[0]);
     const resolvedTarget = resolve(dirname(markdownFile), pathTarget);
     if (
-      !resolvedTarget.startsWith(`${rootDirectory}/`) &&
+      !resolvedTarget.startsWith(`${rootDirectory}${sep}`) &&
       resolvedTarget !== rootDirectory
     ) {
       failures.push(
