@@ -30,7 +30,5 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             .nvmrc
-      - name: Install the locked frontend dependencies
-        run: npm --prefix web ci
       - name: Run the repository verification contract
         run: node scripts/verify.mjs

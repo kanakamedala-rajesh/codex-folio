@@ -19,13 +19,19 @@ The versions are recorded in `.tool-versions`, `.nvmrc`, `go.mod`, and
 `check:tooling` command fails with an actionable message when the pinned Node
 or npm version is unavailable.
 
-## Install and verify
+## Verify a clean checkout
 
-From the repository root, install the exact dependency lock state once:
+From the repository root, run the single canonical verification command:
 
 ```sh
-npm --prefix web ci
+node scripts/verify.mjs
 ```
+
+The verifier installs the exact frontend dependency lock state with `npm ci`;
+no separate dependency-install command is required. It does not require an
+Identity Profile, Codex authentication, application credentials, provider
+access, signing material, telemetry infrastructure, or production
+configuration.
 
 The versioned browser contract is generated from `api/openapi.json`. The
 canonical version value is `internal/buildinfo/version.txt`; the generator
@@ -52,12 +58,6 @@ node scripts/generate-openapi.mjs --check
 node --test scripts/generate-openapi.test.mjs
 ```
 
-Then run the scaffold verification entry point:
-
-```sh
-node scripts/verify.mjs
-```
-
 The verification command runs the OpenAPI drift check and generator tests;
 architecture and stable error-code checks with focused fixture tests; Go
 formatting, vet, unit tests, a native development build, and compile-only Linux
@@ -67,6 +67,14 @@ and the repository governance and local documentation-link check. It uses the
 same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
 directories.
+
+Successful output ends with a Phase 0 summary that identifies each completed
+gate with `[PASS]` and each intentionally unavailable qualification with
+`[SKIP]`. The expected skips are native runtime qualification for the
+compile-only target builds and stable signing, attestation, notarization, and
+release eligibility. The verifier executes the native development binary and
+checks its JSON version, revision, build classification, and working-tree
+identity before reporting the build gate as passed.
 
 Continuous integration runs this same command for pull requests and changes to
 `main`. Its Go and npm caches use the pinned tool versions and checked-in module
@@ -110,11 +118,11 @@ node --test scripts/release.test.mjs
 The dry run builds one archive for each Tier 1 target below
 `build/releases/<version>-<build-class>/`:
 
-| Target | Archive |
-| --- | --- |
-| Linux AMD64 | `codex-folio-<version>-<build-class>-linux-amd64.tar.gz` |
-| Windows AMD64 | `codex-folio-<version>-<build-class>-windows-amd64.zip` |
-| macOS ARM64 | `codex-folio-<version>-<build-class>-macos-arm64.tar.gz` |
+| Target        | Archive                                                  |
+| ------------- | -------------------------------------------------------- |
+| Linux AMD64   | `codex-folio-<version>-<build-class>-linux-amd64.tar.gz` |
+| Windows AMD64 | `codex-folio-<version>-<build-class>-windows-amd64.zip`  |
+| macOS ARM64   | `codex-folio-<version>-<build-class>-macos-arm64.tar.gz` |
 
 Development and prerelease names include their build classification. A stable
 name would omit that suffix, but stable archives fail closed until the
@@ -141,6 +149,7 @@ Frontend:
 
 ```sh
 npm --prefix web run check:tooling
+npm --prefix web ci
 npm --prefix web run format:check
 npm --prefix web run lint
 npm --prefix web run typecheck
@@ -170,6 +179,24 @@ Pull-request commits are checked separately for DCO sign-off using the same
 `npm run test` builds twice, checks the observable application shell and local
 asset references, and compares the two output trees byte-for-byte. No hosted
 font, CDN, or runtime package download is required by the resulting assets.
+
+## Common failures
+
+- A pinned-toolchain failure reports the required and detected Go, Node.js, or
+  npm version. Install the versions from `.tool-versions` and `.nvmrc`, then
+  rerun the canonical command.
+- An `npm ci` failure means the checked-in lock state cannot be installed. Do
+  not replace it with an unlocked install; resolve the package/lock mismatch or
+  registry connectivity problem and rerun verification.
+- An OpenAPI drift failure names the generated artifact that differs. Run
+  `node scripts/generate-openapi.mjs`, review the contract change, and commit
+  both generated outputs together.
+- A tracked-source or lockfile immutability failure means a verification step
+  changed a tracked file. Inspect `git status --short`; generated build output
+  must remain in the ignored `build/` or `web/dist/` paths.
+- A target build is compile-only even when its target matches the host. Do not
+  interpret that evidence as native process, vault, service, installer, or
+  runtime qualification.
 
 ## Version identity
 

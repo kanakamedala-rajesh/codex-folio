@@ -34,17 +34,18 @@ work; coordinate with maintainers before rewriting a shared branch.
 
 ## Build and verification
 
-Install the pinned prerequisites and frontend lock state described in
-[`docs/development/BUILDING.md`](docs/development/BUILDING.md), then run:
+Install the pinned toolchains described in
+[`docs/development/BUILDING.md`](docs/development/BUILDING.md), then run the
+single verification command:
 
 ```sh
-npm --prefix web ci
 node scripts/verify.mjs
 ```
 
-The verification command must pass without application secrets and must leave
-tracked source unchanged. Include focused tests for behavior changed at an
-accepted public seam. Do not bypass a failed check or commit generated drift.
+The verification command installs the locked frontend dependencies itself. It
+must pass without application secrets and must leave tracked source unchanged.
+Include focused tests for behavior changed at an accepted public seam. Do not
+bypass a failed check or commit generated drift.
 
 ## Pull requests
 
