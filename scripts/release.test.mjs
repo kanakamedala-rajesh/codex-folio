@@ -8,7 +8,7 @@ import {
   readdirSync,
   rmSync,
 } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -186,6 +186,12 @@ test("archives above the review threshold are explicitly flagged", () => {
   assert.equal(classifyArchiveSize(ARCHIVE_SIZE_REVIEW_LIMIT_BYTES + 1), "review-required");
 });
 
+test("archive entry paths use portable separators", () => {
+  assert.equal(archiveEntryPath("release\\codex-folio"), "release/codex-folio");
+  assert.equal(archiveEntryPath("release/codex-folio"), "release/codex-folio");
+  assert.equal(archiveEntryPath("release/codex-folio\r"), "release/codex-folio");
+});
+
 function runRelease(outputDirectory, buildClass = "development") {
   return spawnSync(
     process.execPath,
@@ -207,7 +213,7 @@ function listArchiveEntries(path, format) {
     const extractedDirectory = extractZipOnWindows(path);
     try {
       return collectFiles(extractedDirectory)
-        .map((file) => relative(extractedDirectory, file).split(sep).join("/"))
+        .map((file) => archiveEntryPath(relative(extractedDirectory, file)))
         .sort();
     } finally {
       rmSync(extractedDirectory, { recursive: true, force: true });
@@ -218,7 +224,15 @@ function listArchiveEntries(path, format) {
       ? spawnSync("unzip", ["-Z1", path], { encoding: "utf8" })
       : spawnSync("tar", ["-tzf", path], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim().split("\n").filter(Boolean);
+  return result.stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(archiveEntryPath);
+}
+
+function archiveEntryPath(path) {
+  return path.replaceAll("\\", "/").replace(/\r$/, "");
 }
 
 function readArchiveMember(path, format, member) {
