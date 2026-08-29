@@ -38,6 +38,8 @@ try {
   run("go", ["test", ...goPackages]);
   run("node", ["scripts/build.mjs", "--build-class", "development"]);
   run("node", ["--test", "scripts/build-targets.test.mjs"]);
+  run("node", ["--test", "scripts/release.test.mjs"]);
+  run("node", ["scripts/release.mjs", "--dry-run", "--build-class", "development"]);
   run("node", ["--test", "scripts/check-dco.test.mjs"]);
   run("node", ["scripts/check-governance.mjs"]);
 

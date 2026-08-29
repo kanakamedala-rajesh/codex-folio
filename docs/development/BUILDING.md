@@ -100,6 +100,43 @@ Explicit target output is written below `build/targets/<target>/`. These builds
 prove the portable compilation contract only; they do not qualify native
 process, vault, service, installer, or runtime behavior on the target platform.
 
+Archive dry run:
+
+```sh
+node scripts/release.mjs --dry-run --build-class development
+node --test scripts/release.test.mjs
+```
+
+The dry run builds one archive for each Tier 1 target below
+`build/releases/<version>-<build-class>/`:
+
+| Target | Archive |
+| --- | --- |
+| Linux AMD64 | `codex-folio-<version>-<build-class>-linux-amd64.tar.gz` |
+| Windows AMD64 | `codex-folio-<version>-<build-class>-windows-amd64.zip` |
+| macOS ARM64 | `codex-folio-<version>-<build-class>-macos-arm64.tar.gz` |
+
+Development and prerelease names include their build classification. A stable
+name would omit that suffix, but stable archives fail closed until the
+mandatory signing, attestation, and platform notarization gates exist. Every
+archive contains its executable, the applicable inspectable installer helper,
+`BUILD-INFO.json`, `INSTALL.md`, `LICENSE`, and `NOTICE`. The output directory
+also contains `SHA256SUMS`, a deterministic dependency-license inventory,
+CycloneDX SBOM, a machine-readable provenance placeholder, a signing-status
+record, and a release manifest.
+
+The current Go module has no external modules. If a Go dependency is added
+without reviewed license metadata, release generation fails closed instead of
+silently omitting it from the inventory.
+
+Archive bytes are reproducible for the same source and lock state: entries are
+sorted, archive timestamps and ownership are fixed, build timestamps are not
+recorded, and the Go build uses `-trimpath`. The manifest reports
+`compile-only; no native runtime qualification`; an archive over 50 MB is
+explicitly marked for review. The dry run never executes an installer, creates
+a GitHub release, uploads an artifact, or contacts a signing/provenance
+service.
+
 Frontend:
 
 ```sh
@@ -156,8 +193,8 @@ of `clean`, `dirty`, or `unknown`.
 
 ## Current limitations
 
-Phase 0 proves a native development build on the host and compile-only builds
-for Linux AMD64, Windows AMD64, and macOS ARM64. Release archive dry runs and
-the secure local foundation are separate Phase 0 tickets or later milestones.
-Compile evidence here does not claim native runtime qualification on another
-operating system.
+Phase 0 proves a native development build on the host, compile-only builds for
+Linux AMD64, Windows AMD64, and macOS ARM64, and an unsigned archive dry run
+for those targets. The secure local foundation is a separate milestone.
+Compile and archive evidence here does not claim native runtime qualification,
+stable signing, notarization, or production release readiness.
