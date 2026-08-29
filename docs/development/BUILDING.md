@@ -27,18 +27,44 @@ From the repository root, install the exact dependency lock state once:
 npm --prefix web ci
 ```
 
+The versioned browser contract is generated from `api/openapi.json`. The
+canonical version value is `internal/buildinfo/version.txt`; the generator
+requires the OpenAPI document's required `info.version` declaration to match
+that value, while the API namespace remains `v1` and can evolve independently
+when compatibility policy requires it. The generator is the repository-owned
+`codex-folio` OpenAPI generator at version `1.0.0`; its input and checked-in
+outputs are fixed by the script, and it uses the pinned Go toolchain's `gofmt`
+for the Go representation.
+
+To regenerate the contract artifacts after changing the source contract:
+
+```sh
+node scripts/generate-openapi.mjs
+```
+
+The generated Go transport representation is written to
+`internal/httpapi/openapi.gen.go`; the generated TypeScript client and types
+are written to `web/src/generated/openapi.ts`. Check for drift without
+writing files with:
+
+```sh
+node scripts/generate-openapi.mjs --check
+node --test scripts/generate-openapi.test.mjs
+```
+
 Then run the scaffold verification entry point:
 
 ```sh
 node scripts/verify.mjs
 ```
 
-The verification command runs Go formatting, vet, unit tests, and a native
-build; frontend formatting, linting, type-checking, tests, and build; a
-self-contained frontend smoke check; and the repository governance and local
-documentation-link check. It uses the same checked-in package lock and fails if
-tracked source changes during verification. Build output is written under
-ignored `build/` and `web/dist/` directories.
+The verification command runs the OpenAPI drift check and generator tests, Go
+formatting, vet, unit tests, and a native build; frontend formatting, linting,
+type-checking, tests, and build; a self-contained frontend smoke check; and
+the repository governance and local documentation-link check. It uses the
+same checked-in package lock and fails if tracked source changes during
+verification. Build output is written under ignored `build/` and `web/dist/`
+directories.
 
 ## Focused checks
 
@@ -99,7 +125,7 @@ of `clean`, `dirty`, or `unknown`.
 ## Current limitations
 
 Phase 0 proves the native build contract on the host running the command. The
-Linux AMD64, Windows AMD64, and macOS ARM64 target matrix, OpenAPI generation,
-release archive dry runs, and the secure local foundation are separate Phase 0
-tickets or later milestones. Compile evidence here does not claim native
-runtime qualification on another operating system.
+Linux AMD64, Windows AMD64, and macOS ARM64 target matrix, release archive dry
+runs, and the secure local foundation are separate Phase 0 tickets or later
+milestones. Compile evidence here does not claim native runtime qualification
+on another operating system.

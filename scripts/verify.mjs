@@ -21,6 +21,9 @@ try {
     throw new Error("frontend dependencies are missing; run npm --prefix web ci first");
   }
 
+  run("node", ["scripts/generate-openapi.mjs", "--check"]);
+  run("node", ["--test", "scripts/generate-openapi.test.mjs"]);
+
   const goFiles = findGoFiles(rootDirectory);
   const formattedGoFiles = goFiles.length === 0 ? "" : capture("gofmt", ["-l", ...goFiles]);
   if (formattedGoFiles.trim() !== "") {

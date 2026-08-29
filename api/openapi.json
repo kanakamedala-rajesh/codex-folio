@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "MetadataResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "description": "The versioned browser boundary exposed by the service.",
+          "type": "string"
+        },
+        "contract_version": {
+          "description": "The semver revision of this OpenAPI contract.",
+          "type": "string"
+        },
+        "product": {
+          "description": "The product name that owns this local API.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "contract_version",
+        "product"
+      ],
+      "type": "object"
+    }
+  },
+  "info": {
+    "description": "The versioned, non-product browser boundary for CodexFolio.",
+    "title": "CodexFolio Local API",
+    "version": "0.0.1-alpha"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/meta": {
+      "get": {
+        "operationId": "getMetadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/$defs/MetadataResponse"
+                }
+              }
+            },
+            "description": "Returns non-product API metadata."
+          }
+        }
+      }
+    }
+  },
+  "x-codex-folio-api-version": "v1"
+}

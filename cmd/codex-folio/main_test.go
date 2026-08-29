@@ -14,7 +14,7 @@ func TestVersionJSONIsMachineReadable(t *testing.T) {
 	want := buildinfo.Metadata{
 		Product:        buildinfo.ProductName,
 		Command:        buildinfo.CommandName,
-		Version:        "0.0.1-alpha",
+		Version:        buildinfo.Version,
 		SourceRevision: "abc1234",
 		BuildClass:     "development",
 		Dirty:          "clean",
@@ -43,7 +43,7 @@ func TestVersionHumanOutputContainsBuildIdentity(t *testing.T) {
 	metadata := buildinfo.Metadata{
 		Product:        buildinfo.ProductName,
 		Command:        buildinfo.CommandName,
-		Version:        "0.0.1-alpha",
+		Version:        buildinfo.Version,
 		SourceRevision: "abc1234",
 		BuildClass:     "development",
 		Dirty:          "dirty",
@@ -55,7 +55,7 @@ func TestVersionHumanOutputContainsBuildIdentity(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"VenkataSudha CodexFolio 0.0.1-alpha",
+		buildinfo.ProductName + " " + buildinfo.Version,
 		"source revision: abc1234",
 		"build classification: development",
 		"working tree: dirty",
