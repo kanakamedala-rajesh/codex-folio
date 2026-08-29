@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 )
 
@@ -78,5 +79,8 @@ func TestUnknownCommandUsesUsageExitCode(t *testing.T) {
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte("unknown command")) {
 		t.Fatalf("stderr = %q, want unknown-command diagnostic", stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.CLIUsage)) {
+		t.Fatalf("stderr = %q, want stable error code %q", stderr.String(), apperrors.CLIUsage)
 	}
 }

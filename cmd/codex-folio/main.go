@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 )
 
@@ -32,7 +33,7 @@ func run(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata) i
 		writeUsage(stdout, metadata)
 		return exitSuccess
 	default:
-		fmt.Fprintf(stderr, "codex-folio: unknown command %q\n", command)
+		fmt.Fprintf(stderr, "codex-folio [%s]: unknown command %q\n", apperrors.CLIUsage, command)
 		fmt.Fprintln(stderr, "Run 'codex-folio --help' for usage.")
 		return exitUsage
 	}
@@ -45,14 +46,14 @@ func runVersion(args []string, stdout, stderr io.Writer, metadata buildinfo.Meta
 			jsonOutput = true
 			continue
 		}
-		fmt.Fprintf(stderr, "codex-folio: unexpected version argument %q\n", arg)
+		fmt.Fprintf(stderr, "codex-folio [%s]: unexpected version argument %q\n", apperrors.CLIUsage, arg)
 		return exitUsage
 	}
 
 	if jsonOutput {
 		encoded, err := metadata.JSON()
 		if err != nil {
-			fmt.Fprintf(stderr, "codex-folio: could not encode version metadata: %v\n", err)
+			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode version metadata: %v\n", apperrors.CLIInternal, err)
 			return exitFailure
 		}
 		_, _ = fmt.Fprintln(stdout, string(encoded))

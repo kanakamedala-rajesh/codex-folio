@@ -112,3 +112,7 @@ docs/
 ```
 
 `internal/platform`, `internal/store`, and `internal/httpapi` contain adapters and composition support; domain policy must not migrate into them.
+Every new top-level `internal` package must be classified by the repository
+architecture check before it can enter the build. Unclassified packages fail
+verification so a newly named adapter cannot silently acquire feature-module
+dependency privileges.

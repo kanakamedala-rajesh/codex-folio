@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "codes": [
+    {
+      "code": "CF_CLI_USAGE",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CLI_INTERNAL",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    }
+  ]
+}

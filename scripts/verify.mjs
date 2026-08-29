@@ -23,6 +23,10 @@ try {
 
   run("node", ["scripts/generate-openapi.mjs", "--check"]);
   run("node", ["--test", "scripts/generate-openapi.test.mjs"]);
+  run("node", ["scripts/check-architecture.mjs"]);
+  run("node", ["--test", "scripts/check-architecture.test.mjs"]);
+  run("node", ["scripts/check-error-codes.mjs"]);
+  run("node", ["--test", "scripts/check-error-codes.test.mjs"]);
 
   const goFiles = findGoFiles(rootDirectory);
   const formattedGoFiles = goFiles.length === 0 ? "" : capture("gofmt", ["-l", ...goFiles]);

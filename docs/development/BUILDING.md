@@ -58,10 +58,11 @@ Then run the scaffold verification entry point:
 node scripts/verify.mjs
 ```
 
-The verification command runs the OpenAPI drift check and generator tests, Go
+The verification command runs the OpenAPI drift check and generator tests;
+architecture and stable error-code checks with focused fixture tests; Go
 formatting, vet, unit tests, and a native build; frontend formatting, linting,
-type-checking, tests, and build; a self-contained frontend smoke check; and
-the repository governance and local documentation-link check. It uses the
+type-checking, tests, and build; a self-contained frontend smoke check; and the
+repository governance and local documentation-link check. It uses the
 same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
 directories.
@@ -93,6 +94,15 @@ Governance:
 ```sh
 node scripts/check-governance.mjs
 node --test scripts/check-dco.test.mjs
+```
+
+Architecture and compatibility guardrails:
+
+```sh
+node scripts/check-architecture.mjs
+node --test scripts/check-architecture.test.mjs
+node scripts/check-error-codes.mjs
+node --test scripts/check-error-codes.test.mjs
 ```
 
 Pull-request commits are checked separately for DCO sign-off using the same
