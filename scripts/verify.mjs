@@ -208,7 +208,12 @@ function run(command, args) {
 }
 
 function runNpm(args) {
-  run(process.platform === "win32" ? "npm.cmd" : "npm", args);
+  if (process.platform === "win32") {
+    run(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm.cmd", ...args]);
+    return;
+  }
+
+  run("npm", args);
 }
 
 function gitStatus() {
