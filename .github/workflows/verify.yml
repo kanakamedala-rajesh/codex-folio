@@ -10,8 +10,18 @@ permissions:
 
 jobs:
   verify:
-    name: Repository verification and Tier 1 compile evidence
-    runs-on: ubuntu-latest
+    name: Repository verification (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Linux AMD64
+            runner: ubuntu-latest
+          - target: Windows AMD64
+            runner: windows-latest
+          - target: macOS ARM64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out the source revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

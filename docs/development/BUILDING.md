@@ -77,9 +77,12 @@ checks its JSON version, revision, build classification, and working-tree
 identity before reporting the build gate as passed.
 
 Continuous integration runs this same command for pull requests and changes to
-`main`. Its Go and npm caches use the pinned tool versions and checked-in module
-or lock state. No application identity, credential, provider endpoint, signing
-secret, telemetry endpoint, or production service is available to the job.
+`main` on Linux AMD64, Windows AMD64, and macOS ARM64 hosted runners. Every job
+also compile-checks the other Tier 1 targets, records native versus
+cross-compiled build mode, and retains the compile-only qualification. Its Go
+and npm caches use the pinned tool versions and checked-in module or lock state.
+No application identity, credential, provider endpoint, signing secret,
+telemetry endpoint, or production service is available to any job.
 
 ## Focused checks
 

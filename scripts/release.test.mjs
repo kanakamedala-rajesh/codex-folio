@@ -8,7 +8,7 @@ import {
   readdirSync,
   rmSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -203,17 +203,68 @@ function sha256(buffer) {
 }
 
 function listArchiveEntries(path, format) {
-  const result = format === "zip"
-    ? spawnSync("unzip", ["-Z1", path], { encoding: "utf8" })
-    : spawnSync("tar", ["-tzf", path], { encoding: "utf8" });
+  if (format === "zip" && process.platform === "win32") {
+    const extractedDirectory = extractZipOnWindows(path);
+    try {
+      return collectFiles(extractedDirectory)
+        .map((file) => relative(extractedDirectory, file).split(sep).join("/"))
+        .sort();
+    } finally {
+      rmSync(extractedDirectory, { recursive: true, force: true });
+    }
+  }
+  const result =
+    format === "zip"
+      ? spawnSync("unzip", ["-Z1", path], { encoding: "utf8" })
+      : spawnSync("tar", ["-tzf", path], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim().split("\n").filter(Boolean);
 }
 
 function readArchiveMember(path, format, member) {
-  const result = format === "zip"
-    ? spawnSync("unzip", ["-p", path, member], { encoding: "utf8" })
-    : spawnSync("tar", ["-xOzf", path, member], { encoding: "utf8" });
+  if (format === "zip" && process.platform === "win32") {
+    const extractedDirectory = extractZipOnWindows(path);
+    try {
+      return readFileSync(
+        join(extractedDirectory, ...member.split("/")),
+        "utf8",
+      );
+    } finally {
+      rmSync(extractedDirectory, { recursive: true, force: true });
+    }
+  }
+  const result =
+    format === "zip"
+      ? spawnSync("unzip", ["-p", path, member], { encoding: "utf8" })
+      : spawnSync("tar", ["-xOzf", path, member], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout;
+}
+
+function extractZipOnWindows(path) {
+  const extractedDirectory = mkdtempSync(
+    join(tmpdir(), "codex-folio-zip-test-"),
+  );
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+      path,
+      extractedDirectory,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  return extractedDirectory;
+}
+
+function collectFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? collectFiles(path) : [path];
+  });
 }

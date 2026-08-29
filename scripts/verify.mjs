@@ -21,10 +21,10 @@ try {
 
   gate("pinned Go, Node.js, and npm toolchains", () => {
     checkGoToolchain();
-    run("npm", ["--prefix", "web", "run", "check:tooling"]);
+    runNpm(["--prefix", "web", "run", "check:tooling"]);
   });
   gate("locked frontend dependency installation", () => {
-    run("npm", ["--prefix", "web", "ci"]);
+    runNpm(["--prefix", "web", "ci"]);
     if (!existsSync(join(webDirectory, "node_modules"))) {
       throw new Error("npm ci completed without creating web/node_modules");
     }
@@ -76,11 +76,11 @@ try {
   gate(
     "frontend format, lint, type-check, test, build, and offline assets",
     () => {
-      run("npm", ["--prefix", "web", "run", "format:check"]);
-      run("npm", ["--prefix", "web", "run", "lint"]);
-      run("npm", ["--prefix", "web", "run", "typecheck"]);
-      run("npm", ["--prefix", "web", "run", "test"]);
-      run("npm", ["--prefix", "web", "run", "build"]);
+      runNpm(["--prefix", "web", "run", "format:check"]);
+      runNpm(["--prefix", "web", "run", "lint"]);
+      runNpm(["--prefix", "web", "run", "typecheck"]);
+      runNpm(["--prefix", "web", "run", "test"]);
+      runNpm(["--prefix", "web", "run", "build"]);
       run("node", ["web/scripts/smoke.mjs"]);
     },
   );
@@ -205,6 +205,10 @@ function run(command, args) {
       `${command} exited with status ${result.status ?? "unknown"}`,
     );
   }
+}
+
+function runNpm(args) {
+  run(process.platform === "win32" ? "npm.cmd" : "npm", args);
 }
 
 function gitStatus() {
