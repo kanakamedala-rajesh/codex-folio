@@ -1,0 +1,3 @@
+# Gate handoffs before capacity ranking
+
+CodexFolio will first exclude profiles it can directly determine are unusable, then rank the remainder by provider-reported remaining capacity, reset proximity, and explicit user preference. Hard gates are limited to companion-observable facts: the target Identity Profile and Identity Home exist, Codex reports usable authentication, and a requested experimental adapter supports the installed Codex version. Model, tool, repository, and task suitability remain Codex and user concerns; CodexFolio may show factual cautions but must not pretend to validate them.

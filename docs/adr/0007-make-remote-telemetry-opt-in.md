@@ -1,0 +1,3 @@
+# Make remote telemetry opt-in
+
+CodexFolio handles identity and usage metadata, so remote operational telemetry will be disabled by default and enabled only through explicit consent with a public redacted event schema. The client uses no third-party analytics SDK and sends only allowlisted CodexFolio product events to a project-controlled endpoint; if that endpoint and policy are not ready, collection is omitted. Independently configurable rotating local diagnostics remain enabled by default for fourteen days up to 50 MB because they contain stable operational component/error information rather than profile, workspace, project, session, credential, command, or Codex usage content.

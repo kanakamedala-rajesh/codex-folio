@@ -1,0 +1,3 @@
+# Make Signal Rail comps the frontend acceptance reference
+
+The dashboard is comp-first because its capacity hierarchy, dense evidence, responsive actions, provenance, and accessibility requirements are too interdependent to discover through a generic component grid. The selected Signal Rail overview is compositional option one, and production UI work waits for route/state targets covering wide and narrow layouts, core routes, handoff, and degraded/recovery states. Implementation explicitly uses the available UI/UX shaping, comp-to-code, React-quality, and browser-QA skills, and finish review compares the rendered product against the accepted comps while enforcing WCAG and truthful data semantics.

@@ -1,0 +1,3 @@
+# Separate Selected Profile from running launches
+
+CodexFolio will persist one Selected Profile shared by its dashboard and interactive CLI, but each Managed Launch permanently records the Launch Profile with which the installed Codex process started. Changing Selected Profile updates the single-profile Dashboard Scope and the default highlighted choice for future interactive launches; it never mutates a running process. Deterministic `launch <profile>` calls do not alter global selection, preventing automation from silently changing the user's dashboard or default. Combined Dashboard Scope is presentation-only and cannot become Selected Profile.

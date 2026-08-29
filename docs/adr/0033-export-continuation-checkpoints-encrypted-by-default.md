@@ -1,0 +1,3 @@
+# Export continuation checkpoints encrypted by default
+
+Portable Safe Continuation artifacts may contain approved implementation context even after transcript content and secrets are removed. Explicit export will therefore produce a versioned encrypted `.cfolio` container by default. It contains only the sanitized checkpoint and non-sensitive format metadata, never credentials, Identity Homes, repository files, raw transcripts, or raw diffs. Plain JSON is available only after explicit `--plaintext` acknowledgement and preview and is distinct from analytics JSON/CSV and portable configuration bundles.

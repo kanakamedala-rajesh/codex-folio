@@ -1,0 +1,3 @@
+# Keep experiments off the stable-core critical path
+
+The stable MVP is defined by dependable isolated-profile launching, supported read-only analytics, guaranteed Safe Continuation, optional service/alerts, and production hardening. Shared Work Home and Exact Continuation rely on version-sensitive seams and ship disabled by default only when their compatibility entries pass stricter qualification. Failure to qualify an experiment cannot block the core release. This preserves the requested experimental capability without making an undocumented adapter the reliability ceiling of the entire companion.

@@ -1,0 +1,3 @@
+# Ship archive-first native releases
+
+The MVP will distribute one self-contained native executable archive per tier-one OS and architecture, accompanied by a CLI-driven installer script. The executable embeds the SPA and provides the CLI and service, so archive distribution does not reduce product capability or create a hosted web dependency. This avoids multiplying early release risk across MSI, PKG, DEB, RPM, Homebrew, and WinGet pipelines. Releases still carry checksums, signatures, SBOM, provenance, and platform-appropriate signing or notarization; native package formats and signature-verifying self-update may follow after the archive pipeline is stable.
