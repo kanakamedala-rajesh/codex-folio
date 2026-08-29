@@ -60,12 +60,18 @@ node scripts/verify.mjs
 
 The verification command runs the OpenAPI drift check and generator tests;
 architecture and stable error-code checks with focused fixture tests; Go
-formatting, vet, unit tests, and a native build; frontend formatting, linting,
-type-checking, tests, and build; a self-contained frontend smoke check; and the
-repository governance and local documentation-link check. It uses the
+formatting, vet, unit tests, a native development build, and compile-only Linux
+AMD64, Windows AMD64, and macOS ARM64 target builds; frontend formatting,
+linting, type-checking, tests, and build; a self-contained frontend smoke check;
+and the repository governance and local documentation-link check. It uses the
 same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
 directories.
+
+Continuous integration runs this same command for pull requests and changes to
+`main`. Its Go and npm caches use the pinned tool versions and checked-in module
+or lock state. No application identity, credential, provider endpoint, signing
+secret, telemetry endpoint, or production service is available to the job.
 
 ## Focused checks
 
@@ -76,7 +82,23 @@ gofmt -l cmd/codex-folio/main.go cmd/codex-folio/main_test.go internal/buildinfo
 go vet ./cmd/... ./internal/...
 env GOCACHE=/tmp/codex-folio-go-cache go test ./cmd/... ./internal/...
 node scripts/build.mjs --build-class development
+node --test scripts/build-targets.test.mjs
 ```
+
+The target-build test invokes the repository-owned build command for every
+Phase 0 target. Each result names the target, product version, source revision,
+native or cross-compiled mode, and its compile-only qualification. To inspect a
+single target directly:
+
+```sh
+node scripts/build.mjs --build-class development --target linux-amd64
+node scripts/build.mjs --build-class development --target windows-amd64
+node scripts/build.mjs --build-class development --target macos-arm64
+```
+
+Explicit target output is written below `build/targets/<target>/`. These builds
+prove the portable compilation contract only; they do not qualify native
+process, vault, service, installer, or runtime behavior on the target platform.
 
 Frontend:
 
@@ -134,8 +156,8 @@ of `clean`, `dirty`, or `unknown`.
 
 ## Current limitations
 
-Phase 0 proves the native build contract on the host running the command. The
-Linux AMD64, Windows AMD64, and macOS ARM64 target matrix, release archive dry
-runs, and the secure local foundation are separate Phase 0 tickets or later
-milestones. Compile evidence here does not claim native runtime qualification
-on another operating system.
+Phase 0 proves a native development build on the host and compile-only builds
+for Linux AMD64, Windows AMD64, and macOS ARM64. Release archive dry runs and
+the secure local foundation are separate Phase 0 tickets or later milestones.
+Compile evidence here does not claim native runtime qualification on another
+operating system.
