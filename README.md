@@ -1,6 +1,6 @@
 # VenkataSudha CodexFolio
 
-VenkataSudha CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation.
+VenkataSudha CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation. It is an independent project and is not affiliated with or endorsed by OpenAI.
 
 The project is in Phase 0: the product and architecture baseline has been promoted, but application implementation has not started.
 
@@ -14,6 +14,17 @@ The project is in Phase 0: the product and architecture baseline has been promot
 - [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md): modular-monolith architecture.
 - [`docs/design/DASHBOARD-BRIEF.md`](docs/design/DASHBOARD-BRIEF.md): comp-first dashboard direction.
 - [`docs/research/`](docs/research/): supporting technical research.
+- [`ROADMAP.md`](ROADMAP.md): MVP delivery status and tracker link.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): contribution and DCO requirements.
+- [`SECURITY.md`](SECURITY.md): private vulnerability reporting.
+- [`SUPPORT.md`](SUPPORT.md): current support boundaries.
+
+## License and community
+
+Source and documentation are licensed under [Apache-2.0](LICENSE). The license
+does not grant rights to the VenkataSudha CodexFolio name or branding; see
+[`NOTICE`](NOTICE). Contributions require DCO sign-off and follow the
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Development
 

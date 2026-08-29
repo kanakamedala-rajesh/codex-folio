@@ -8,11 +8,11 @@ state, or start a service.
 
 The supported development toolchain is:
 
-| Tool | Version |
-| --- | --- |
-| Go | `1.27.0` |
+| Tool    | Version   |
+| ------- | --------- |
+| Go      | `1.27.0`  |
 | Node.js | `24.18.0` |
-| npm | `11.16.0` |
+| npm     | `11.16.0` |
 
 The versions are recorded in `.tool-versions`, `.nvmrc`, `go.mod`, and
 `web/package.json`. The frontend workspace uses `engine-strict=true` and its
@@ -34,10 +34,11 @@ node scripts/verify.mjs
 ```
 
 The verification command runs Go formatting, vet, unit tests, and a native
-build; frontend formatting, linting, type-checking, tests, and build; and a
-self-contained frontend smoke check. It uses the same checked-in package lock
-and fails if tracked source changes during verification. Build output is
-written under ignored `build/` and `web/dist/` directories.
+build; frontend formatting, linting, type-checking, tests, and build; a
+self-contained frontend smoke check; and the repository governance and local
+documentation-link check. It uses the same checked-in package lock and fails if
+tracked source changes during verification. Build output is written under
+ignored `build/` and `web/dist/` directories.
 
 ## Focused checks
 
@@ -60,6 +61,16 @@ npm --prefix web run typecheck
 npm --prefix web run test
 npm --prefix web run build
 ```
+
+Governance:
+
+```sh
+node scripts/check-governance.mjs
+node --test scripts/check-dco.test.mjs
+```
+
+Pull-request commits are checked separately for DCO sign-off using the same
+`scripts/check-dco.mjs` command as CI.
 
 `npm run test` builds twice, checks the observable application shell and local
 asset references, and compares the two output trees byte-for-byte. No hosted
@@ -89,6 +100,6 @@ of `clean`, `dirty`, or `unknown`.
 
 Phase 0 proves the native build contract on the host running the command. The
 Linux AMD64, Windows AMD64, and macOS ARM64 target matrix, OpenAPI generation,
-release archive dry runs, governance checks, and the secure local foundation
-are separate Phase 0 tickets or later milestones. Compile evidence here does
-not claim native runtime qualification on another operating system.
+release archive dry runs, and the secure local foundation are separate Phase 0
+tickets or later milestones. Compile evidence here does not claim native
+runtime qualification on another operating system.

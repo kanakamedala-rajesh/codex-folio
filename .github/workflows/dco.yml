@@ -1,0 +1,22 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  signoff:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the proposed history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify commit sign-offs
+        env:
+          DCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-dco.mjs

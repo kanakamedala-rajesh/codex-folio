@@ -30,6 +30,8 @@ try {
   run("go", ["vet", ...goPackages]);
   run("go", ["test", ...goPackages]);
   run("node", ["scripts/build.mjs", "--build-class", "development"]);
+  run("node", ["--test", "scripts/check-dco.test.mjs"]);
+  run("node", ["scripts/check-governance.mjs"]);
 
   run("npm", ["--prefix", "web", "run", "format:check"]);
   run("npm", ["--prefix", "web", "run", "lint"]);
@@ -49,7 +51,9 @@ try {
     throw new Error("verification changed tracked source files");
   }
 
-  console.log("verification passed: Go and frontend scaffold checks left tracked source unchanged");
+  console.log(
+    "verification passed: Go, frontend, and governance checks left tracked source unchanged",
+  );
 } catch (error) {
   console.error(`verification failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
