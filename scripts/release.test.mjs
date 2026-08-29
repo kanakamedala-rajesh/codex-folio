@@ -266,11 +266,16 @@ function extractZipOnWindows(path) {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-      path,
-      extractedDirectory,
+      "Expand-Archive -LiteralPath $env:CODEX_FOLIO_ARCHIVE_PATH -DestinationPath $env:CODEX_FOLIO_EXTRACT_PATH -Force",
     ],
-    { encoding: "utf8" },
+    {
+      encoding: "utf8",
+      env: {
+        ...commandEnvironment,
+        CODEX_FOLIO_ARCHIVE_PATH: path,
+        CODEX_FOLIO_EXTRACT_PATH: extractedDirectory,
+      },
+    },
   );
   assert.equal(result.status, 0, result.stderr);
   return extractedDirectory;
