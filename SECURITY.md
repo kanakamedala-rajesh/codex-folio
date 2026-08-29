@@ -8,14 +8,13 @@ the repository, development artifacts, build tooling, and documentation.
 
 ## Report a vulnerability privately
 
-Use GitHub's private vulnerability-reporting form for this repository:
-
-<https://github.com/kanakamedala-rajesh/codex-folio/security/advisories/new>
+Email [codexfolio-support@venkatasudha.com](mailto:codexfolio-support@venkatasudha.com)
+with a subject beginning `SECURITY:`. This mailbox is the project's private
+intake path for vulnerability reports.
 
 Do not open a public issue, discussion, or pull request for a suspected
-vulnerability. If the private form is unavailable, contact the repository
-owner through a private channel and reference this policy without including
-exploit details publicly.
+vulnerability. Do not copy public mailing lists or issue addresses, and do not
+include exploit details in any public follow-up.
 
 Include the affected revision or artifact, impact, reproduction conditions,
 and a minimal proof of concept when safe. Remove credentials, Identity Home

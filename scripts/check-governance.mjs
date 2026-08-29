@@ -27,7 +27,15 @@ const requiredStatements = new Map([
     "CONTRIBUTING.md",
     ["Developer Certificate of Origin", "git commit --signoff", "No CLA"],
   ],
-  ["SECURITY.md", ["privately", "Do not open a public issue", "credentials"]],
+  [
+    "SECURITY.md",
+    [
+      "privately",
+      "codexfolio-support@venkatasudha.com",
+      "Do not open a public issue",
+      "credentials",
+    ],
+  ],
   ["SUPPORT.md", ["not affiliated with or endorsed by OpenAI", "Security"]],
   ["ROADMAP.md", ["MVP Roadmap", "GitHub issue #9"]],
   ["docs/adr/README.md", ["Superseding a decision", "user-visible guarantee"]],

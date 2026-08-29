@@ -19,7 +19,9 @@ claim of native runtime qualification.
 - Follow the [build guide](docs/development/BUILDING.md) for toolchain and
   verification failures.
 - Follow [Security](SECURITY.md) for vulnerabilities or any report containing
-  sensitive details. Never post credentials or private reproduction data.
+  sensitive details; private reports go to
+  [codexfolio-support@venkatasudha.com](mailto:codexfolio-support@venkatasudha.com).
+  Never post credentials or private reproduction data.
 
 The [MVP roadmap](ROADMAP.md) describes delivery status. Planned capabilities
 are not available merely because they appear in product documentation.
