@@ -11,3 +11,18 @@ Triage uses the default five-label vocabulary. See `docs/agents/triage-labels.md
 ### Domain docs
 
 This repository uses the single-context layout. See `docs/agents/domain.md`.
+
+### Delivery roadmap
+
+GitHub issue #9 is the MVP Roadmap and coordination index.
+
+Before implementation, read the roadmap, the current milestone specification, and the selected executable ticket. Never implement the roadmap or parent specification as an additional ticket.
+
+When completing a milestone:
+
+1. Record its exit-gate evidence on the milestone specification.
+2. Update issue #9 with the specification, ticket set, evidence, and status.
+3. Create the next milestone specification with `to-spec`.
+4. Decompose it with `to-tickets` only after the specification is approved.
+
+Closing every ticket is necessary but does not complete a milestone without accepted exit evidence. Milestone 6 experiments must not block the stable-core path.
