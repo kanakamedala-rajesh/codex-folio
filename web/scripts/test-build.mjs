@@ -21,8 +21,9 @@ assert.deepEqual(secondBuild, firstBuild, "two frontend builds produced differen
 console.log(`frontend test: deterministic self-contained build (${firstBuild.length} files)`);
 
 function runNpm(args) {
-  const command = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(command, args, {
+  const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+  const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", ...args] : args;
+  const result = spawnSync(command, commandArgs, {
     cwd: webDirectory,
     encoding: "utf8",
     stdio: "inherit",

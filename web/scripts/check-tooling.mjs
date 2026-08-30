@@ -31,9 +31,11 @@ function readNpmVersion() {
     return userAgentVersion;
   }
 
-  const command = process.platform === "win32" ? "npm.cmd" : "npm";
+  const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+  const args =
+    process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", "--version"] : ["--version"];
   try {
-    return execFileSync(command, ["--version"], { encoding: "utf8" }).trim();
+    return execFileSync(command, args, { encoding: "utf8" }).trim();
   } catch {
     return "unavailable";
   }
