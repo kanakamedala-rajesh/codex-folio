@@ -12,6 +12,42 @@
       "owner": "cli",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_STATE_PATH_INVALID",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_STATE_PATH_UNSAFE",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_PERMISSION_DENIED",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_ALREADY_RUNNING",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_METADATA_INVALID",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_UNAVAILABLE",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
     }
   ]
 }

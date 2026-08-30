@@ -1,8 +1,19 @@
-# Build the Phase 0 scaffold
+# Build the Phase 0 scaffold and local foundation
 
-The repository currently contains the non-production Phase 0 skeleton. It does
-not authenticate with Codex, launch Codex, access provider data, persist local
-state, or start a service.
+The repository currently contains the completed non-production Phase 0
+scaffold and the first Milestone 1 local-foundation slice. It does not
+authenticate with Codex, launch Codex, access provider data, or expose product
+storage workflows. The state-owner slice can resolve platform app-local paths
+and run a foreground owner through the CLI:
+
+```sh
+codex-folio service status [--state-root PATH] [--json]
+codex-folio service start [--state-root PATH] [--json]
+```
+
+The owner lock and descriptor are runtime foundation artifacts; SQLite,
+vaults, browser authorization, diagnostics, and other product workflows remain
+future Milestone 1 tickets.
 
 ## Pinned prerequisites
 
@@ -89,7 +100,7 @@ telemetry endpoint, or production service is available to any job.
 Go:
 
 ```sh
-gofmt -l cmd/codex-folio/main.go cmd/codex-folio/main_test.go internal/buildinfo/version.go internal/buildinfo/version_test.go
+gofmt -l $(find cmd internal scripts -name '*.go' -type f -print)
 go vet ./cmd/... ./internal/...
 env GOCACHE=/tmp/codex-folio-go-cache go test ./cmd/... ./internal/...
 node scripts/build.mjs --build-class development

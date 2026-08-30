@@ -20,6 +20,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata) int {
+	return runWithServicePathResolver(args, stdout, stderr, metadata, resolveCLIPaths)
+}
+
+func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver) int {
 	if len(args) == 0 {
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -29,6 +33,8 @@ func run(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata) i
 	switch command {
 	case "version", "--version", "-v":
 		return runVersion(args, stdout, stderr, metadata)
+	case "service":
+		return runServiceWithPathResolver(args[1:], stdout, stderr, resolvePaths)
 	case "help", "--help", "-h":
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -70,5 +76,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
+	fmt.Fprintln(stdout, "  codex-folio service {status|start} [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

@@ -3,8 +3,9 @@
 VenkataSudha CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation. It is an independent project and is not affiliated with or endorsed by OpenAI.
 
 The Phase 0 repository scaffold and acceptance gate are complete. Milestone 1,
-the secure local foundation, is the next delivery stage; runtime product
-capabilities have not been implemented.
+the secure local foundation, is in progress: the first slice establishes
+path-safe app-local state ownership and service contention handling. Runtime
+product capabilities have not been implemented.
 
 ## Project documents
 
