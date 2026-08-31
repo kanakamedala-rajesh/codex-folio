@@ -1,5 +1,31 @@
 {
   "$defs": {
+    "BootstrapRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "bootstrap_token": {
+          "description": "The one-time launcher secret exchanged for a local browser session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bootstrap_token"
+      ],
+      "type": "object"
+    },
+    "BootstrapResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "csrf_token": {
+          "description": "The in-memory CSRF value bound to the issued browser session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "csrf_token"
+      ],
+      "type": "object"
+    },
     "MetadataResponse": {
       "additionalProperties": false,
       "properties": {
@@ -31,6 +57,33 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/bootstrap": {
+      "post": {
+        "operationId": "exchangeBootstrap",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/$defs/BootstrapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/$defs/BootstrapResponse"
+                }
+              }
+            },
+            "description": "Exchanges a one-time launcher secret for a short-lived local session."
+          }
+        }
+      }
+    },
     "/api/v1/meta": {
       "get": {
         "operationId": "getMetadata",

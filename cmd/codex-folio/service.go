@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 )
 
@@ -180,20 +181,48 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 		}
 		return writeServiceError(stderr, err)
 	}
-	return waitForServiceStop(owner, options, stdout, stderr, false)
+	server, err := httpapi.NewServer(httpapi.Options{})
+	if err != nil {
+		_ = owner.Close()
+		return writeServiceError(stderr, err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		_ = owner.Close()
+		return writeServiceError(stderr, err)
+	}
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- server.Serve(listener)
+	}()
+
+	return waitForServiceStop(owner, server, options, stdout, stderr, false, serveErrors)
 }
 
-func waitForServiceStop(owner *platform.Owner, options serviceOptions, stdout, stderr io.Writer, reused bool) int {
+func waitForServiceStop(owner *platform.Owner, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
-	if err := writeServiceState(stdout, stderr, options.json, status, reused); err != nil {
+	if err := writeServiceStateWithDashboard(stdout, stderr, options.json, status, reused, server.BootstrapURL()); err != nil {
+		_ = server.Close()
 		_ = owner.Close()
 		return exitFailure
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErrors:
+		_ = owner.Close()
+		if err != nil {
+			return writeServiceError(stderr, err)
+		}
+		return exitSuccess
+	}
+	if err := server.Close(); err != nil {
+		_ = owner.Close()
+		return writeServiceError(stderr, err)
+	}
 	if err := owner.Close(); err != nil {
 		return writeServiceError(stderr, err)
 	}
@@ -205,15 +234,21 @@ type serviceOutput struct {
 	PID       int        `json:"pid,omitempty"`
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	Reused    bool       `json:"reused,omitempty"`
+	Dashboard string     `json:"dashboard_url,omitempty"`
 }
 
 func writeServiceState(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool) error {
+	return writeServiceStateWithDashboard(stdout, stderr, jsonOutput, status, reused, "")
+}
+
+func writeServiceStateWithDashboard(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool, dashboardURL string) error {
 	if jsonOutput {
 		if err := writeServiceJSON(stdout, serviceOutput{
 			Status:    statusName(status.Running),
 			PID:       metadataPID(status.Metadata),
 			StartedAt: metadataStart(status.Metadata),
 			Reused:    reused,
+			Dashboard: dashboardURL,
 		}); err != nil {
 			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode service status\n", apperrors.CLIInternal)
 			return err
@@ -222,6 +257,9 @@ func writeServiceState(stdout, stderr io.Writer, jsonOutput bool, status platfor
 	}
 	if reused {
 		_, _ = io.WriteString(stdout, "service owner reused\n")
+	} else if dashboardURL != "" {
+		_, _ = fmt.Fprintf(stdout, "service owner started; dashboard: %s\n", dashboardURL)
+		_, _ = io.WriteString(stdout, "press Ctrl-C to stop\n")
 	} else {
 		_, _ = io.WriteString(stdout, "service owner started; press Ctrl-C to stop\n")
 	}
@@ -260,6 +298,8 @@ func serviceRemediation(code string) string {
 		return "the running service owner descriptor is invalid"
 	case apperrors.PlatformServiceUnavailable:
 		return "the user-scoped service cannot access local state"
+	case apperrors.HTTPAPIServiceUnavailable:
+		return "the local dashboard service could not bind its loopback listener"
 	default:
 		return "the command could not complete"
 	}

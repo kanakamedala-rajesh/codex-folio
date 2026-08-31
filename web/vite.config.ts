@@ -17,7 +17,7 @@ if (!productVersion) {
 }
 
 export default defineConfig({
-  base: "./",
+  base: "/assets/",
   plugins: [react(), tailwindcss()],
   publicDir: false,
   define: {
@@ -25,14 +25,15 @@ export default defineConfig({
   },
   build: {
     emptyOutDir: true,
-    outDir: "dist",
+    outDir: "../internal/httpapi/assets",
     sourcemap: false,
-    assetsDir: "assets",
+    assetsDir: ".",
     rollupOptions: {
       output: {
-        assetFileNames: "assets/[name][extname]",
-        chunkFileNames: "assets/[name].js",
-        entryFileNames: "assets/[name].js",
+        assetFileNames: (assetInfo) =>
+          assetInfo.name?.endsWith(".css") ? "styles.css" : "[name][extname]",
+        chunkFileNames: "[name].js",
+        entryFileNames: "app.js",
       },
     },
   },

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { assertBuild } from "./smoke.mjs";
 
 const webDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const distDirectory = join(webDirectory, "dist");
+const distDirectory = join(webDirectory, "../internal/httpapi/assets");
 
 runNpm(["run", "build"]);
 assertBuild(distDirectory);

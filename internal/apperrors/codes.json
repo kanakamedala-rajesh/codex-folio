@@ -48,6 +48,60 @@
       "owner": "platform",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_HOST_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_ORIGIN_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_BOOTSTRAP_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SESSION_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SESSION_EXPIRED",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_CSRF_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_METHOD_NOT_ALLOWED",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_ROUTE_NOT_FOUND",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SERVICE_UNAVAILABLE",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
     }
   ]
 }

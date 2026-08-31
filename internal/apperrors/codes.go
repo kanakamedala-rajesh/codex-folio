@@ -12,6 +12,15 @@ const (
 	PlatformServiceAlreadyRunning  = "CF_PLATFORM_SERVICE_ALREADY_RUNNING"
 	PlatformServiceMetadataInvalid = "CF_PLATFORM_SERVICE_METADATA_INVALID"
 	PlatformServiceUnavailable     = "CF_PLATFORM_SERVICE_UNAVAILABLE"
+	HTTPAPIHostInvalid             = "CF_HTTPAPI_HOST_INVALID"
+	HTTPAPIOriginInvalid           = "CF_HTTPAPI_ORIGIN_INVALID"
+	HTTPAPIBootstrapInvalid        = "CF_HTTPAPI_BOOTSTRAP_INVALID"
+	HTTPAPISessionInvalid          = "CF_HTTPAPI_SESSION_INVALID"
+	HTTPAPISessionExpired          = "CF_HTTPAPI_SESSION_EXPIRED"
+	HTTPAPICSRFInvalid             = "CF_HTTPAPI_CSRF_INVALID"
+	HTTPAPIMethodNotAllowed        = "CF_HTTPAPI_METHOD_NOT_ALLOWED"
+	HTTPAPIRouteNotFound           = "CF_HTTPAPI_ROUTE_NOT_FOUND"
+	HTTPAPIServiceUnavailable      = "CF_HTTPAPI_SERVICE_UNAVAILABLE"
 )
 
 // CodedError carries a stable identifier while keeping implementation details
