@@ -26,6 +26,15 @@ const (
 	StoreSchemaIncompatible        = "CF_STORE_SCHEMA_INCOMPATIBLE"
 	StoreMigrationFailed           = "CF_STORE_MIGRATION_FAILED"
 	StoreMigrationPartial          = "CF_STORE_MIGRATION_PARTIAL"
+	StoreReadFailed                = "CF_STORE_READ_FAILED"
+	StoreWriteFailed               = "CF_STORE_WRITE_FAILED"
+	VaultUnavailable               = "CF_VAULT_UNAVAILABLE"
+	VaultLocked                    = "CF_VAULT_LOCKED"
+	VaultKeyInvalid                = "CF_VAULT_KEY_INVALID"
+	VaultEnvelopeInvalid           = "CF_VAULT_ENVELOPE_INVALID"
+	VaultEnvelopeUnsupported       = "CF_VAULT_ENVELOPE_UNSUPPORTED"
+	VaultKeyGenerationMismatch     = "CF_VAULT_KEY_GENERATION_MISMATCH"
+	VaultEncryptionFailed          = "CF_VAULT_ENCRYPTION_FAILED"
 )
 
 // CodedError carries a stable identifier while keeping implementation details

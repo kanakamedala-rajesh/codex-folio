@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -204,6 +205,44 @@ func TestServiceRejectsRelativeStateRootWithStableSafeError(t *testing.T) {
 	}
 	if bytes.Contains(stderr.Bytes(), []byte("relative-state")) {
 		t.Fatalf("stderr = %q, must not echo the supplied path", stderr.String())
+	}
+}
+
+func TestServiceDiagnosticRedactsSensitiveVaultCause(t *testing.T) {
+	t.Parallel()
+
+	const (
+		plaintextSentinel  = "diagnostic plaintext sentinel"
+		keySentinel        = "diagnostic key bytes sentinel"
+		ciphertextSentinel = "diagnostic ciphertext sentinel"
+		platformSentinel   = "diagnostic platform detail sentinel"
+	)
+	resolver := func(*string) (platform.Paths, error) {
+		return platform.Paths{}, apperrors.New(apperrors.VaultLocked, errors.New(
+			plaintextSentinel+" "+keySentinel+" "+ciphertextSentinel+" "+platformSentinel,
+		))
+	}
+	var stdout, stderr bytes.Buffer
+
+	if exitCode := runWithServicePathResolver(
+		[]string{"service", "status", "--state-root", filepath.Join(t.TempDir(), "state")},
+		&stdout, &stderr, buildinfo.Metadata{}, resolver,
+	); exitCode != exitFailure {
+		t.Fatalf("run() exit code = %d, want %d; stdout = %q; stderr = %q", exitCode, exitFailure, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	for _, forbidden := range []string{plaintextSentinel, keySentinel, ciphertextSentinel, platformSentinel} {
+		if bytes.Contains(stderr.Bytes(), []byte(forbidden)) {
+			t.Fatalf("stderr = %q, must not contain sensitive sentinel %q", stderr.String(), forbidden)
+		}
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.VaultLocked)) {
+		t.Fatalf("stderr = %q, want stable vault error %q", stderr.String(), apperrors.VaultLocked)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte(serviceRemediation(apperrors.VaultLocked))) {
+		t.Fatalf("stderr = %q, want safe remediation", stderr.String())
 	}
 }
 

@@ -24,7 +24,7 @@ const featureModules = new Set([
   "internal/sharedhome",
   "internal/usage",
 ]);
-const supportPackages = new Set(["internal/buildinfo"]);
+const supportPackages = new Set(["internal/buildinfo", "internal/vault"]);
 
 export function architectureFailures(root = rootDirectory) {
   const modulePath = readModulePath(join(root, "go.mod"));

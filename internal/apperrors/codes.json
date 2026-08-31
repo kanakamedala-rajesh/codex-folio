@@ -132,6 +132,60 @@
       "owner": "store",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_READ_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_WRITE_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_UNAVAILABLE",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_LOCKED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_KEY_INVALID",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENVELOPE_INVALID",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENVELOPE_UNSUPPORTED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_KEY_GENERATION_MISMATCH",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENCRYPTION_FAILED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
     }
   ]
 }

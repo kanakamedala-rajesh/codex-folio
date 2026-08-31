@@ -19,6 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/vault"
 )
 
 const (
@@ -47,6 +48,11 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Vault is the key-opaque encryption boundary used for sensitive fields.
+// Store aliases the shared contract so composition roots can inject a
+// platform adapter without exposing key material through storage APIs.
+type Vault = vault.Vault
+
 // MigrationHooks are test seams for failure injection around a transaction.
 // Production composition leaves both callbacks nil. A hook failure rolls back
 // the candidate migration and prevents OpenWithOptions from returning a Store.
@@ -60,6 +66,7 @@ type MigrationHooks struct {
 type Options struct {
 	Path          string
 	Clock         Clock
+	Vault         Vault
 	OpenDatabase  func(path string) (*sql.DB, error)
 	MigrationHook MigrationHooks
 }
@@ -72,6 +79,7 @@ type Store struct {
 	path    string
 	version int
 	clock   Clock
+	vault   Vault
 
 	closeOnce sync.Once
 	closeErr  error
@@ -116,7 +124,7 @@ func OpenWithOptions(options Options) (*Store, error) {
 func openVerifiedDatabase(database *sql.DB, databasePath string, options Options, malformedCandidate bool) (*Store, error) {
 	database.SetMaxOpenConns(1)
 	database.SetMaxIdleConns(1)
-	opened := &Store{db: database, path: databasePath, clock: options.Clock}
+	opened := &Store{db: database, path: databasePath, clock: options.Clock, vault: options.Vault}
 	if opened.clock == nil {
 		opened.clock = systemClock{}
 	}
