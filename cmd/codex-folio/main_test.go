@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -104,10 +105,10 @@ func TestUnknownServiceCommandUsesUsageExitCodeBeforeResolvingPaths(t *testing.T
 }
 
 func TestServiceStatusJSONReportsStoppedWithoutAStateOwner(t *testing.T) {
-	home := t.TempDir()
+	home := testServiceTempDir(t)
 	t.Setenv("HOME", home)
 
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	var stdout, stderr bytes.Buffer
 	if exitCode := runWithServicePathResolver([]string{"service", "status", "--state-root", stateRoot, "--json"}, &stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home)); exitCode != exitSuccess {
 		t.Fatalf("run() exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
@@ -127,13 +128,13 @@ func TestServiceStatusJSONReportsStoppedWithoutAStateOwner(t *testing.T) {
 }
 
 func TestServiceStartReusesExistingOwner(t *testing.T) {
-	home := t.TempDir()
+	home := testServiceTempDir(t)
 	t.Setenv("HOME", home)
 
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	override := stateRoot
 	paths, err := platform.ResolvePaths(platform.PathOptions{
-		Platform:          platform.PlatformLinux,
+		Platform:          platform.Platform(runtime.GOOS),
 		HomeDir:           home,
 		OwnerHomeDir:      home,
 		Environment:       map[string]string{},
@@ -169,9 +170,9 @@ func TestServiceStartReusesExistingOwner(t *testing.T) {
 }
 
 func TestServiceOwnerLockDoesNotFollowHOME(t *testing.T) {
-	firstHome := t.TempDir()
-	secondHome := t.TempDir()
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	firstHome := testServiceTempDir(t)
+	secondHome := testServiceTempDir(t)
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 
 	t.Setenv("HOME", firstHome)
 	first, err := resolveCLIPaths(&stateRoot)
@@ -207,10 +208,10 @@ func TestServiceRejectsRelativeStateRootWithStableSafeError(t *testing.T) {
 }
 
 func TestServiceStateDoesNotDependOnWorkingRepository(t *testing.T) {
-	home := t.TempDir()
+	home := testServiceTempDir(t)
 	t.Setenv("HOME", home)
 
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	var stdout, stderr bytes.Buffer
 	if exitCode := runWithServicePathResolver([]string{"service", "status", "--state-root", stateRoot}, &stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home)); exitCode != exitSuccess {
 		t.Fatalf("run() exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
@@ -227,10 +228,38 @@ func testServicePathResolver(home string) servicePathResolver {
 			return platform.Paths{}, err
 		}
 		return platform.ResolvePaths(platform.PathOptions{
+			Platform:          platform.Platform(runtime.GOOS),
 			HomeDir:           home,
 			OwnerHomeDir:      home,
 			StateRootOverride: override,
 			WorkingDirectory:  workingDirectory,
+			RepositoryRoot:    filepath.Join(filepath.Dir(home), "codex-folio-test-repository"),
 		})
 	}
+}
+
+func testServiceTempDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		return t.TempDir()
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir() error = %v", err)
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", home, err)
+	}
+	directory, err := os.MkdirTemp(home, "codex-folio-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp(%q): %v", home, err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Errorf("RemoveAll(%q): %v", directory, err)
+		}
+	})
+	return directory
 }

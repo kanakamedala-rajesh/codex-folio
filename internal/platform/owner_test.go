@@ -20,10 +20,36 @@ func (clock fixedClock) Now() time.Time {
 	return clock.now
 }
 
+func testTempDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		return t.TempDir()
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir() error = %v", err)
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", home, err)
+	}
+	directory, err := os.MkdirTemp(home, "codex-folio-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp(%q): %v", home, err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Errorf("RemoveAll(%q): %v", directory, err)
+		}
+	})
+	return directory
+}
+
 func testPaths(t *testing.T) Paths {
 	t.Helper()
-	home := t.TempDir()
-	override := filepath.Join(t.TempDir(), "state")
+	home := testTempDir(t)
+	override := filepath.Join(testTempDir(t), "state")
 	paths, err := ResolvePaths(PathOptions{
 		Platform:          PlatformLinux,
 		HomeDir:           home,
@@ -38,9 +64,9 @@ func testPaths(t *testing.T) Paths {
 }
 
 func TestOwnersUsingDifferentOverridesShareUserScope(t *testing.T) {
-	home := t.TempDir()
-	firstRoot := filepath.Join(t.TempDir(), "first")
-	secondRoot := filepath.Join(t.TempDir(), "second")
+	home := testTempDir(t)
+	firstRoot := filepath.Join(testTempDir(t), "first")
+	secondRoot := filepath.Join(testTempDir(t), "second")
 	first, err := ResolvePaths(PathOptions{
 		Platform:          PlatformLinux,
 		HomeDir:           home,
@@ -84,10 +110,10 @@ func TestOwnersUsingDifferentOverridesShareUserScope(t *testing.T) {
 }
 
 func TestOwnersUsingDifferentHomeDirectoriesShareUserScope(t *testing.T) {
-	firstHome := t.TempDir()
-	secondHome := t.TempDir()
-	ownerHome := t.TempDir()
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	firstHome := testTempDir(t)
+	secondHome := testTempDir(t)
+	ownerHome := testTempDir(t)
+	stateRoot := filepath.Join(testTempDir(t), "state")
 	firstOverride := stateRoot
 	secondOverride := stateRoot
 
@@ -327,15 +353,15 @@ func TestAcquireRejectsUnsafeExistingStateDirectory(t *testing.T) {
 		t.Skip("Windows does not expose Unix permission bits")
 	}
 
-	root := t.TempDir()
+	root := testTempDir(t)
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	override := root
 	paths, err := ResolvePaths(PathOptions{
 		Platform:          PlatformLinux,
-		HomeDir:           filepath.Join(t.TempDir(), "home"),
-		OwnerHomeDir:      filepath.Join(t.TempDir(), "owner-home"),
+		HomeDir:           filepath.Join(testTempDir(t), "home"),
+		OwnerHomeDir:      filepath.Join(testTempDir(t), "owner-home"),
 		Environment:       map[string]string{},
 		StateRootOverride: &override,
 	})
@@ -350,16 +376,16 @@ func TestAcquireRejectsUnsafeExistingStateDirectory(t *testing.T) {
 }
 
 func TestAcquireRejectsSymlinkedStateRoot(t *testing.T) {
-	target := t.TempDir()
-	link := filepath.Join(t.TempDir(), "state")
+	target := testTempDir(t)
+	link := filepath.Join(testTempDir(t), "state")
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symbolic links unavailable: %v", err)
 	}
 	override := link
 	paths, err := ResolvePaths(PathOptions{
 		Platform:          PlatformLinux,
-		HomeDir:           filepath.Join(t.TempDir(), "home"),
-		OwnerHomeDir:      filepath.Join(t.TempDir(), "owner-home"),
+		HomeDir:           filepath.Join(testTempDir(t), "home"),
+		OwnerHomeDir:      filepath.Join(testTempDir(t), "owner-home"),
 		Environment:       map[string]string{},
 		StateRootOverride: &override,
 	})
@@ -374,8 +400,8 @@ func TestAcquireRejectsSymlinkedStateRoot(t *testing.T) {
 }
 
 func TestAcquireRejectsSymlinkedStateAncestor(t *testing.T) {
-	target := t.TempDir()
-	parent := t.TempDir()
+	target := testTempDir(t)
+	parent := testTempDir(t)
 	link := filepath.Join(parent, "linked-parent")
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symbolic links unavailable: %v", err)
@@ -386,8 +412,8 @@ func TestAcquireRejectsSymlinkedStateAncestor(t *testing.T) {
 	override := filepath.Join(link, "state")
 	paths, err := ResolvePaths(PathOptions{
 		Platform:          PlatformLinux,
-		HomeDir:           filepath.Join(t.TempDir(), "home"),
-		OwnerHomeDir:      filepath.Join(t.TempDir(), "owner-home"),
+		HomeDir:           filepath.Join(testTempDir(t), "home"),
+		OwnerHomeDir:      filepath.Join(testTempDir(t), "owner-home"),
 		Environment:       map[string]string{},
 		StateRootOverride: &override,
 	})
