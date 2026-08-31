@@ -1,19 +1,21 @@
 # Build the Phase 0 scaffold and local foundation
 
 The repository currently contains the completed non-production Phase 0
-scaffold and the first Milestone 1 local-foundation slice. It does not
+scaffold and the first Milestone 1 local-foundation slices. It does not
 authenticate with Codex, launch Codex, access provider data, or expose product
-storage workflows. The state-owner slice can resolve platform app-local paths
-and run a foreground owner through the CLI:
+storage workflows. The service can resolve platform app-local paths, initialize
+the allowlisted versioned SQLite foundation, and run a foreground owner through
+the CLI:
 
 ```sh
 codex-folio service status [--state-root PATH] [--json]
 codex-folio service start [--state-root PATH] [--json]
 ```
 
-The owner lock and descriptor are runtime foundation artifacts; SQLite,
-vaults, browser authorization, diagnostics, and other product workflows remain
-future Milestone 1 tickets.
+The owner lock, descriptor, and SQLite database are runtime foundation
+artifacts; vaults, diagnostics, and other product workflows remain future
+Milestone 1 tickets. The service is the only composed process path that opens
+the durable SQLite store or runs its migrations.
 
 ## Pinned prerequisites
 
@@ -147,9 +149,10 @@ also contains `SHA256SUMS`, a deterministic dependency-license inventory,
 CycloneDX SBOM, a machine-readable provenance placeholder, a signing-status
 record, and a release manifest.
 
-The current Go module has no external modules. If a Go dependency is added
-without reviewed license metadata, release generation fails closed instead of
-silently omitting it from the inventory.
+The current Go module includes the reviewed pure-Go SQLite dependency and its
+transitive modules. If another Go dependency is added without reviewed license
+metadata, release generation fails closed instead of silently omitting it from
+the inventory.
 
 Archive bytes are reproducible for the same source and lock state: entries are
 sorted, archive timestamps and ownership are fixed, build timestamps are not

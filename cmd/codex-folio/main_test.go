@@ -221,6 +221,57 @@ func TestServiceStateDoesNotDependOnWorkingRepository(t *testing.T) {
 	}
 }
 
+func TestServicePathsResolveForAbsoluteTemporaryOverride(t *testing.T) {
+	home := testServiceTempDir(t)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+
+	paths, err := resolveCLIPaths(&stateRoot)
+	if err != nil {
+		t.Fatalf("resolveCLIPaths() error = %v", err)
+	}
+	if paths.Root != stateRoot {
+		t.Fatalf("Root = %q, want %q", paths.Root, stateRoot)
+	}
+}
+
+func TestServiceStartFailsClosedWhenStoreCannotOpen(t *testing.T) {
+	home := testServiceTempDir(t)
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+	override := stateRoot
+	paths, err := platform.ResolvePaths(platform.PathOptions{
+		Platform:          platform.Platform(runtime.GOOS),
+		HomeDir:           home,
+		OwnerHomeDir:      home,
+		Environment:       map[string]string{},
+		StateRootOverride: &override,
+	})
+	if err != nil {
+		t.Fatalf("ResolvePaths() error = %v", err)
+	}
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatalf("MkdirAll(state root): %v", err)
+	}
+	if err := os.Mkdir(paths.DatabaseFile, 0o700); err != nil {
+		t.Fatalf("Mkdir(database path): %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if exitCode := runServiceStart(paths, serviceOptions{json: true}, &stdout, &stderr); exitCode != exitFailure {
+		t.Fatalf("runServiceStart() exit code = %d, want %d; stdout = %q; stderr = %q", exitCode, exitFailure, stdout.String(), stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.StoreOpenFailed)) {
+		t.Fatalf("stderr = %q, want store-open error", stderr.String())
+	}
+	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Discover() after failed start: %v", err)
+	}
+	if status.Running {
+		t.Fatal("state owner remains running after failed store startup")
+	}
+}
+
 func testServicePathResolver(home string) servicePathResolver {
 	return func(override *string) (platform.Paths, error) {
 		workingDirectory, err := os.Getwd()

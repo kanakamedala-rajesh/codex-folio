@@ -39,6 +39,21 @@ be pinned to a reviewed immutable revision where practical.
 Accepted CI dependencies and their immutable revisions are recorded in the
 [automation dependency reviews](AUTOMATION-DEPENDENCIES.md).
 
+## Reviewed Go runtime dependency
+
+Issue #13 adds `modernc.org/sqlite` at `v1.57.0` because the foundation needs a
+cross-platform SQLite adapter without cgo or a native SQLite library. The
+driver and its transitive modules are pinned in `go.mod`; their reviewed
+licenses are recorded in
+[`GO-DEPENDENCY-LICENSES.json`](GO-DEPENDENCY-LICENSES.json). The licenses are
+BSD-3-Clause or MIT and are compatible with Apache-2.0 distribution.
+
+The driver is a maintained pure-Go implementation and runs no network,
+credential, or provider code. It adds compile and archive size cost, but keeps
+the native build contract available on Linux, Windows, and macOS. A future
+replacement must preserve the pure-Go, cgo-free contract and update the
+license review and release inventory together.
+
 ## Removal and inventory
 
 Remove unused dependencies and their lock entries in the same change that

@@ -21,6 +21,11 @@ const (
 	HTTPAPIMethodNotAllowed        = "CF_HTTPAPI_METHOD_NOT_ALLOWED"
 	HTTPAPIRouteNotFound           = "CF_HTTPAPI_ROUTE_NOT_FOUND"
 	HTTPAPIServiceUnavailable      = "CF_HTTPAPI_SERVICE_UNAVAILABLE"
+	StoreOpenFailed                = "CF_STORE_OPEN_FAILED"
+	StoreIntegrityFailed           = "CF_STORE_INTEGRITY_FAILED"
+	StoreSchemaIncompatible        = "CF_STORE_SCHEMA_INCOMPATIBLE"
+	StoreMigrationFailed           = "CF_STORE_MIGRATION_FAILED"
+	StoreMigrationPartial          = "CF_STORE_MIGRATION_PARTIAL"
 )
 
 // CodedError carries a stable identifier while keeping implementation details

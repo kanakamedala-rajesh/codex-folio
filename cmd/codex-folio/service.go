@@ -15,6 +15,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
+	"venkatasudha.com/codex-folio/internal/store"
 )
 
 type serviceOptions struct {
@@ -181,13 +182,20 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 		}
 		return writeServiceError(stderr, err)
 	}
+	stateStore, err := store.Open(paths.DatabaseFile)
+	if err != nil {
+		_ = owner.Close()
+		return writeServiceError(stderr, err)
+	}
 	server, err := httpapi.NewServer(httpapi.Options{})
 	if err != nil {
+		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceError(stderr, err)
 	}
 	listener, err := server.Listen()
 	if err != nil {
+		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceError(stderr, err)
 	}
@@ -196,14 +204,15 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 		serveErrors <- server.Serve(listener)
 	}()
 
-	return waitForServiceStop(owner, server, options, stdout, stderr, false, serveErrors)
+	return waitForServiceStop(owner, stateStore, server, options, stdout, stderr, false, serveErrors)
 }
 
-func waitForServiceStop(owner *platform.Owner, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
+func waitForServiceStop(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
 	if err := writeServiceStateWithDashboard(stdout, stderr, options.json, status, reused, server.BootstrapURL()); err != nil {
 		_ = server.Close()
+		_ = stateStore.Close()
 		_ = owner.Close()
 		return exitFailure
 	}
@@ -213,6 +222,7 @@ func waitForServiceStop(owner *platform.Owner, server *httpapi.Server, options s
 	select {
 	case <-ctx.Done():
 	case err := <-serveErrors:
+		_ = stateStore.Close()
 		_ = owner.Close()
 		if err != nil {
 			return writeServiceError(stderr, err)
@@ -220,6 +230,11 @@ func waitForServiceStop(owner *platform.Owner, server *httpapi.Server, options s
 		return exitSuccess
 	}
 	if err := server.Close(); err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceError(stderr, err)
+	}
+	if err := stateStore.Close(); err != nil {
 		_ = owner.Close()
 		return writeServiceError(stderr, err)
 	}
@@ -300,6 +315,16 @@ func serviceRemediation(code string) string {
 		return "the user-scoped service cannot access local state"
 	case apperrors.HTTPAPIServiceUnavailable:
 		return "the local dashboard service could not bind its loopback listener"
+	case apperrors.StoreOpenFailed:
+		return "the local SQLite store could not be opened"
+	case apperrors.StoreIntegrityFailed:
+		return "local SQLite integrity verification failed; writes are stopped"
+	case apperrors.StoreSchemaIncompatible:
+		return "the local SQLite schema is incompatible with this CodexFolio build"
+	case apperrors.StoreMigrationFailed:
+		return "the local SQLite migration failed; the previous state was preserved"
+	case apperrors.StoreMigrationPartial:
+		return "the local SQLite migration is incomplete; writes are stopped"
 	default:
 		return "the command could not complete"
 	}

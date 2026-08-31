@@ -1,0 +1,56 @@
+{
+  "schema": "codex-folio.go-dependency-licenses.v1",
+  "reviewed_on": "2026-08-31",
+  "dependencies": [
+    {
+      "path": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "license": "MIT"
+    },
+    {
+      "path": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "github.com/mattn/go-isatty",
+      "version": "v0.0.24",
+      "license": "MIT"
+    },
+    {
+      "path": "github.com/ncruces/go-strftime",
+      "version": "v1.0.0",
+      "license": "MIT"
+    },
+    {
+      "path": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "modernc.org/libc",
+      "version": "v1.74.4",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "modernc.org/memory",
+      "version": "v1.11.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "modernc.org/sqlite",
+      "version": "v1.57.0",
+      "license": "BSD-3-Clause"
+    }
+  ]
+}

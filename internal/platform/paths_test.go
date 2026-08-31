@@ -82,6 +82,9 @@ func TestResolvePathsUsesPlatformAppLocalDefaults(t *testing.T) {
 			if paths.LockFile != filepath.Join(paths.Runtime, "service.owner.lock") {
 				t.Fatalf("LockFile = %q, want service.owner.lock below runtime", paths.LockFile)
 			}
+			if paths.DatabaseFile != filepath.Join(paths.Root, "codex-folio.sqlite3") {
+				t.Fatalf("DatabaseFile = %q, want codex-folio.sqlite3 below state root", paths.DatabaseFile)
+			}
 		})
 	}
 }

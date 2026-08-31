@@ -55,6 +55,7 @@ type Paths struct {
 	Runtime      string
 	LockFile     string
 	MetadataFile string
+	DatabaseFile string
 }
 
 // ResolvePaths resolves the platform default or an explicit absolute state
@@ -103,6 +104,7 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 		Runtime:      filepath.Join(root, runtimeDirectory),
 		LockFile:     filepath.Join(ownerRuntime, lockFileName),
 		MetadataFile: filepath.Join(ownerRuntime, metadataFileName),
+		DatabaseFile: filepath.Join(root, "codex-folio.sqlite3"),
 	}, nil
 }
 

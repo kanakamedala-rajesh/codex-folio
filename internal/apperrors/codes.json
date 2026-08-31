@@ -102,6 +102,36 @@
       "owner": "httpapi",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_OPEN_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_INTEGRITY_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_SCHEMA_INCOMPATIBLE",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_MIGRATION_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_MIGRATION_PARTIAL",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
     }
   ]
 }
