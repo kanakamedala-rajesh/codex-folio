@@ -171,7 +171,7 @@ func TestResolvePathsRejectsUnsafeOverrides(t *testing.T) {
 		{name: "repository root", override: repo, wantCode: apperrors.PlatformStatePathUnsafe},
 		{name: "repository child", override: filepath.Join(repo, "state"), wantCode: apperrors.PlatformStatePathUnsafe},
 		{name: "working directory child", override: filepath.Join(workingDirectory, "state"), wantCode: apperrors.PlatformStatePathUnsafe},
-		{name: "filesystem root", override: "/", wantCode: apperrors.PlatformStatePathUnsafe},
+		{name: "filesystem root", override: hostAbsolutePath("/", `C:\`), wantCode: apperrors.PlatformStatePathUnsafe},
 	}
 
 	for _, tt := range tests {
