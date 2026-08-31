@@ -182,7 +182,7 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 		}
 		return writeServiceError(stderr, err)
 	}
-	stateStore, err := store.Open(paths.DatabaseFile)
+	stateStore, err := openServiceStore(paths)
 	if err != nil {
 		_ = owner.Close()
 		return writeServiceError(stderr, err)
@@ -325,6 +325,12 @@ func serviceRemediation(code string) string {
 		return "the local SQLite migration failed; the previous state was preserved"
 	case apperrors.StoreMigrationPartial:
 		return "the local SQLite migration is incomplete; writes are stopped"
+	case apperrors.VaultUnavailable:
+		return "the local encryption vault is unavailable; sensitive state is blocked"
+	case apperrors.VaultLocked:
+		return "the local encryption vault is locked; unlock it before using sensitive state"
+	case apperrors.VaultKeyInvalid:
+		return "the local encryption vault material is invalid; sensitive state is blocked"
 	default:
 		return "the command could not complete"
 	}

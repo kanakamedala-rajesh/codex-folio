@@ -85,6 +85,9 @@ func TestResolvePathsUsesPlatformAppLocalDefaults(t *testing.T) {
 			if paths.DatabaseFile != filepath.Join(paths.Root, "codex-folio.sqlite3") {
 				t.Fatalf("DatabaseFile = %q, want codex-folio.sqlite3 below state root", paths.DatabaseFile)
 			}
+			if paths.VaultFile != filepath.Join(paths.Root, "codex-folio.vault") {
+				t.Fatalf("VaultFile = %q, want codex-folio.vault below state root", paths.VaultFile)
+			}
 		})
 	}
 }

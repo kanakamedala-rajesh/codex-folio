@@ -26,6 +26,7 @@ const (
 	runtimeDirectory   = "runtime"
 	lockFileName       = "service.owner.lock"
 	metadataFileName   = "service.owner.json"
+	vaultFileName      = "codex-folio.vault"
 )
 
 // Platform identifies the operating-system path convention to use. It is
@@ -56,6 +57,7 @@ type Paths struct {
 	LockFile     string
 	MetadataFile string
 	DatabaseFile string
+	VaultFile    string
 }
 
 // ResolvePaths resolves the platform default or an explicit absolute state
@@ -105,6 +107,7 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 		LockFile:     filepath.Join(ownerRuntime, lockFileName),
 		MetadataFile: filepath.Join(ownerRuntime, metadataFileName),
 		DatabaseFile: filepath.Join(root, "codex-folio.sqlite3"),
+		VaultFile:    filepath.Join(root, vaultFileName),
 	}, nil
 }
 
