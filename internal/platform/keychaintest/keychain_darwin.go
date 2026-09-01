@@ -149,10 +149,12 @@ static int set_codex_folio_keychain_item_trust(const char *service, const char *
 			CFArrayRef applications = trust_all ? NULL : CFArrayCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeArrayCallBacks);
 			SecKeychainPromptSelector prompt_selector = trust_all ? 0 : kSecKeychainPromptRequirePassphase;
 			CFIndex count = CFArrayGetCount(acls);
+			if (count == 0) status = errSecInvalidACL;
 			for (CFIndex index = 0; status == errSecSuccess && index < count; index++) {
 				SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, index);
 				status = SecACLSetContents(acl, applications, CFSTR("CodexFolio native test"), prompt_selector);
 			}
+			if (status == errSecSuccess) status = SecKeychainItemSetAccess(item, access);
 			if (applications != NULL) CFRelease(applications);
 			CFRelease(acls);
 		}
