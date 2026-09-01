@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -55,8 +56,10 @@ func TestPassphraseVaultStartsLockedAndRoundTripsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(vault) error = %v", err)
 	}
-	if got := fileInfo.Mode().Perm(); got != 0o600 {
-		t.Fatalf("vault file permissions = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := fileInfo.Mode().Perm(); got != 0o600 {
+			t.Fatalf("vault file permissions = %o, want 600", got)
+		}
 	}
 	protected, err := os.ReadFile(path)
 	if err != nil {
@@ -178,8 +181,17 @@ func TestPassphraseVaultDoesNotRecreateMissingEstablishedMaterial(t *testing.T) 
 func passphraseTestPath(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
-		t.Fatalf("Chmod(test root) error = %v", err)
+	if runtime.GOOS == "darwin" {
+		var err error
+		root, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(test root) error = %v", err)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(root, 0o700); err != nil {
+			t.Fatalf("Chmod(test root) error = %v", err)
+		}
 	}
 	return filepath.Join(root, "codex-folio.vault")
 }
