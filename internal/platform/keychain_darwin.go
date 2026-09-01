@@ -15,9 +15,10 @@ package platform
 // unsigned command-line binaries, including the native CI test binary, do
 // not have. The login Keychain remains user-scoped and its default item
 // accessibility is When Unlocked.
-static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account, Boolean returnData) {
-	const void *keys[5];
-	const void *values[5];
+static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account,
+	Boolean returnData, CFArrayRef searchList) {
+	const void *keys[6];
+	const void *values[6];
 	CFIndex count = 3;
 	keys[0] = kSecClass;
 	values[0] = kSecClassGenericPassword;
@@ -25,6 +26,11 @@ static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, 
 	values[1] = service;
 	keys[2] = kSecAttrAccount;
 	values[2] = account;
+	if (searchList != NULL) {
+		keys[count] = kSecMatchSearchList;
+		values[count] = searchList;
+		count++;
+	}
 	if (returnData) {
 		keys[count] = kSecReturnData;
 		values[count] = kCFBooleanTrue;
@@ -51,15 +57,23 @@ static int codex_folio_keychain_find(const char *service, const char *account,
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecParam;
 	}
-	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, true);
+	CFArrayRef search_list = NULL;
+	OSStatus status = SecKeychainCopySearchList(&search_list);
+	if (status != errSecSuccess) {
+		CFRelease(service_value);
+		CFRelease(account_value);
+		return status;
+	}
+	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, true, search_list);
 	CFRelease(service_value);
 	CFRelease(account_value);
+	if (search_list != NULL) CFRelease(search_list);
 	if (query == NULL) {
 		return errSecAllocate;
 	}
 
 	CFTypeRef result = NULL;
-	OSStatus status = SecItemCopyMatching(query, &result);
+	status = SecItemCopyMatching(query, &result);
 	CFRelease(query);
 	if (status != errSecSuccess) {
 		if (result != NULL) CFRelease(result);
@@ -117,8 +131,22 @@ static int codex_folio_keychain_add(const char *service, const char *account,
 	if (query == NULL) {
 		return errSecAllocate;
 	}
-	OSStatus status = SecItemAdd(query, NULL);
+	SecKeychainRef default_keychain = NULL;
+	OSStatus status = SecKeychainCopyDefault(&default_keychain);
+	if (status != errSecSuccess) {
+		CFRelease(query);
+		return status;
+	}
+	CFMutableDictionaryRef add_query = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, query);
 	CFRelease(query);
+	if (add_query == NULL) {
+		CFRelease(default_keychain);
+		return errSecAllocate;
+	}
+	CFDictionarySetValue(add_query, kSecUseKeychain, default_keychain);
+	CFRelease(default_keychain);
+	status = SecItemAdd(add_query, NULL);
+	CFRelease(add_query);
 	return status;
 }
 
@@ -133,13 +161,21 @@ static int codex_folio_keychain_delete(const char *service, const char *account)
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecParam;
 	}
-	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, false);
+	CFArrayRef search_list = NULL;
+	OSStatus status = SecKeychainCopySearchList(&search_list);
+	if (status != errSecSuccess) {
+		CFRelease(service_value);
+		CFRelease(account_value);
+		return status;
+	}
+	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, false, search_list);
 	CFRelease(service_value);
 	CFRelease(account_value);
+	if (search_list != NULL) CFRelease(search_list);
 	if (query == NULL) {
 		return errSecAllocate;
 	}
-	OSStatus status = SecItemDelete(query);
+	status = SecItemDelete(query);
 	CFRelease(query);
 	return status;
 }
