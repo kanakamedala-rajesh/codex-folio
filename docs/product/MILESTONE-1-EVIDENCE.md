@@ -66,6 +66,46 @@ rollback. Sentinel tests cover credentials, authorization material, vault key
 material, encrypted values, canonical paths, Codex/user/repository content,
 and raw provider-payload-shaped data.
 
+The recovery fixtures and injected-boundary outcomes are:
+
+- `TestRecoveryRotatesThreeValidatedCandidates` calls `CreateCheckpoint` four
+  times with `RecoveryBackupCount == 3`; only `backup-1` through `backup-3`
+  remain, each validates at `CurrentSchemaVersion`, and the oldest snapshot is
+  rotated out.
+- `TestRecoveryRotationFailureRetainsSparseKnownGoodCandidate` removes
+  `backup-1` and `backup-2`, then makes `failingRenameFileSystem` return
+  `errors.New("injected rotation failure")` for the rotation rename(s) (one on
+  Unix, two on Windows). The result is `CF_STORE_BACKUP_FAILED`; the remaining
+  valid `backup-3` bytes are unchanged.
+- `TestRecoveryRestoresAnIntentionalCandidateAndPreservesActiveState` creates
+  `checkpoint-first` and `checkpoint-second`, restores `backup-2`, and observes
+  a non-empty preserved-database ID, the first checkpoint present, the second
+  absent (`sql.ErrNoRows`), and an ordered known-loss window.
+- `TestRecoveryListsCorruptCandidatesAndRestoresOverCorruptActiveState` writes
+  `corrupt backup` and `corrupt active` fixtures. The first is listed and
+  rejected as `CF_STORE_RECOVERY_CANDIDATE_INVALID` without changing active
+  bytes; the second yields `CF_STORE_INTEGRITY_FAILED`, then restores the
+  validated candidate while preserving the damaged active database as
+  `damaged-*`.
+- `TestRecoveryFailureDuringBackupOrRestoreLeavesKnownGoodStateAvailable`
+  injects `AfterBackupCopy` and `BeforeRestoreActivation` failures using
+  `errors.New("injected recovery boundary failure")`. They return
+  `CF_STORE_BACKUP_FAILED` and `CF_STORE_RECOVERY_RESTORE_FAILED`, respectively;
+  the previous backup and active database remain byte-identical.
+- `TestRecoveryRollsBackAfterActivationFailure` inserts the `active-only`
+  diagnostic sentinel and injects `AfterRestoreActivation` with
+  `errors.New("injected post-activation failure")`. It returns
+  `CF_STORE_RECOVERY_RESTORE_FAILED` and restores the active bytes exactly.
+- `TestMigrationBackupFailureStopsBeforeSchemaMutation` injects `BeforeBackup`
+  with `errors.New("injected backup failure")`; it returns
+  `CF_STORE_BACKUP_FAILED` with zero tables and zero candidates.
+- `TestMigrationFailureRetainsThePreMigrationRecoveryPoint` injects
+  `MigrationHooks.After` with `errors.New("injected migration failure")`; it
+  returns `CF_STORE_MIGRATION_FAILED` with one valid schema-zero candidate and
+  no migrated tables. `TestMigrationFailureAfterCommitStillExposesTheOriginalCandidate`
+  applies the same assertion to `AfterMigrationBeforeActivation` with
+  `errors.New("injected activation boundary failure")`.
+
 ## Qualification limits
 
 - Non-host Tier 1 target builds are compile-only; they are not native runtime,
