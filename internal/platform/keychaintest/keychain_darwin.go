@@ -100,6 +100,46 @@ static int configure_codex_folio_test_keychain(const char *path, const char *pas
 	return status;
 }
 
+static int probe_codex_folio_test_keychain(const char *service, const char *account) {
+	if (service == NULL || account == NULL) return errSecParam;
+	CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+	CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
+	CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)"codex-folio-native-test", sizeof("codex-folio-native-test") - 1);
+	if (service_value == NULL || account_value == NULL || data == NULL) {
+		if (service_value != NULL) CFRelease(service_value);
+		if (account_value != NULL) CFRelease(account_value);
+		if (data != NULL) CFRelease(data);
+		return errSecAllocate;
+	}
+	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData};
+	const void *values[] = {kSecClassGenericPassword, service_value, account_value, data};
+	CFDictionaryRef add_query = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 4,
+		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	CFRelease(service_value);
+	CFRelease(account_value);
+	CFRelease(data);
+	if (add_query == NULL) return errSecAllocate;
+
+	OSStatus status = SecItemDelete(add_query);
+	if (status != errSecSuccess && status != errSecItemNotFound) {
+		CFRelease(add_query);
+		return status;
+	}
+	status = SecItemAdd(add_query, NULL);
+	if (status == errSecSuccess) {
+		unsigned char *output = NULL;
+		size_t output_length = 0;
+		status = read_codex_folio_keychain_record(service, account, &output, &output_length);
+		if (output != NULL) {
+			memset(output, 0, output_length);
+			free(output);
+		}
+	}
+	OSStatus cleanup_status = SecItemDelete(add_query);
+	CFRelease(add_query);
+	return status != errSecSuccess ? status : cleanup_status;
+}
+
 static int lock_codex_folio_default_keychain(void) {
 	SecKeychainRef keychain = NULL;
 	OSStatus status = SecKeychainCopyDefault(&keychain);
@@ -227,6 +267,19 @@ func Configure(path, password string) error {
 	defer C.free(unsafe.Pointer(pathValue))
 	defer C.free(unsafe.Pointer(passwordValue))
 	if status := C.configure_codex_folio_test_keychain(pathValue, passwordValue); int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
+	}
+	return nil
+}
+
+// Probe performs an add/read/delete round trip against the configured native
+// test Keychain and returns the raw Security.framework status on failure.
+func Probe(service, account string) error {
+	serviceValue := C.CString(service)
+	accountValue := C.CString(account)
+	defer C.free(unsafe.Pointer(serviceValue))
+	defer C.free(unsafe.Pointer(accountValue))
+	if status := C.probe_codex_folio_test_keychain(serviceValue, accountValue); int(status) != 0 {
 		return fmt.Errorf("Security.framework status %d", int(status))
 	}
 	return nil

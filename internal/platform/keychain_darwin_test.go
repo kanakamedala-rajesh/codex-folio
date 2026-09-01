@@ -20,6 +20,12 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "configure native platform test Keychain: %v\n", err)
 		os.Exit(1)
 	}
+	if os.Getenv("CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH") != "" {
+		if err := keychaintest.Probe(DefaultKeychainService+".probe", DefaultKeychainAccount+".probe"); err != nil {
+			fmt.Fprintf(os.Stderr, "probe native platform test Keychain: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	os.Exit(m.Run())
 }
 
