@@ -15,10 +15,9 @@ package platform
 // unsigned command-line binaries, including the native CI test binary, do
 // not have. The login Keychain remains user-scoped and its default item
 // accessibility is When Unlocked.
-static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account,
-	Boolean returnData, CFArrayRef searchList) {
-	const void *keys[6];
-	const void *values[6];
+static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account, Boolean returnData) {
+	const void *keys[5];
+	const void *values[5];
 	CFIndex count = 3;
 	keys[0] = kSecClass;
 	values[0] = kSecClassGenericPassword;
@@ -26,11 +25,6 @@ static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, 
 	values[1] = service;
 	keys[2] = kSecAttrAccount;
 	values[2] = account;
-	if (searchList != NULL) {
-		keys[count] = kSecMatchSearchList;
-		values[count] = searchList;
-		count++;
-	}
 	if (returnData) {
 		keys[count] = kSecReturnData;
 		values[count] = kCFBooleanTrue;
@@ -57,23 +51,15 @@ static int codex_folio_keychain_find(const char *service, const char *account,
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecParam;
 	}
-	CFArrayRef search_list = NULL;
-	OSStatus status = SecKeychainCopySearchList(&search_list);
-	if (status != errSecSuccess) {
-		CFRelease(service_value);
-		CFRelease(account_value);
-		return status;
-	}
-	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, true, search_list);
+	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, true);
 	CFRelease(service_value);
 	CFRelease(account_value);
-	if (search_list != NULL) CFRelease(search_list);
 	if (query == NULL) {
 		return errSecAllocate;
 	}
 
 	CFTypeRef result = NULL;
-	status = SecItemCopyMatching(query, &result);
+	OSStatus status = SecItemCopyMatching(query, &result);
 	CFRelease(query);
 	if (status != errSecSuccess) {
 		if (result != NULL) CFRelease(result);
@@ -131,22 +117,8 @@ static int codex_folio_keychain_add(const char *service, const char *account,
 	if (query == NULL) {
 		return errSecAllocate;
 	}
-	SecKeychainRef default_keychain = NULL;
-	OSStatus status = SecKeychainCopyDefault(&default_keychain);
-	if (status != errSecSuccess) {
-		CFRelease(query);
-		return status;
-	}
-	CFMutableDictionaryRef add_query = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, query);
+	OSStatus status = SecItemAdd(query, NULL);
 	CFRelease(query);
-	if (add_query == NULL) {
-		CFRelease(default_keychain);
-		return errSecAllocate;
-	}
-	CFDictionarySetValue(add_query, kSecUseKeychain, default_keychain);
-	CFRelease(default_keychain);
-	status = SecItemAdd(add_query, NULL);
-	CFRelease(add_query);
 	return status;
 }
 
@@ -161,21 +133,13 @@ static int codex_folio_keychain_delete(const char *service, const char *account)
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecParam;
 	}
-	CFArrayRef search_list = NULL;
-	OSStatus status = SecKeychainCopySearchList(&search_list);
-	if (status != errSecSuccess) {
-		CFRelease(service_value);
-		CFRelease(account_value);
-		return status;
-	}
-	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, false, search_list);
+	CFDictionaryRef query = codex_folio_keychain_identity_query(service_value, account_value, false);
 	CFRelease(service_value);
 	CFRelease(account_value);
-	if (search_list != NULL) CFRelease(search_list);
 	if (query == NULL) {
 		return errSecAllocate;
 	}
-	status = SecItemDelete(query);
+	OSStatus status = SecItemDelete(query);
 	CFRelease(query);
 	return status;
 }
@@ -200,7 +164,6 @@ import "C"
 
 import (
 	"errors"
-	"fmt"
 	"unsafe"
 )
 
@@ -239,6 +202,9 @@ func (systemKeychainBackend) add(service, account string, record []byte) error {
 	value := C.CBytes(record)
 	defer C.codex_folio_keychain_free((*C.uchar)(value), C.size_t(len(record)))
 	status := C.codex_folio_keychain_add(serviceValue, accountValue, (*C.uchar)(value), C.size_t(len(record)))
+	if int(status) == int(C.codex_folio_keychain_status_success()) {
+		return nil
+	}
 	return keychainErrorForStatus(int(status))
 }
 
@@ -255,21 +221,20 @@ func (systemKeychainBackend) delete(service, account string) error {
 }
 
 func keychainErrorForStatus(status int) error {
-	statusError := fmt.Errorf("Security.framework status %d", status)
 	switch {
 	case status == int(C.codex_folio_keychain_status_item_not_found()):
-		return errors.Join(ErrKeychainItemNotFound, statusError)
+		return ErrKeychainItemNotFound
 	case status == int(C.codex_folio_keychain_status_duplicate()):
-		return errors.Join(ErrKeychainItemExists, statusError)
+		return ErrKeychainItemExists
 	case status == int(C.codex_folio_keychain_status_locked()):
-		return errors.Join(ErrKeychainLocked, statusError)
+		return ErrKeychainLocked
 	case status == int(C.codex_folio_keychain_status_auth_failed()) || status == int(C.codex_folio_keychain_status_user_canceled()):
-		return errors.Join(ErrKeychainAccessDenied, statusError)
+		return ErrKeychainAccessDenied
 	case status == int(C.codex_folio_keychain_status_decode()):
-		return errors.Join(ErrKeychainProtectedMaterial, statusError)
+		return ErrKeychainProtectedMaterial
 	case status == int(C.codex_folio_keychain_status_no_keychain()) || status == int(C.codex_folio_keychain_status_not_available()):
-		return errors.Join(ErrKeychainUnavailable, statusError)
+		return ErrKeychainUnavailable
 	default:
-		return errors.Join(ErrKeychainUnavailable, statusError)
+		return errors.Join(ErrKeychainUnavailable, errors.New("Keychain operation failed"))
 	}
 }

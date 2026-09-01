@@ -21,14 +21,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "configure native cmd test Keychain: %v\n", err)
 		os.Exit(1)
 	}
-	if os.Getenv("CODEX_FOLIO_CMD_KEYCHAIN_PATH") != "" {
-		service := fmt.Sprintf("%s.test.%d", platform.DefaultKeychainService, os.Getpid())
-		account := fmt.Sprintf("%s.test.%d", platform.DefaultKeychainAccount, os.Getpid())
-		if err := keychaintest.Probe(service, account); err != nil {
-			fmt.Fprintf(os.Stderr, "probe native cmd test Keychain: %v\n", err)
-			os.Exit(1)
-		}
-	}
 	os.Exit(m.Run())
 }
 
