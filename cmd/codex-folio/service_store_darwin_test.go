@@ -16,6 +16,14 @@ import (
 	"venkatasudha.com/codex-folio/internal/store"
 )
 
+func TestMain(m *testing.M) {
+	if err := keychaintest.ConfigureFromEnvironment("CODEX_FOLIO_CMD_KEYCHAIN_PATH"); err != nil {
+		fmt.Fprintf(os.Stderr, "configure native cmd test Keychain: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
 func TestDarwinServiceStoreReusesKeychainForEncryptedProjectIdentity(t *testing.T) {
 	root := testServiceTempDir(t)
 	override := root

@@ -15,6 +15,14 @@ import (
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
+func TestMain(m *testing.M) {
+	if err := keychaintest.ConfigureFromEnvironment("CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH"); err != nil {
+		fmt.Fprintf(os.Stderr, "configure native platform test Keychain: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
 func TestKeychainVaultRoundTripsAndReusesKeyAcrossProviderRestart(t *testing.T) {
 	service := fmt.Sprintf("%s.test.%d", DefaultKeychainService, os.Getpid())
 	account := fmt.Sprintf("%s.%d", DefaultKeychainAccount, os.Getpid())

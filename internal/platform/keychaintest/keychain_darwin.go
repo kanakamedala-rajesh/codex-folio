@@ -78,6 +78,28 @@ static int delete_codex_folio_keychain_record(const char *service, const char *a
 	return status == errSecItemNotFound ? errSecSuccess : status;
 }
 
+static int configure_codex_folio_test_keychain(const char *path, const char *password) {
+	if (path == NULL || password == NULL) return errSecParam;
+	SecKeychainRef keychain = NULL;
+	OSStatus status = SecKeychainOpen(path, &keychain);
+	if (status != errSecSuccess) return status;
+
+	const void *items[] = {keychain};
+	CFArrayRef search_list = CFArrayCreate(kCFAllocatorDefault, items, 1, &kCFTypeArrayCallBacks);
+	if (search_list == NULL) {
+		CFRelease(keychain);
+		return errSecAllocate;
+	}
+	status = SecKeychainSetSearchList(search_list);
+	CFRelease(search_list);
+	if (status == errSecSuccess) status = SecKeychainSetDefault(keychain);
+	if (status == errSecSuccess) {
+		status = SecKeychainUnlock(keychain, (UInt32)strlen(password), password, true);
+	}
+	CFRelease(keychain);
+	return status;
+}
+
 static int lock_codex_folio_default_keychain(void) {
 	SecKeychainRef keychain = NULL;
 	OSStatus status = SecKeychainCopyDefault(&keychain);
@@ -143,6 +165,7 @@ import "C"
 
 import (
 	"fmt"
+	"os"
 	"unsafe"
 )
 
@@ -182,7 +205,34 @@ func Delete(service, account string) error {
 	return nil
 }
 
-// LockDefault locks the current user's default login Keychain.
+// ConfigureFromEnvironment selects and unlocks the test-only Keychain named by
+// pathEnv. An unset path leaves the developer's normal user Keychain intact.
+func ConfigureFromEnvironment(pathEnv string) error {
+	path := os.Getenv(pathEnv)
+	if path == "" {
+		return nil
+	}
+	password := os.Getenv("CODEX_FOLIO_TEST_KEYCHAIN_PASSWORD")
+	if password == "" {
+		return fmt.Errorf("%s is set but CODEX_FOLIO_TEST_KEYCHAIN_PASSWORD is empty", pathEnv)
+	}
+	return Configure(path, password)
+}
+
+// Configure selects and unlocks a test-only file-based Keychain for the
+// current test process.
+func Configure(path, password string) error {
+	pathValue := C.CString(path)
+	passwordValue := C.CString(password)
+	defer C.free(unsafe.Pointer(pathValue))
+	defer C.free(unsafe.Pointer(passwordValue))
+	if status := C.configure_codex_folio_test_keychain(pathValue, passwordValue); int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
+	}
+	return nil
+}
+
+// LockDefault locks the current process's default file-based Keychain.
 func LockDefault() error {
 	if status := C.lock_codex_folio_default_keychain(); int(status) != 0 {
 		return fmt.Errorf("Security.framework status %d", int(status))
