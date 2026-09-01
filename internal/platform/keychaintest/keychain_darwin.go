@@ -20,9 +20,9 @@ static int read_codex_folio_keychain_record(const char *service, const char *acc
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecAllocate;
 	}
-	const void *query_keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecUseDataProtectionKeychain, kSecReturnData, kSecMatchLimit};
-	const void *query_values[] = {kSecClassGenericPassword, service_value, account_value, kCFBooleanTrue, kCFBooleanTrue, kSecMatchLimitOne};
-	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, query_keys, query_values, 6,
+	const void *query_keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit};
+	const void *query_values[] = {kSecClassGenericPassword, service_value, account_value, kCFBooleanTrue, kSecMatchLimitOne};
+	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, query_keys, query_values, 5,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	CFRelease(service_value);
 	CFRelease(account_value);
@@ -64,9 +64,9 @@ static int delete_codex_folio_keychain_record(const char *service, const char *a
 		if (account_value != NULL) CFRelease(account_value);
 		return errSecAllocate;
 	}
-	const void *query_keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecUseDataProtectionKeychain};
-	const void *query_values[] = {kSecClassGenericPassword, service_value, account_value, kCFBooleanTrue};
-	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, query_keys, query_values, 4,
+	const void *query_keys[] = {kSecClass, kSecAttrService, kSecAttrAccount};
+	const void *query_values[] = {kSecClassGenericPassword, service_value, account_value};
+	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, query_keys, query_values, 3,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	CFRelease(service_value);
 	CFRelease(account_value);

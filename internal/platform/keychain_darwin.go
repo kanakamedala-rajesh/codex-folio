@@ -10,9 +10,14 @@ package platform
 #include <stdlib.h>
 #include <string.h>
 
+// The traditional user login Keychain is used here instead of the data
+// protection Keychain. The latter requires an application entitlement that
+// unsigned command-line binaries, including the native CI test binary, do
+// not have. The login Keychain remains user-scoped and its default item
+// accessibility is When Unlocked.
 static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account, Boolean returnData) {
-	const void *keys[6];
-	const void *values[6];
+	const void *keys[5];
+	const void *values[5];
 	CFIndex count = 3;
 	keys[0] = kSecClass;
 	values[0] = kSecClassGenericPassword;
@@ -20,9 +25,6 @@ static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, 
 	values[1] = service;
 	keys[2] = kSecAttrAccount;
 	values[2] = account;
-	keys[count] = kSecUseDataProtectionKeychain;
-	values[count] = kCFBooleanTrue;
-	count++;
 	if (returnData) {
 		keys[count] = kSecReturnData;
 		values[count] = kCFBooleanTrue;
@@ -100,16 +102,14 @@ static int codex_folio_keychain_add(const char *service, const char *account,
 		return errSecAllocate;
 	}
 
-	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessible, kSecUseDataProtectionKeychain};
+	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData};
 	const void *values[] = {
 		kSecClassGenericPassword,
 		service_value,
 		account_value,
 		data,
-		kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-		kCFBooleanTrue,
 	};
-	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 6,
+	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 4,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	CFRelease(service_value);
 	CFRelease(account_value);
