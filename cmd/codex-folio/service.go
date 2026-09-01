@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,15 +22,20 @@ import (
 type serviceOptions struct {
 	stateRoot *string
 	json      bool
+	vaultMode platform.VaultMode
 }
 
 type servicePathResolver func(*string) (platform.Paths, error)
 
 func runService(args []string, stdout, stderr io.Writer) int {
-	return runServiceWithPathResolver(args, stdout, stderr, resolveCLIPaths)
+	return runServiceWithInput(args, os.Stdin, stdout, stderr, resolveCLIPaths)
 }
 
 func runServiceWithPathResolver(args []string, stdout, stderr io.Writer, resolvePaths servicePathResolver) int {
+	return runServiceWithInput(args, os.Stdin, stdout, stderr, resolvePaths)
+}
+
+func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver) int {
 	if len(args) == 0 {
 		writeServiceUsage(stderr)
 		return exitUsage
@@ -65,7 +71,7 @@ func runServiceWithPathResolver(args []string, stdout, stderr io.Writer, resolve
 	case "status":
 		return runServiceStatus(paths, options, stdout, stderr)
 	case "start":
-		return runServiceStart(paths, options, stdout, stderr)
+		return runServiceStartWithInput(paths, options, input, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "codex-folio [%s]: unknown service command %q\n", apperrors.CLIUsage, command)
 		writeServiceUsage(stderr)
@@ -95,11 +101,35 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			if err := setServiceStateRoot(&options, strings.TrimPrefix(arg, "--state-root=")); err != nil {
 				return serviceOptions{}, err
 			}
+		case arg == "--vault-mode":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			index++
+			if err := setServiceVaultMode(&options, args[index]); err != nil {
+				return serviceOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--vault-mode="):
+			if err := setServiceVaultMode(&options, strings.TrimPrefix(arg, "--vault-mode=")); err != nil {
+				return serviceOptions{}, err
+			}
 		default:
 			return serviceOptions{}, fmt.Errorf("unexpected service argument %q", arg)
 		}
 	}
 	return options, nil
+}
+
+func setServiceVaultMode(options *serviceOptions, value string) error {
+	if options.vaultMode != "" {
+		return errors.New("only one vault-mode selection may be supplied")
+	}
+	mode := platform.VaultMode(strings.TrimSpace(value))
+	if mode != platform.VaultModeSecretService && mode != platform.VaultModePassphrase {
+		return errors.New("vault mode must be secret-service or passphrase")
+	}
+	options.vaultMode = mode
+	return nil
 }
 
 func setServiceStateRoot(options *serviceOptions, value string) error {
@@ -158,6 +188,10 @@ func runServiceStatus(paths platform.Paths, options serviceOptions, stdout, stde
 }
 
 func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer) int {
+	return runServiceStartWithInput(paths, options, nil, stdout, stderr)
+}
+
+func runServiceStartWithInput(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer) int {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
 		return writeServiceError(stderr, err)
@@ -182,7 +216,15 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 		}
 		return writeServiceError(stderr, err)
 	}
-	stateStore, err := openServiceStore(paths)
+	passphrase := ""
+	if options.vaultMode == platform.VaultModePassphrase {
+		passphrase, err = readServiceVaultPassphrase(input)
+		if err != nil {
+			_ = owner.Close()
+			return writeServiceError(stderr, err)
+		}
+	}
+	stateStore, err := openServiceStoreWithVaultMode(paths, options.vaultMode, passphrase)
 	if err != nil {
 		_ = owner.Close()
 		return writeServiceError(stderr, err)
@@ -338,8 +380,24 @@ func serviceRemediation(code string) string {
 
 func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--json]")
-	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+}
+
+func readServiceVaultPassphrase(input io.Reader) (string, error) {
+	if input == nil {
+		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault requires an explicit passphrase input"))
+	}
+	line, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault passphrase input is unavailable"))
+	}
+	line = strings.TrimSuffix(line, "\n")
+	line = strings.TrimSuffix(line, "\r")
+	if line == "" {
+		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault requires a non-empty passphrase"))
+	}
+	return line, nil
 }
 
 func statusName(running bool) string {

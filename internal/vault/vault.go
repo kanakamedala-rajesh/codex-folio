@@ -67,6 +67,18 @@ func (KeyMaterial) GoString() string {
 	return "vault.KeyMaterial{opaque}"
 }
 
+// Clear releases the in-memory key bytes held by material. Platform adapters
+// use this when a per-session vault is locked; it does not expose the bytes or
+// make them serializable.
+func (material *KeyMaterial) Clear() {
+	if material == nil {
+		return
+	}
+	clear(material.key)
+	material.key = nil
+	material.generation = ""
+}
+
 // NewKeyMaterial validates and copies a key returned by a platform vault
 // adapter. The returned value has no accessor for the key bytes.
 func NewKeyMaterial(generation string, key []byte) (KeyMaterial, error) {

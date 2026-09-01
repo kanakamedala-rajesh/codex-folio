@@ -54,6 +54,37 @@ the native build contract available on Linux, Windows, and macOS. A future
 replacement must preserve the pure-Go, cgo-free contract and update the
 license review and release inventory together.
 
+## Reviewed Go cryptography dependency
+
+Issue #17 adds `golang.org/x/crypto` at `v0.41.0` for its maintained Argon2id
+implementation. The headless Linux vault needs a memory-hard password-based
+key derivation function; the Go standard library does not provide one, and a
+local implementation would add security and maintenance risk. The module is
+BSD-3-Clause licensed and is compatible with Apache-2.0 distribution. It runs
+locally without network or credential access and is used only to derive the
+passphrase wrapping key. Its version and checksum are pinned in `go.mod` and
+`go.sum`, and its license is included in the release inventory. The upstream
+Go project maintains the module as part of the Go cryptography subrepository;
+upgrades remain an explicit security review because KDF behavior affects the
+on-disk vault format. The dependency adds only the Argon2id implementation to
+the native binary and has no frontend, build-script, or generated-code role.
+Alternatives considered were a standard-library KDF (none is memory-hard) and
+a local implementation (rejected for security and maintenance risk). A future
+replacement must preserve the versioned vault format or provide an explicit
+migration.
+
+## Linux Secret Service runtime
+
+The Linux desktop adapter invokes the distro-provided `secret-tool` client,
+which talks to the current user's Secret Service collection. It passes the
+protected record over standard input and never places key material in command
+arguments or environment variables. If the client, user session, collection,
+or unlock capability is unavailable, the adapter returns a stable vault error;
+the composition root requires explicit passphrase mode for WSL/headless use.
+Native Secret Service tests run when the client and session are available and
+record the unavailable/locked result otherwise. This keeps cross-compilation
+and desktop-facility availability separate from runtime qualification.
+
 ## Removal and inventory
 
 Remove unused dependencies and their lock entries in the same change that

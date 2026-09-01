@@ -76,6 +76,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
-	fmt.Fprintln(stdout, "  codex-folio service {status|start} [--state-root PATH] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio service {status|start} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

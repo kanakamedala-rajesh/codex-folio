@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -102,6 +103,55 @@ func TestUnknownServiceCommandUsesUsageExitCodeBeforeResolvingPaths(t *testing.T
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.CLIUsage)) {
 		t.Fatalf("stderr = %q, want stable usage code %q", stderr.String(), apperrors.CLIUsage)
+	}
+}
+
+func TestServiceVaultModeSelectionIsExplicitAndValidated(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		mode platform.VaultMode
+	}{
+		{name: "secret service", args: []string{"--vault-mode", "secret-service"}, mode: platform.VaultModeSecretService},
+		{name: "passphrase equals", args: []string{"--vault-mode=passphrase"}, mode: platform.VaultModePassphrase},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options, err := parseServiceOptions(tt.args)
+			if err != nil {
+				t.Fatalf("parseServiceOptions() error = %v", err)
+			}
+			if options.vaultMode != tt.mode {
+				t.Fatalf("vault mode = %q, want %q", options.vaultMode, tt.mode)
+			}
+		})
+	}
+
+	for _, args := range [][]string{
+		{"--vault-mode", "plaintext"},
+		{"--vault-mode", "passphrase", "--vault-mode=secret-service"},
+	} {
+		if _, err := parseServiceOptions(args); err == nil {
+			t.Fatalf("parseServiceOptions(%q) accepted an invalid or duplicate vault mode", args)
+		}
+	}
+}
+
+func TestServicePassphraseInputRequiresAnExplicitNonEmptyLine(t *testing.T) {
+	passphrase, err := readServiceVaultPassphrase(bytes.NewBufferString("correct horse battery staple\n"))
+	if err != nil {
+		t.Fatalf("readServiceVaultPassphrase() error = %v", err)
+	}
+	if passphrase != "correct horse battery staple" {
+		t.Fatalf("passphrase = %q, want input line", passphrase)
+	}
+
+	for _, input := range []io.Reader{nil, bytes.NewBufferString("\n")} {
+		if _, err := readServiceVaultPassphrase(input); err == nil {
+			t.Fatalf("readServiceVaultPassphrase(%v) succeeded without an explicit passphrase", input)
+		} else if got := apperrors.Code(err); got != apperrors.VaultLocked {
+			t.Fatalf("readServiceVaultPassphrase(%v) error code = %q, want %q", input, got, apperrors.VaultLocked)
+		}
 	}
 }
 
@@ -299,8 +349,8 @@ func TestServiceStartFailsClosedWhenStoreCannotOpen(t *testing.T) {
 	if exitCode := runServiceStart(paths, serviceOptions{json: true}, &stdout, &stderr); exitCode != exitFailure {
 		t.Fatalf("runServiceStart() exit code = %d, want %d; stdout = %q; stderr = %q", exitCode, exitFailure, stdout.String(), stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.StoreOpenFailed)) {
-		t.Fatalf("stderr = %q, want store-open error", stderr.String())
+	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.StoreOpenFailed)) && !bytes.Contains(stderr.Bytes(), []byte(apperrors.VaultUnavailable)) {
+		t.Fatalf("stderr = %q, want store-open or secure-vault error", stderr.String())
 	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {

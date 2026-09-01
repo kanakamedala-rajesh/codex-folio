@@ -28,6 +28,11 @@
       "license": "BSD-3-Clause"
     },
     {
+      "path": "golang.org/x/crypto",
+      "version": "v0.41.0",
+      "license": "BSD-3-Clause"
+    },
+    {
       "path": "golang.org/x/sys",
       "version": "v0.47.0",
       "license": "BSD-3-Clause"
