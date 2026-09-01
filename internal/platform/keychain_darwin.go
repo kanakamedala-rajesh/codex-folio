@@ -40,16 +40,23 @@ static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, 
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 }
 
-static Boolean codex_folio_default_keychain_is_unlocked(void) {
+// SecItemCopyMatching can still block on a locked legacy file-based Keychain,
+// even when the query disallows authentication UI. Check the lock state before
+// issuing the query so headless callers fail closed without waiting for a
+// SecurityAgent prompt.
+static int codex_folio_default_keychain_lock_state(void) {
 	SecKeychainRef keychain = NULL;
 	OSStatus status = SecKeychainCopyDefault(&keychain);
 	if (status != errSecSuccess) {
-		return false;
+		return -1;
 	}
 	SecKeychainStatus keychain_status = 0;
 	status = SecKeychainGetStatus(keychain, &keychain_status);
 	CFRelease(keychain);
-	return status == errSecSuccess && (keychain_status & kSecUnlockStateStatus) != 0;
+	if (status != errSecSuccess) {
+		return -1;
+	}
+	return (keychain_status & kSecUnlockStateStatus) != 0 ? 1 : 0;
 }
 
 static int codex_folio_keychain_find(const char *service, const char *account,
@@ -59,6 +66,10 @@ static int codex_folio_keychain_find(const char *service, const char *account,
 	}
 	*output = NULL;
 	*output_length = 0;
+	int keychain_lock_state = codex_folio_default_keychain_lock_state();
+	if (keychain_lock_state == 0) {
+		return errSecInteractionNotAllowed;
+	}
 	CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
 	CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
 	if (service_value == NULL || account_value == NULL) {
@@ -78,7 +89,7 @@ static int codex_folio_keychain_find(const char *service, const char *account,
 	CFRelease(query);
 	if (status != errSecSuccess) {
 		if (result != NULL) CFRelease(result);
-		if (status == errSecInteractionNotAllowed && codex_folio_default_keychain_is_unlocked()) {
+		if (status == errSecInteractionNotAllowed && keychain_lock_state > 0) {
 			return errSecAuthFailed;
 		}
 		return status;
