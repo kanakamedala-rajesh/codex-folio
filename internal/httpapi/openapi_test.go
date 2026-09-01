@@ -61,6 +61,50 @@ func TestGeneratedClientRoundTripsMetadataFixture(t *testing.T) {
 	}
 }
 
+func TestGeneratedClientBuildsBootstrapExchangeRequest(t *testing.T) {
+	t.Parallel()
+
+	httpClient := &recordingHTTPDoer{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader([]byte(`{"csrf_token":"csrf-value"}`))),
+		},
+	}
+	got, response, err := NewClient("http://127.0.0.1", httpClient).ExchangeBootstrap(
+		context.Background(),
+		BootstrapRequest{BootstrapToken: "bootstrap-value"},
+	)
+	if err != nil {
+		t.Fatalf("ExchangeBootstrap() error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("ExchangeBootstrap() status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if got.CSRFToken != "csrf-value" {
+		t.Fatalf("ExchangeBootstrap() = %#v, want CSRF response", got)
+	}
+	if httpClient.request == nil {
+		t.Fatal("ExchangeBootstrap() did not send a request")
+	}
+	if httpClient.request.Method != http.MethodPost || httpClient.request.URL.Path != BootstrapPath {
+		t.Fatalf("request = %s %s, want POST %s", httpClient.request.Method, httpClient.request.URL.Path, BootstrapPath)
+	}
+	if httpClient.request.Header.Get("Accept") != "application/json" || httpClient.request.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("request headers = %#v, want JSON Accept and Content-Type", httpClient.request.Header)
+	}
+	body, err := io.ReadAll(httpClient.request.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	var input BootstrapRequest
+	if err := json.Unmarshal(body, &input); err != nil {
+		t.Fatalf("bootstrap request body is not JSON: %v", err)
+	}
+	if input.BootstrapToken != "bootstrap-value" {
+		t.Fatalf("bootstrap request token = %q, want bootstrap-value", input.BootstrapToken)
+	}
+}
+
 type recordingHTTPDoer struct {
 	request  *http.Request
 	response *http.Response

@@ -41,5 +41,28 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             .nvmrc
+      - name: Prepare an ephemeral user Keychain for native tests
+        if: matrix.runner == 'macos-15'
+        shell: bash
+        run: |
+          keychain_password="$(uuidgen)"
+          platform_keychain_path="$RUNNER_TEMP/codex-folio-platform.keychain-db"
+          cmd_keychain_path="$RUNNER_TEMP/codex-folio-cmd.keychain-db"
+          for keychain_path in "$platform_keychain_path" "$cmd_keychain_path"; do
+            security create-keychain -p "$keychain_password" "$keychain_path"
+            security set-keychain-settings -lut 21600 "$keychain_path"
+            security unlock-keychain -p "$keychain_password" "$keychain_path"
+          done
+          security list-keychains -d user -s "$platform_keychain_path" "$cmd_keychain_path"
+          security default-keychain -d user -s "$platform_keychain_path"
+          echo "::add-mask::$keychain_password"
+          echo "CODEX_FOLIO_TEST_KEYCHAIN_PASSWORD=$keychain_password" >> "$GITHUB_ENV"
+          echo "CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH=$platform_keychain_path" >> "$GITHUB_ENV"
+          echo "CODEX_FOLIO_CMD_KEYCHAIN_PATH=$cmd_keychain_path" >> "$GITHUB_ENV"
       - name: Run the repository verification contract
+        env:
+          # The file-based Keychain's default/search-list preferences are
+          # shared by the macOS test processes. Keep native packages from
+          # overwriting one another's test Keychain configuration.
+          GOFLAGS: ${{ matrix.runner == 'macos-15' && '-p=1' || '' }}
         run: node scripts/verify.mjs

@@ -3,7 +3,15 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "d96113f0e8a323678e9235881911a12e92a0c98ca79e3df1be41c063a06fb664" as const;
+  "6acdae74bac2879ed7da786020e849919224748d58e3127f08a5a1972c8a6d85" as const;
+
+export interface BootstrapRequest {
+  bootstrap_token: string;
+}
+
+export interface BootstrapResponse {
+  csrf_token: string;
+}
 
 export interface MetadataResponse {
   api_version: string;
@@ -12,6 +20,19 @@ export interface MetadataResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/bootstrap": {
+    post: {
+      operationId: "exchangeBootstrap";
+      requestBody: BootstrapRequest;
+      responses: {
+        200: {
+          content: {
+            "application/json": BootstrapResponse;
+          };
+        };
+      };
+    };
+  };
   "/api/v1/meta": {
     get: {
       operationId: "getMetadata";
@@ -27,6 +48,7 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
 }
 
@@ -35,11 +57,28 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async exchangeBootstrap(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/bootstrap", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error("POST /api/v1/bootstrap failed with HTTP " + response.status);
+      }
+      return (await response.json()) as BootstrapResponse;
+    },
     async getMetadata(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
       const response = await fetcher(baseUrl + "/api/v1/meta", {
         ...init,
+        credentials: init.credentials ?? "include",
         headers,
         method: "GET",
       });

@@ -94,6 +94,7 @@ Tests assert observable outcomes through module interfaces rather than internal 
 ```text
 cmd/codex-folio/
 internal/profile/
+internal/vault/
 internal/launch/
 internal/usage/
 internal/activity/

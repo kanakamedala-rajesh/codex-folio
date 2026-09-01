@@ -139,62 +139,131 @@ function validateContract(contract, productVersion) {
     throw new Error("API version must use the v<major> format");
   }
 
+  const bootstrapPath = `/api/${apiVersion}/bootstrap`;
+  const metadataPath = `/api/${apiVersion}/meta`;
   assertObject(contract.paths, "paths");
-  assertExactKeyCount(contract.paths, 1, "paths");
-  const [metadataPath, pathItem] = Object.entries(contract.paths)[0];
-  assertEqual(metadataPath, `/api/${apiVersion}/meta`, "metadata path");
-  assertObject(pathItem, `path ${metadataPath}`);
-  assertExactKeys(pathItem, ["get"], `path ${metadataPath}`);
-  assertObject(pathItem.get, `GET ${metadataPath}`);
-  const operationId = pathItem.get.operationId;
-  assertIdentifier(operationId, "operationId");
+  assertExactKeys(contract.paths, [bootstrapPath, metadataPath], "paths");
 
-  assertObject(pathItem.get.responses, "metadata responses");
-  assertExactKeys(pathItem.get.responses, ["200"], "metadata responses");
-  const response = pathItem.get.responses["200"];
-  assertObject(response, "metadata 200 response");
-  assertObject(response.content, "metadata response content");
-  assertExactKeys(response.content, ["application/json"], "metadata response content");
-  const mediaType = response.content["application/json"];
-  assertObject(mediaType, "metadata JSON response");
-  assertObject(mediaType.schema, "metadata response schema");
-  const responseReference = mediaType.schema.$ref;
-  if (typeof responseReference !== "string" || !responseReference.startsWith("#/$defs/")) {
-    throw new Error("metadata response reference must point to a local $defs schema");
-  }
-  const schemaName = responseReference.slice("#/$defs/".length);
-  assertIdentifier(schemaName, "metadata schema name");
-
-  assertObject(contract.$defs, "$defs");
-  assertExactKeys(contract.$defs, [schemaName], "$defs");
-  const metadataSchema = contract.$defs[schemaName];
-  assertObject(metadataSchema, `${schemaName} schema`);
-  assertEqual(metadataSchema.type, "object", `${schemaName} type`);
-  assertEqual(metadataSchema.additionalProperties, false, `${schemaName} additionalProperties`);
-  assertObject(metadataSchema.properties, `${schemaName} properties`);
-  assertArrayEqual(
-    metadataSchema.required,
-    Object.keys(metadataSchema.properties),
-    `${schemaName} required properties`,
+  const bootstrapPathItem = contract.paths[bootstrapPath];
+  assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
+  assertExactKeys(bootstrapPathItem, ["post"], `path ${bootstrapPath}`);
+  const bootstrapOperation = bootstrapPathItem.post;
+  assertObject(bootstrapOperation, `POST ${bootstrapPath}`);
+  assertExactKeys(
+    bootstrapOperation,
+    ["operationId", "requestBody", "responses"],
+    `POST ${bootstrapPath}`,
   );
-  const metadataFields = metadataSchema.required.map((name) => {
-    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-      throw new Error(`${schemaName} property ${JSON.stringify(name)} is not a snake_case field`);
-    }
-    return { name, schema: metadataSchema.properties[name] };
-  });
-  for (const { schema } of metadataFields) {
-    assertEqual(schema.type, "string", `${schemaName} property type`);
-  }
+  const bootstrapOperationId = bootstrapOperation.operationId;
+  assertIdentifier(bootstrapOperationId, "bootstrap operationId");
+  const bootstrapRequestReference = requestReference(
+    bootstrapOperation.requestBody,
+    `POST ${bootstrapPath} request body`,
+  );
+  const bootstrapResponseReference = responseReference(
+    bootstrapOperation,
+    `POST ${bootstrapPath}`,
+  );
+
+  const metadataPathItem = contract.paths[metadataPath];
+  assertObject(metadataPathItem, `path ${metadataPath}`);
+  assertExactKeys(metadataPathItem, ["get"], `path ${metadataPath}`);
+  const metadataOperation = metadataPathItem.get;
+  assertObject(metadataOperation, `GET ${metadataPath}`);
+  assertExactKeys(metadataOperation, ["operationId", "responses"], `GET ${metadataPath}`);
+  const metadataOperationId = metadataOperation.operationId;
+  assertIdentifier(metadataOperationId, "metadata operationId");
+  const metadataResponseReference = responseReference(
+    metadataOperation,
+    `GET ${metadataPath}`,
+  );
+
+  const schemaNames = [
+    schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
+    schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
+    schemaNameFromReference(metadataResponseReference, "metadata response"),
+  ];
+  assertObject(contract.$defs, "$defs");
+  assertExactKeys(contract.$defs, schemaNames, "$defs");
+  const bootstrapRequestFields = schemaFields(
+    contract.$defs[schemaNames[0]],
+    schemaNames[0],
+  );
+  const bootstrapResponseFields = schemaFields(
+    contract.$defs[schemaNames[1]],
+    schemaNames[1],
+  );
+  const metadataFields = schemaFields(contract.$defs[schemaNames[2]], schemaNames[2]);
 
   return {
     apiVersion,
+    bootstrapPath,
+    bootstrapOperationId,
+    bootstrapRequestFields,
+    bootstrapRequestType: schemaNames[0],
+    bootstrapResponseFields,
+    bootstrapResponseType: schemaNames[1],
     metadataFields,
     metadataPath,
-    operationId,
-    responseReference,
-    schemaName,
+    metadataOperationId,
+    metadataResponseType: schemaNames[2],
   };
+}
+
+function requestReference(requestBody, name) {
+  assertObject(requestBody, name);
+  assertExactKeys(requestBody, ["content", "required"], name);
+  assertEqual(requestBody.required, true, `${name}.required`);
+  assertObject(requestBody.content, `${name}.content`);
+  assertExactKeys(requestBody.content, ["application/json"], `${name}.content`);
+  const mediaType = requestBody.content["application/json"];
+  assertObject(mediaType, `${name} JSON content`);
+  assertObject(mediaType.schema, `${name} schema`);
+  return mediaType.schema.$ref;
+}
+
+function responseReference(operation, name) {
+  assertObject(operation.responses, `${name} responses`);
+  assertExactKeys(operation.responses, ["200"], `${name} responses`);
+  const response = operation.responses["200"];
+  assertObject(response, `${name} 200 response`);
+  assertObject(response.content, `${name} response content`);
+  assertExactKeys(response.content, ["application/json"], `${name} response content`);
+  const mediaType = response.content["application/json"];
+  assertObject(mediaType, `${name} JSON response`);
+  assertObject(mediaType.schema, `${name} response schema`);
+  return mediaType.schema.$ref;
+}
+
+function schemaNameFromReference(reference, name) {
+  if (typeof reference !== "string" || !reference.startsWith("#/$defs/")) {
+    throw new Error(`${name} reference must point to a local $defs schema`);
+  }
+  const schemaName = reference.slice("#/$defs/".length);
+  assertIdentifier(schemaName, `${name} schema name`);
+  return schemaName;
+}
+
+function schemaFields(schema, schemaName) {
+  assertObject(schema, `${schemaName} schema`);
+  assertEqual(schema.type, "object", `${schemaName} type`);
+  assertEqual(schema.additionalProperties, false, `${schemaName} additionalProperties`);
+  assertObject(schema.properties, `${schemaName} properties`);
+  assertArrayEqual(
+    schema.required,
+    Object.keys(schema.properties),
+    `${schemaName} required properties`,
+  );
+  const fields = schema.required.map((name) => {
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+      throw new Error(`${schemaName} property ${JSON.stringify(name)} is not a snake_case field`);
+    }
+    return { name, schema: schema.properties[name] };
+  });
+  for (const { schema: fieldSchema } of fields) {
+    assertEqual(fieldSchema.type, "string", `${schemaName} property type`);
+  }
+  return fields;
 }
 
 function checkArtifacts({ artifacts }, rootDirectory) {
@@ -228,24 +297,32 @@ function writeArtifacts({ artifacts }, rootDirectory = defaultRootDirectory) {
 function renderGo(productVersion, sourceHash, contractShape) {
   const {
     apiVersion,
+    bootstrapOperationId,
+    bootstrapPath,
+    bootstrapRequestFields,
+    bootstrapRequestType,
+    bootstrapResponseFields,
+    bootstrapResponseType,
     metadataFields,
     metadataPath,
-    operationId,
-    responseReference,
-    schemaName,
+    metadataOperationId,
+    metadataResponseType,
   } = contractShape;
-  const clientMethod = goIdentifier(operationId);
-  const responseType = goIdentifier(schemaName);
-  const fieldLines = metadataFields
-    .map(({ name, schema }) => `\t${goIdentifier(name)} ${goType(schema)} \`json:"${name}"\``)
-    .join("\n");
+  const bootstrapMethod = goIdentifier(bootstrapOperationId);
+  const metadataMethod = goIdentifier(metadataOperationId);
+  const types = [
+    renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
+    renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
+    renderGoStruct(metadataResponseType, metadataFields),
+  ].join("\n\n");
 
   const source = `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
-// Response schema: ${responseReference}
+// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}
 package httpapi
 
 import (
+\t"bytes"
 \t"context"
 \t"encoding/json"
 \t"fmt"
@@ -257,12 +334,11 @@ const (
 \tAPIVersion           = "${apiVersion}"
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
+\tBootstrapPath        = "${bootstrapPath}"
 \tMetadataPath         = "${metadataPath}"
 )
 
-type ${responseType} struct {
-${fieldLines}
-}
+${types}
 
 type HTTPDoer interface {
 \tDo(*http.Request) (*http.Response, error)
@@ -280,8 +356,43 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 \t}
 }
 
-func (client *Client) ${clientMethod}(ctx context.Context) (${responseType}, *http.Response, error) {
-\tvar result ${responseType}
+func (client *Client) ${bootstrapMethod}(ctx context.Context, input ${bootstrapRequestType}) (${bootstrapResponseType}, *http.Response, error) {
+\tvar result ${bootstrapResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil {
+\t\treturn result, nil, err
+\t}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+BootstrapPath, bytes.NewReader(body))
+\tif err != nil {
+\t\treturn result, nil, err
+\t}
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+
+\thttpClient := client.httpClient
+\tif httpClient == nil {
+\t\thttpClient = http.DefaultClient
+\t}
+\tresponse, err := httpClient.Do(request)
+\tif err != nil {
+\t\treturn result, nil, err
+\t}
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf(
+\t\t\t"POST %s returned HTTP %d",
+\t\t\tBootstrapPath,
+\t\t\tresponse.StatusCode,
+\t\t)
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+\t\treturn result, response, err
+\t}
+\treturn result, response, nil
+}
+
+func (client *Client) ${metadataMethod}(ctx context.Context) (${metadataResponseType}, *http.Response, error) {
+\tvar result ${metadataResponseType}
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+MetadataPath, nil)
 \tif err != nil {
 \t\treturn result, nil, err
@@ -302,7 +413,7 @@ func (client *Client) ${clientMethod}(ctx context.Context) (${responseType}, *ht
 \t\t\t"GET %s returned HTTP %d",
 \t\t\tMetadataPath,
 \t\t\tresponse.StatusCode,
-\t\t)
+\t\t\t)
 \t}
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 \t\treturn result, response, err
@@ -314,16 +425,36 @@ func (client *Client) ${clientMethod}(ctx context.Context) (${responseType}, *ht
   return formatGo(source);
 }
 
+function renderGoStruct(schemaName, fields) {
+  const fieldLines = fields
+    .map(({ name, schema }) => `\t${goIdentifier(name)} ${goType(schema)} \`json:"${name}"\``)
+    .join("\n");
+  return `type ${goIdentifier(schemaName)} struct {
+${fieldLines}
+}`;
+}
+
 function renderTypeScript(productVersion, sourceHash, contractShape) {
   const {
     apiVersion,
+    bootstrapOperationId,
+    bootstrapPath,
+    bootstrapRequestFields,
+    bootstrapRequestType,
+    bootstrapResponseFields,
+    bootstrapResponseType,
     metadataFields,
     metadataPath,
-    operationId,
-    schemaName,
+    metadataOperationId,
+    metadataResponseType,
   } = contractShape;
-  const responseType = schemaName;
-  const fieldLines = metadataFields
+  const bootstrapRequestLines = bootstrapRequestFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const bootstrapResponseLines = bootstrapResponseFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const metadataLines = metadataFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
 
@@ -334,18 +465,39 @@ export const CONTRACT_VERSION = "${productVersion}" as const;
 export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
 
-export interface ${responseType} {
-${fieldLines}
+export interface ${bootstrapRequestType} {
+${bootstrapRequestLines}
+}
+
+export interface ${bootstrapResponseType} {
+${bootstrapResponseLines}
+}
+
+export interface ${metadataResponseType} {
+${metadataLines}
 }
 
 export interface ApiPaths {
-  "${metadataPath}": {
-    get: {
-      operationId: "${operationId}";
+  "${bootstrapPath}": {
+    post: {
+      operationId: "${bootstrapOperationId}";
+      requestBody: ${bootstrapRequestType};
       responses: {
         200: {
           content: {
-            "application/json": ${responseType};
+            "application/json": ${bootstrapResponseType};
+          };
+        };
+      };
+    };
+  };
+  "${metadataPath}": {
+    get: {
+      operationId: "${metadataOperationId}";
+      responses: {
+        200: {
+          content: {
+            "application/json": ${metadataResponseType};
           };
         };
       };
@@ -354,7 +506,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
-  ${operationId}(init?: RequestInit): Promise<${responseType}>;
+  ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
+  ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
 }
 
 export function createCodexFolioApiClient(
@@ -362,18 +515,35 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
-    async ${operationId}(init = {}) {
+    async ${bootstrapOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${bootstrapPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error("POST ${bootstrapPath} failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ${bootstrapResponseType};
+    },
+    async ${metadataOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
       const response = await fetcher(baseUrl + "${metadataPath}", {
         ...init,
+        credentials: init.credentials ?? "include",
         headers,
         method: "GET",
       });
       if (!response.ok) {
         throw new Error("GET ${metadataPath} failed with HTTP " + response.status);
       }
-      return (await response.json()) as ${responseType};
+      return (await response.json()) as ${metadataResponseType};
     },
   };
 }
@@ -465,6 +635,9 @@ function goIdentifier(name) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join("");
+  if (identifier.startsWith("Csrf")) {
+    return `CSRF${identifier.slice("Csrf".length)}`;
+  }
   return identifier.startsWith("Api") ? `API${identifier.slice(3)}` : identifier;
 }
 

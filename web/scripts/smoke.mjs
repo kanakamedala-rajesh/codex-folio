@@ -27,7 +27,7 @@ export function assertBuild(distDirectory) {
       /^(?:https?:)?\/\//i,
       `asset reference is not local: ${reference}`,
     );
-    const assetPath = resolve(distDirectory, reference.replace(/^\.\//, ""));
+    const assetPath = resolve(distDirectory, reference.replace(/^(?:\.\/|\/assets\/)/, ""));
     assert.ok(existsSync(assetPath), `index.html references missing asset ${reference}`);
   }
 
@@ -75,7 +75,9 @@ function escapeRegExp(value) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const distDirectory = resolve(process.argv[2] ?? resolve(scriptDirectory, "../dist"));
+  const distDirectory = resolve(
+    process.argv[2] ?? resolve(scriptDirectory, "../../internal/httpapi/assets"),
+  );
   try {
     assertBuild(distDirectory);
     console.log(`frontend smoke: ${relative(process.cwd(), distDirectory)} is self-contained`);

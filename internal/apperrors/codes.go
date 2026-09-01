@@ -1,7 +1,124 @@
 // Package apperrors owns stable machine-readable application error identifiers.
 package apperrors
 
+import "errors"
+
 const (
-	CLIUsage    = "CF_CLI_USAGE"
-	CLIInternal = "CF_CLI_INTERNAL"
+	CLIUsage                        = "CF_CLI_USAGE"
+	CLIInternal                     = "CF_CLI_INTERNAL"
+	DiagnosticsConfigurationInvalid = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
+	DiagnosticsEventInvalid         = "CF_DIAGNOSTICS_EVENT_INVALID"
+	PlatformStatePathInvalid        = "CF_PLATFORM_STATE_PATH_INVALID"
+	PlatformStatePathUnsafe         = "CF_PLATFORM_STATE_PATH_UNSAFE"
+	PlatformPermissionDenied        = "CF_PLATFORM_PERMISSION_DENIED"
+	PlatformServiceAlreadyRunning   = "CF_PLATFORM_SERVICE_ALREADY_RUNNING"
+	PlatformServiceMetadataInvalid  = "CF_PLATFORM_SERVICE_METADATA_INVALID"
+	PlatformServiceUnavailable      = "CF_PLATFORM_SERVICE_UNAVAILABLE"
+	HTTPAPIHostInvalid              = "CF_HTTPAPI_HOST_INVALID"
+	HTTPAPIOriginInvalid            = "CF_HTTPAPI_ORIGIN_INVALID"
+	HTTPAPIBootstrapInvalid         = "CF_HTTPAPI_BOOTSTRAP_INVALID"
+	HTTPAPISessionInvalid           = "CF_HTTPAPI_SESSION_INVALID"
+	HTTPAPISessionExpired           = "CF_HTTPAPI_SESSION_EXPIRED"
+	HTTPAPICSRFInvalid              = "CF_HTTPAPI_CSRF_INVALID"
+	HTTPAPIMethodNotAllowed         = "CF_HTTPAPI_METHOD_NOT_ALLOWED"
+	HTTPAPIRouteNotFound            = "CF_HTTPAPI_ROUTE_NOT_FOUND"
+	HTTPAPIServiceUnavailable       = "CF_HTTPAPI_SERVICE_UNAVAILABLE"
+	StoreOpenFailed                 = "CF_STORE_OPEN_FAILED"
+	StoreIntegrityFailed            = "CF_STORE_INTEGRITY_FAILED"
+	StoreSchemaIncompatible         = "CF_STORE_SCHEMA_INCOMPATIBLE"
+	StoreMigrationFailed            = "CF_STORE_MIGRATION_FAILED"
+	StoreMigrationPartial           = "CF_STORE_MIGRATION_PARTIAL"
+	StoreReadFailed                 = "CF_STORE_READ_FAILED"
+	StoreWriteFailed                = "CF_STORE_WRITE_FAILED"
+	StoreDiagnosticWriteFailed      = "CF_STORE_DIAGNOSTIC_WRITE_FAILED"
+	StoreBackupFailed               = "CF_STORE_BACKUP_FAILED"
+	StoreRecoveryCandidateInvalid   = "CF_STORE_RECOVERY_CANDIDATE_INVALID"
+	StoreRecoveryCandidateNotFound  = "CF_STORE_RECOVERY_CANDIDATE_NOT_FOUND"
+	StoreRecoveryRestoreFailed      = "CF_STORE_RECOVERY_RESTORE_FAILED"
+	VaultUnavailable                = "CF_VAULT_UNAVAILABLE"
+	VaultLocked                     = "CF_VAULT_LOCKED"
+	VaultKeyInvalid                 = "CF_VAULT_KEY_INVALID"
+	VaultEnvelopeInvalid            = "CF_VAULT_ENVELOPE_INVALID"
+	VaultEnvelopeUnsupported        = "CF_VAULT_ENVELOPE_UNSUPPORTED"
+	VaultKeyGenerationMismatch      = "CF_VAULT_KEY_GENERATION_MISMATCH"
+	VaultEncryptionFailed           = "CF_VAULT_ENCRYPTION_FAILED"
 )
+
+// CodedError carries a stable identifier while keeping implementation details
+// out of user-facing diagnostics. Callers can still inspect the underlying
+// cause with errors.Is or errors.As when they need to make a local decision.
+type CodedError struct {
+	code  string
+	cause error
+}
+
+func New(code string, cause error) error {
+	return &CodedError{code: code, cause: cause}
+}
+
+func (err *CodedError) Error() string {
+	return err.code
+}
+
+func (err *CodedError) Unwrap() error {
+	return err.cause
+}
+
+// Code returns the stable identifier carried by err, or an empty string when
+// err is not a coded application error.
+func Code(err error) string {
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
+	return ""
+}
+
+// IsRegistered reports whether code is one of the stable identifiers owned by
+// the current build. It keeps diagnostic producers from emitting arbitrary
+// strings as if they were part of the compatibility contract.
+func IsRegistered(code string) bool {
+	switch code {
+	case CLIUsage,
+		CLIInternal,
+		DiagnosticsConfigurationInvalid,
+		DiagnosticsEventInvalid,
+		PlatformStatePathInvalid,
+		PlatformStatePathUnsafe,
+		PlatformPermissionDenied,
+		PlatformServiceAlreadyRunning,
+		PlatformServiceMetadataInvalid,
+		PlatformServiceUnavailable,
+		HTTPAPIHostInvalid,
+		HTTPAPIOriginInvalid,
+		HTTPAPIBootstrapInvalid,
+		HTTPAPISessionInvalid,
+		HTTPAPISessionExpired,
+		HTTPAPICSRFInvalid,
+		HTTPAPIMethodNotAllowed,
+		HTTPAPIRouteNotFound,
+		HTTPAPIServiceUnavailable,
+		StoreOpenFailed,
+		StoreIntegrityFailed,
+		StoreSchemaIncompatible,
+		StoreMigrationFailed,
+		StoreMigrationPartial,
+		StoreReadFailed,
+		StoreWriteFailed,
+		StoreDiagnosticWriteFailed,
+		StoreBackupFailed,
+		StoreRecoveryCandidateInvalid,
+		StoreRecoveryCandidateNotFound,
+		StoreRecoveryRestoreFailed,
+		VaultUnavailable,
+		VaultLocked,
+		VaultKeyInvalid,
+		VaultEnvelopeInvalid,
+		VaultEnvelopeUnsupported,
+		VaultKeyGenerationMismatch,
+		VaultEncryptionFailed:
+		return true
+	default:
+		return false
+	}
+}

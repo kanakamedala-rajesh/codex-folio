@@ -103,7 +103,14 @@ test("development dry run creates all deterministic tier-one archives and metada
     }
 
     const inventory = readJSON(join(firstOutput, "dependency-licenses.json"));
-    assert.deepEqual(inventory.sources[0].dependencies, []);
+    assert.equal(inventory.sources[0].dependencies.length > 0, true);
+    assert.equal(inventory.sources[0].dependencies.every((dependency) => dependency.license), true);
+    assert.equal(
+      inventory.sources[0].dependencies.some(
+        (dependency) => dependency.path === "modernc.org/sqlite" && dependency.version === "v1.57.0",
+      ),
+      true,
+    );
     assert.equal(inventory.sources[1].lockfile_version, 3);
     assert.equal(inventory.sources[1].dependencies.length > 0, true);
     assert.equal(inventory.sources[1].dependencies.every((dependency) => dependency.license), true);
@@ -115,7 +122,10 @@ test("development dry run creates all deterministic tier-one archives and metada
     const sbom = readJSON(join(firstOutput, "sbom.cdx.json"));
     assert.equal(sbom.bomFormat, "CycloneDX");
     assert.equal(sbom.specVersion, "1.5");
-    assert.equal(sbom.components.length, inventory.sources[1].dependencies.length);
+    assert.equal(
+      sbom.components.length,
+      inventory.sources[0].dependencies.length + inventory.sources[1].dependencies.length,
+    );
     assert.equal(
       sbom.metadata.properties.some(
         (property) => property.name === "codex-folio:stable-eligible" && property.value === "false",

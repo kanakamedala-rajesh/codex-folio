@@ -1,8 +1,22 @@
-# Build the Phase 0 scaffold
+# Build the Phase 0 scaffold and local foundation
 
-The repository currently contains the non-production Phase 0 skeleton. It does
-not authenticate with Codex, launch Codex, access provider data, persist local
-state, or start a service.
+The repository contains the completed non-production Phase 0 scaffold and the
+completed Milestone 1 secure local foundation. It does not authenticate with
+Codex, launch Codex, access provider data, or expose later product workflows.
+The service resolves platform app-local paths, initializes the allowlisted
+versioned SQLite foundation, protects sensitive fields through the platform
+vault boundary, and runs a foreground owner through the CLI:
+
+```sh
+codex-folio service status [--state-root PATH] [--json]
+codex-folio service start [--state-root PATH] [--json]
+```
+
+The owner lock, descriptor, SQLite database, vault, recovery artifacts, and
+diagnostic aggregates are runtime foundation artifacts. Profile, launch,
+collection, continuation, dashboard, and other product workflows remain future
+milestones. The service is the only composed process path that opens the
+durable SQLite store or runs its migrations.
 
 ## Pinned prerequisites
 
@@ -89,7 +103,7 @@ telemetry endpoint, or production service is available to any job.
 Go:
 
 ```sh
-gofmt -l cmd/codex-folio/main.go cmd/codex-folio/main_test.go internal/buildinfo/version.go internal/buildinfo/version_test.go
+gofmt -l $(find cmd internal scripts -name '*.go' -type f -print)
 go vet ./cmd/... ./internal/...
 env GOCACHE=/tmp/codex-folio-go-cache go test ./cmd/... ./internal/...
 node scripts/build.mjs --build-class development
@@ -136,9 +150,10 @@ also contains `SHA256SUMS`, a deterministic dependency-license inventory,
 CycloneDX SBOM, a machine-readable provenance placeholder, a signing-status
 record, and a release manifest.
 
-The current Go module has no external modules. If a Go dependency is added
-without reviewed license metadata, release generation fails closed instead of
-silently omitting it from the inventory.
+The current Go module includes the reviewed pure-Go SQLite dependency and its
+transitive modules. If another Go dependency is added without reviewed license
+metadata, release generation fails closed instead of silently omitting it from
+the inventory.
 
 Archive bytes are reproducible for the same source and lock state: entries are
 sorted, archive timestamps and ownership are fixed, build timestamps are not

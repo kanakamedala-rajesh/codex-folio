@@ -12,6 +12,222 @@
       "owner": "cli",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
+      "owner": "diagnostics",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_DIAGNOSTICS_EVENT_INVALID",
+      "owner": "diagnostics",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_STATE_PATH_INVALID",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_STATE_PATH_UNSAFE",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_PERMISSION_DENIED",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_ALREADY_RUNNING",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_METADATA_INVALID",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PLATFORM_SERVICE_UNAVAILABLE",
+      "owner": "platform",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_HOST_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_ORIGIN_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_BOOTSTRAP_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SESSION_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SESSION_EXPIRED",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_CSRF_INVALID",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_METHOD_NOT_ALLOWED",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_ROUTE_NOT_FOUND",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_HTTPAPI_SERVICE_UNAVAILABLE",
+      "owner": "httpapi",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_OPEN_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_INTEGRITY_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_SCHEMA_INCOMPATIBLE",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_MIGRATION_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_MIGRATION_PARTIAL",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_READ_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_WRITE_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_DIAGNOSTIC_WRITE_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_BACKUP_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_RECOVERY_CANDIDATE_INVALID",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_RECOVERY_CANDIDATE_NOT_FOUND",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_RECOVERY_RESTORE_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_UNAVAILABLE",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_LOCKED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_KEY_INVALID",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENVELOPE_INVALID",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENVELOPE_UNSUPPORTED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_KEY_GENERATION_MISMATCH",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_ENCRYPTION_FAILED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
     }
   ]
 }

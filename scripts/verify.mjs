@@ -81,7 +81,7 @@ try {
       runNpm(["--prefix", "web", "run", "typecheck"]);
       runNpm(["--prefix", "web", "run", "test"]);
       runNpm(["--prefix", "web", "run", "build"]);
-      run("node", ["web/scripts/smoke.mjs"]);
+      run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
     },
   );
   gate("tracked source and lockfile immutability", () => {

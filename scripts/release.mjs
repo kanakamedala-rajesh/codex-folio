@@ -13,6 +13,12 @@ import { gzipSync } from "node:zlib";
 
 const rootDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildScript = join(rootDirectory, "scripts", "build.mjs");
+const goDependencyLicensePath = join(
+  rootDirectory,
+  "docs",
+  "development",
+  "GO-DEPENDENCY-LICENSES.json",
+);
 const productName = "VenkataSudha CodexFolio";
 const commandName = "codex-folio";
 const supportedBuildClasses = new Set(["development", "prerelease", "stable"]);
@@ -346,12 +352,25 @@ function createDependencyLicenseInventory(version, buildClass) {
     })
     .sort(compareDependency);
   const goModule = parseGoMod(readFileSync(join(rootDirectory, "go.mod"), "utf8"));
-  if (goModule.dependencies.length > 0) {
-    throw new Error(
-      "go.mod declares external modules but no reviewed Go license metadata is available; update the release inventory before adding a Go dependency",
+  const goLicenseReviews = readJSON(goDependencyLicensePath).dependencies ?? [];
+  const goDependencies = goModule.dependencies.map((dependency) => {
+    const review = goLicenseReviews.find(
+      (candidate) =>
+        candidate.path === dependency.path &&
+        candidate.version === dependency.version,
     );
-  }
-  const licenseSummary = countLicenses(npmDependencies);
+    if (!review || !normalizeLicense(review.license)) {
+      throw new Error(
+        `Go dependency ${dependency.path}@${dependency.version} has no reviewed license metadata`,
+      );
+    }
+    return {
+      ...dependency,
+      license: normalizeLicense(review.license),
+      scope: dependency.indirect ? "runtime-transitive" : "runtime",
+    };
+  });
+  const licenseSummary = countLicenses([...goDependencies, ...npmDependencies]);
 
   return {
     schema: "codex-folio.dependency-licenses.v1",
@@ -364,7 +383,7 @@ function createDependencyLicenseInventory(version, buildClass) {
         ecosystem: "go",
         file: "go.mod",
         module: goModule.module,
-        dependencies: goModule.dependencies,
+        dependencies: goDependencies,
       },
       {
         ecosystem: "npm",
@@ -378,18 +397,27 @@ function createDependencyLicenseInventory(version, buildClass) {
 }
 
 function createSbom(inventory, version, buildClass) {
-  const npmSource = inventory.sources.find((source) => source.ecosystem === "npm");
-  const components = npmSource.dependencies.map((dependency) => ({
-    type: "library",
-    "bom-ref": `urn:codex-folio:npm:${sha256(dependency.package_path).slice(0, 24)}`,
-    name: dependency.name,
-    version: dependency.version,
-    scope: dependency.scope === "runtime" ? "required" : "optional",
-    licenses: [{ license: { name: dependency.license } }],
-    properties: [
-      { name: "codex-folio:lock-path", value: dependency.package_path },
-    ],
-  }));
+  const components = inventory.sources.flatMap((source) =>
+    source.dependencies.map((dependency) => {
+      const identifier =
+        source.ecosystem === "npm"
+          ? dependency.package_path
+          : `${dependency.path}@${dependency.version}`;
+      const properties =
+        source.ecosystem === "npm"
+          ? [{ name: "codex-folio:lock-path", value: dependency.package_path }]
+          : [{ name: "codex-folio:module-path", value: dependency.path }];
+      return {
+        type: "library",
+        "bom-ref": `urn:codex-folio:${source.ecosystem}:${sha256(identifier).slice(0, 24)}`,
+        name: source.ecosystem === "npm" ? dependency.name : dependency.path,
+        version: dependency.version,
+        scope: dependency.scope === "runtime" ? "required" : "optional",
+        licenses: [{ license: { name: dependency.license } }],
+        properties,
+      };
+    }),
+  );
   const inventoryDigest = sha256(Buffer.from(JSON.stringify(inventory), "utf8"));
 
   return {
@@ -431,6 +459,7 @@ function createProvenance(archives, version, buildClass, sourceRevision) {
     })),
     inputs: [
       inputDigest("go.mod"),
+      inputDigest("docs/development/GO-DEPENDENCY-LICENSES.json"),
       inputDigest("web/package-lock.json"),
       inputDigest("internal/buildinfo/version.txt"),
     ],
@@ -765,6 +794,10 @@ function sha256(data) {
 
 function writeJSON(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readJSON(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 const isMainModule = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
