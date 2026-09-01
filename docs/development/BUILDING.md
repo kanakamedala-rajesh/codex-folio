@@ -1,21 +1,22 @@
 # Build the Phase 0 scaffold and local foundation
 
-The repository currently contains the completed non-production Phase 0
-scaffold and the first Milestone 1 local-foundation slices. It does not
-authenticate with Codex, launch Codex, access provider data, or expose product
-storage workflows. The service can resolve platform app-local paths, initialize
-the allowlisted versioned SQLite foundation, and run a foreground owner through
-the CLI:
+The repository contains the completed non-production Phase 0 scaffold and the
+completed Milestone 1 secure local foundation. It does not authenticate with
+Codex, launch Codex, access provider data, or expose later product workflows.
+The service resolves platform app-local paths, initializes the allowlisted
+versioned SQLite foundation, protects sensitive fields through the platform
+vault boundary, and runs a foreground owner through the CLI:
 
 ```sh
 codex-folio service status [--state-root PATH] [--json]
 codex-folio service start [--state-root PATH] [--json]
 ```
 
-The owner lock, descriptor, and SQLite database are runtime foundation
-artifacts; vaults, diagnostics, and other product workflows remain future
-Milestone 1 tickets. The service is the only composed process path that opens
-the durable SQLite store or runs its migrations.
+The owner lock, descriptor, SQLite database, vault, recovery artifacts, and
+diagnostic aggregates are runtime foundation artifacts. Profile, launch,
+collection, continuation, dashboard, and other product workflows remain future
+milestones. The service is the only composed process path that opens the
+durable SQLite store or runs its migrations.
 
 ## Pinned prerequisites
 

@@ -22,3 +22,13 @@ A milestone is complete only after its exit evidence is accepted and recorded,
 not merely when its implementation tickets close. Later specifications and
 tickets are created just in time after preceding evidence makes their
 interfaces concrete.
+
+## Milestone 1 — secure local foundation
+
+The implementation and native Tier 1 exit-gate evidence are recorded in
+[`docs/product/MILESTONE-1-EVIDENCE.md`](docs/product/MILESTONE-1-EVIDENCE.md).
+Live acceptance remains tracked by [specification #10](https://github.com/kanakamedala-rajesh/codex-folio/issues/10)
+and [roadmap #9](https://github.com/kanakamedala-rajesh/codex-folio/issues/9).
+The scope ends at the secure local foundation; all profile, launch, collection,
+continuation, production dashboard, telemetry, and release behavior remains
+outside this milestone.
