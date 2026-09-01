@@ -16,8 +16,8 @@ package platform
 // not have. The login Keychain remains user-scoped and its default item
 // accessibility is When Unlocked.
 static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, CFStringRef account, Boolean returnData) {
-	const void *keys[5];
-	const void *values[5];
+	const void *keys[6];
+	const void *values[6];
 	CFIndex count = 3;
 	keys[0] = kSecClass;
 	values[0] = kSecClassGenericPassword;
@@ -32,9 +32,24 @@ static CFDictionaryRef codex_folio_keychain_identity_query(CFStringRef service, 
 		keys[count] = kSecMatchLimit;
 		values[count] = kSecMatchLimitOne;
 		count++;
+		keys[count] = kSecUseAuthenticationUI;
+		values[count] = kSecUseAuthenticationUIFail;
+		count++;
 	}
 	return CFDictionaryCreate(kCFAllocatorDefault, keys, values, count,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+}
+
+static Boolean codex_folio_default_keychain_is_unlocked(void) {
+	SecKeychainRef keychain = NULL;
+	OSStatus status = SecKeychainCopyDefault(&keychain);
+	if (status != errSecSuccess) {
+		return false;
+	}
+	SecKeychainStatus keychain_status = 0;
+	status = SecKeychainGetStatus(keychain, &keychain_status);
+	CFRelease(keychain);
+	return status == errSecSuccess && (keychain_status & kSecUnlockStateStatus) != 0;
 }
 
 static int codex_folio_keychain_find(const char *service, const char *account,
@@ -63,6 +78,9 @@ static int codex_folio_keychain_find(const char *service, const char *account,
 	CFRelease(query);
 	if (status != errSecSuccess) {
 		if (result != NULL) CFRelease(result);
+		if (status == errSecInteractionNotAllowed && codex_folio_default_keychain_is_unlocked()) {
+			return errSecAuthFailed;
+		}
 		return status;
 	}
 	if (result == NULL || CFGetTypeID(result) != CFDataGetTypeID()) {
