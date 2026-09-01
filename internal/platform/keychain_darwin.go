@@ -200,6 +200,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
@@ -254,20 +255,21 @@ func (systemKeychainBackend) delete(service, account string) error {
 }
 
 func keychainErrorForStatus(status int) error {
+	statusError := fmt.Errorf("Security.framework status %d", status)
 	switch {
 	case status == int(C.codex_folio_keychain_status_item_not_found()):
-		return ErrKeychainItemNotFound
+		return errors.Join(ErrKeychainItemNotFound, statusError)
 	case status == int(C.codex_folio_keychain_status_duplicate()):
-		return ErrKeychainItemExists
+		return errors.Join(ErrKeychainItemExists, statusError)
 	case status == int(C.codex_folio_keychain_status_locked()):
-		return ErrKeychainLocked
+		return errors.Join(ErrKeychainLocked, statusError)
 	case status == int(C.codex_folio_keychain_status_auth_failed()) || status == int(C.codex_folio_keychain_status_user_canceled()):
-		return ErrKeychainAccessDenied
+		return errors.Join(ErrKeychainAccessDenied, statusError)
 	case status == int(C.codex_folio_keychain_status_decode()):
-		return ErrKeychainProtectedMaterial
+		return errors.Join(ErrKeychainProtectedMaterial, statusError)
 	case status == int(C.codex_folio_keychain_status_no_keychain()) || status == int(C.codex_folio_keychain_status_not_available()):
-		return ErrKeychainUnavailable
+		return errors.Join(ErrKeychainUnavailable, statusError)
 	default:
-		return errors.Join(ErrKeychainUnavailable, errors.New("Keychain operation failed"))
+		return errors.Join(ErrKeychainUnavailable, statusError)
 	}
 }

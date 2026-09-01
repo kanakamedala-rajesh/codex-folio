@@ -23,12 +23,36 @@ func TestMain(m *testing.M) {
 	if os.Getenv("CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH") != "" {
 		service := fmt.Sprintf("%s.test.%d", DefaultKeychainService, os.Getpid())
 		account := fmt.Sprintf("%s.%d", DefaultKeychainAccount, os.Getpid())
+		if err := probeProductionKeychainBackend(service, account); err != nil {
+			fmt.Fprintf(os.Stderr, "probe production platform Keychain backend: %v\n", err)
+			os.Exit(1)
+		}
 		if err := keychaintest.Probe(service, account); err != nil {
 			fmt.Fprintf(os.Stderr, "probe native platform test Keychain: %v\n", err)
 			os.Exit(1)
 		}
 	}
 	os.Exit(m.Run())
+}
+
+func probeProductionKeychainBackend(service, account string) error {
+	backend := newSystemKeychainBackend()
+	if err := backend.delete(service, account); err != nil {
+		return fmt.Errorf("delete stale item: %w", err)
+	}
+	record := bytes.Repeat([]byte{0x4a}, keychainRecordSize)
+	if err := backend.add(service, account, record); err != nil {
+		return fmt.Errorf("add item: %w", err)
+	}
+	defer func() {
+		_ = backend.delete(service, account)
+	}()
+	loaded, err := backend.find(service, account)
+	if err != nil {
+		return fmt.Errorf("find item: %w", err)
+	}
+	clear(loaded)
+	return nil
 }
 
 func TestKeychainVaultRoundTripsAndReusesKeyAcrossProviderRestart(t *testing.T) {
