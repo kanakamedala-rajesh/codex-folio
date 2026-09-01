@@ -21,7 +21,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if os.Getenv("CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH") != "" {
-		if err := keychaintest.Probe(DefaultKeychainService+".probe", DefaultKeychainAccount+".probe"); err != nil {
+		service := fmt.Sprintf("%s.test.%d", DefaultKeychainService, os.Getpid())
+		account := fmt.Sprintf("%s.%d", DefaultKeychainAccount, os.Getpid())
+		if err := keychaintest.Probe(service, account); err != nil {
 			fmt.Fprintf(os.Stderr, "probe native platform test Keychain: %v\n", err)
 			os.Exit(1)
 		}

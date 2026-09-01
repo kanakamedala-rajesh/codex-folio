@@ -22,7 +22,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if os.Getenv("CODEX_FOLIO_CMD_KEYCHAIN_PATH") != "" {
-		if err := keychaintest.Probe(platform.DefaultKeychainService+".probe", platform.DefaultKeychainAccount+".probe"); err != nil {
+		service := fmt.Sprintf("%s.test.%d", platform.DefaultKeychainService, os.Getpid())
+		account := fmt.Sprintf("%s.test.%d", platform.DefaultKeychainAccount, os.Getpid())
+		if err := keychaintest.Probe(service, account); err != nil {
 			fmt.Fprintf(os.Stderr, "probe native cmd test Keychain: %v\n", err)
 			os.Exit(1)
 		}

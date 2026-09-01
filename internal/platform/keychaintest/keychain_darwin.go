@@ -104,7 +104,11 @@ static int probe_codex_folio_test_keychain(const char *service, const char *acco
 	if (service == NULL || account == NULL) return errSecParam;
 	CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
 	CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
-	CFDataRef data = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)"codex-folio-native-test", sizeof("codex-folio-native-test") - 1);
+	unsigned char probe_data[71];
+	for (size_t index = 0; index < sizeof(probe_data); index++) {
+		probe_data[index] = (unsigned char)(index + 1);
+	}
+	CFDataRef data = CFDataCreate(kCFAllocatorDefault, probe_data, sizeof(probe_data));
 	if (service_value == NULL || account_value == NULL || data == NULL) {
 		if (service_value != NULL) CFRelease(service_value);
 		if (account_value != NULL) CFRelease(account_value);
