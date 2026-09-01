@@ -94,11 +94,15 @@ func TestRecoveryRotationFailureRetainsSparseKnownGoodCandidate(t *testing.T) {
 	}
 
 	injected := errors.New("injected rotation failure")
+	failureCount := 1
+	if isWindowsRecoveryPath() {
+		failureCount = 2
+	}
 	failing, err := NewRecovery(RecoveryOptions{
 		DatabasePath: databasePath,
 		FileSystem: &failingRenameFileSystem{
 			FileSystem: recoveryFileSystem{},
-			failAt:     1,
+			failures:   failureCount,
 			err:        injected,
 		},
 	})
@@ -566,14 +570,13 @@ func TestRecoveryBackupsRetainCiphertextWithoutVaultMaterial(t *testing.T) {
 
 type failingRenameFileSystem struct {
 	FileSystem
-	failAt int
-	calls  int
-	err    error
+	failures int
+	err      error
 }
 
 func (filesystem *failingRenameFileSystem) Rename(sourcePath, destinationPath string) error {
-	filesystem.calls++
-	if filesystem.calls == filesystem.failAt {
+	if filesystem.failures > 0 {
+		filesystem.failures--
 		return filesystem.err
 	}
 	return filesystem.FileSystem.Rename(sourcePath, destinationPath)
