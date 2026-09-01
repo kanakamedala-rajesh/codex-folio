@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -21,6 +22,20 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
+}
+
+func TestKeychainCreatesNativeDeniedFixture(t *testing.T) {
+	if os.Getenv("CODEX_FOLIO_NATIVE_DENIED_FIXTURE") != "1" {
+		t.Skip("native denied fixture helper")
+	}
+	service := os.Getenv("CODEX_FOLIO_NATIVE_DENIED_SERVICE")
+	account := os.Getenv("CODEX_FOLIO_NATIVE_DENIED_ACCOUNT")
+	if service == "" || account == "" {
+		t.Fatal("native denied fixture identity is incomplete")
+	}
+	if err := keychaintest.AddDeniedFixture(service, account); err != nil {
+		t.Fatalf("create native denied fixture: %v", err)
+	}
 }
 
 func TestKeychainVaultRoundTripsAndReusesKeyAcrossProviderRestart(t *testing.T) {
@@ -113,10 +128,7 @@ func TestKeychainProviderFailsClosedForNativeLockedAndDeniedStates(t *testing.T)
 		t.Fatalf("delete stale test item: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := keychaintest.SetItemTrustAll(service, account, true); err != nil {
-			t.Errorf("restore test item access: %v", err)
-		}
-		if err := keychaintest.Delete(service, account); err != nil {
+		if err := backend.delete(service, account); err != nil {
 			t.Errorf("delete test item: %v", err)
 		}
 	})
@@ -154,10 +166,45 @@ func TestKeychainProviderFailsClosedForNativeLockedAndDeniedStates(t *testing.T)
 		}
 	})
 
-	if err := keychaintest.SetItemTrustAll(service, account, false); err != nil {
-		t.Fatalf("deny test item access: %v", err)
+	deniedService := fmt.Sprintf("%s.denied.%d", DefaultKeychainService, os.Getpid())
+	deniedAccount := fmt.Sprintf("%s.denied.%d", DefaultKeychainAccount, os.Getpid())
+	if err := backend.delete(deniedService, deniedAccount); err != nil {
+		t.Fatalf("delete stale denied test item: %v", err)
 	}
-	_, err = provider.LoadOrCreate(context.Background())
+	t.Cleanup(func() {
+		if err := backend.delete(deniedService, deniedAccount); err != nil {
+			t.Errorf("delete denied test item: %v", err)
+		}
+	})
+
+	fixtureProcess := exec.Command(os.Args[0], "-test.run=^TestKeychainCreatesNativeDeniedFixture$")
+	fixtureProcess.Env = append(os.Environ(),
+		"CODEX_FOLIO_NATIVE_DENIED_FIXTURE=1",
+		"CODEX_FOLIO_NATIVE_DENIED_SERVICE="+deniedService,
+		"CODEX_FOLIO_NATIVE_DENIED_ACCOUNT="+deniedAccount,
+	)
+	if output, err := fixtureProcess.CombinedOutput(); err != nil {
+		t.Fatalf("create native denied fixture: %v\n%s", err, output)
+	}
+
+	if err := keychaintest.SetUserInteractionAllowed(false); err != nil {
+		t.Fatalf("disable Keychain user interaction: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := keychaintest.SetUserInteractionAllowed(true); err != nil {
+			t.Errorf("restore Keychain user interaction: %v", err)
+		}
+	})
+
+	deniedProvider, err := NewKeychainKeyProviderWithOptions(KeychainOptions{
+		Service:     deniedService,
+		Account:     deniedAccount,
+		AllowCreate: false,
+	})
+	if err != nil {
+		t.Fatalf("NewKeychainKeyProviderWithOptions() denied error = %v", err)
+	}
+	_, err = deniedProvider.LoadOrCreate(context.Background())
 	if err == nil || apperrors.Code(err) != apperrors.VaultUnavailable || !errors.Is(err, ErrKeychainAccessDenied) {
 		t.Fatalf("denied LoadOrCreate() error = %v, want VaultUnavailable/access denied", err)
 	}

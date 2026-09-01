@@ -9,7 +9,6 @@ package keychaintest
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <Security/SecAccess.h>
-#include <Security/SecACL.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -120,48 +119,44 @@ static int unlock_codex_folio_default_keychain(const char *password) {
 	return status;
 }
 
-static int set_codex_folio_keychain_item_trust(const char *service, const char *account, Boolean trust_all) {
+static int add_codex_folio_denied_fixture(const char *service, const char *account) {
 	CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
 	CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
-	if (service_value == NULL || account_value == NULL) {
+	const UInt8 fixture[] = "codex-folio native denied fixture";
+	CFDataRef data = CFDataCreate(kCFAllocatorDefault, fixture, (CFIndex)(sizeof(fixture) - 1));
+	CFArrayRef trusted_applications = CFArrayCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeArrayCallBacks);
+	SecAccessRef access = NULL;
+	if (service_value == NULL || account_value == NULL || data == NULL || trusted_applications == NULL) {
 		if (service_value != NULL) CFRelease(service_value);
 		if (account_value != NULL) CFRelease(account_value);
+		if (data != NULL) CFRelease(data);
+		if (trusted_applications != NULL) CFRelease(trusted_applications);
 		return errSecParam;
 	}
-	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnRef, kSecMatchLimit};
-	const void *values[] = {kSecClassGenericPassword, service_value, account_value, kCFBooleanTrue, kSecMatchLimitOne};
+	OSStatus status = SecAccessCreate(CFSTR("CodexFolio native denied fixture"), trusted_applications, &access);
+	CFRelease(trusted_applications);
+	if (status != errSecSuccess) {
+		CFRelease(service_value);
+		CFRelease(account_value);
+		CFRelease(data);
+		return status;
+	}
+	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecAttrAccess, kSecValueData};
+	const void *values[] = {kSecClassGenericPassword, service_value, account_value, access, data};
 	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 5,
 		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	CFRelease(service_value);
 	CFRelease(account_value);
+	CFRelease(access);
+	CFRelease(data);
 	if (query == NULL) return errSecAllocate;
-	SecKeychainItemRef item = NULL;
-	OSStatus status = SecItemCopyMatching(query, (CFTypeRef *)&item);
+	status = SecItemAdd(query, NULL);
 	CFRelease(query);
-	if (status != errSecSuccess) return status;
-	SecAccessRef access = NULL;
-	status = SecKeychainItemCopyAccess(item, &access);
-	if (status == errSecSuccess) {
-		CFArrayRef acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
-		if (acls == NULL) {
-			status = errSecInvalidACL;
-		} else {
-			CFArrayRef applications = trust_all ? NULL : CFArrayCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeArrayCallBacks);
-			SecKeychainPromptSelector prompt_selector = trust_all ? 0 : kSecKeychainPromptRequirePassphase;
-			CFIndex count = CFArrayGetCount(acls);
-			if (count == 0) status = errSecInvalidACL;
-			for (CFIndex index = 0; status == errSecSuccess && index < count; index++) {
-				SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, index);
-				status = SecACLSetContents(acl, applications, CFSTR("CodexFolio native test"), prompt_selector);
-			}
-			if (status == errSecSuccess) status = SecKeychainItemSetAccess(item, access);
-			if (applications != NULL) CFRelease(applications);
-			CFRelease(acls);
-		}
-		CFRelease(access);
-	}
-	CFRelease(item);
 	return status;
+}
+
+static int set_codex_folio_keychain_user_interaction(Boolean allowed) {
+	return SecKeychainSetUserInteractionAllowed(allowed);
 }
 */
 import "C"
@@ -254,18 +249,28 @@ func UnlockDefault(password string) error {
 	return nil
 }
 
-// SetItemTrustAll changes the ACL of a test item so native reads are either
-// allowed or denied without involving a user prompt.
-func SetItemTrustAll(service, account string, trustAll bool) error {
+// AddDeniedFixture creates an item whose restricted access list trusts no
+// applications. It is intended to be called from a separate test process so
+// the production test process has not already been authorized for the item.
+func AddDeniedFixture(service, account string) error {
 	serviceValue := C.CString(service)
 	accountValue := C.CString(account)
 	defer C.free(unsafe.Pointer(serviceValue))
 	defer C.free(unsafe.Pointer(accountValue))
-	trustAllValue := C.Boolean(0)
-	if trustAll {
-		trustAllValue = C.Boolean(1)
+	if status := C.add_codex_folio_denied_fixture(serviceValue, accountValue); int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
 	}
-	if status := C.set_codex_folio_keychain_item_trust(serviceValue, accountValue, trustAllValue); int(status) != 0 {
+	return nil
+}
+
+// SetUserInteractionAllowed scopes a native test's Keychain calls to either
+// fail immediately or permit normal cleanup prompts.
+func SetUserInteractionAllowed(allowed bool) error {
+	allowedValue := C.Boolean(0)
+	if allowed {
+		allowedValue = C.Boolean(1)
+	}
+	if status := C.set_codex_folio_keychain_user_interaction(allowedValue); int(status) != 0 {
 		return fmt.Errorf("Security.framework status %d", int(status))
 	}
 	return nil

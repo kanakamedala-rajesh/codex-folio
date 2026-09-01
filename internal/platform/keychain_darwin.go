@@ -185,6 +185,8 @@ static int codex_folio_keychain_status_duplicate(void) { return errSecDuplicateI
 static int codex_folio_keychain_status_locked(void) { return errSecInteractionNotAllowed; }
 static int codex_folio_keychain_status_auth_failed(void) { return errSecAuthFailed; }
 static int codex_folio_keychain_status_user_canceled(void) { return errSecUserCanceled; }
+static int codex_folio_keychain_status_interaction_required(void) { return errSecInteractionRequired; }
+static int codex_folio_keychain_status_no_access(void) { return errSecNoAccessForItem; }
 static int codex_folio_keychain_status_decode(void) { return errSecDecode; }
 static int codex_folio_keychain_status_no_keychain(void) { return errSecNoDefaultKeychain; }
 static int codex_folio_keychain_status_not_available(void) { return errSecNotAvailable; }
@@ -257,7 +259,10 @@ func keychainErrorForStatus(status int) error {
 		return ErrKeychainItemExists
 	case status == int(C.codex_folio_keychain_status_locked()):
 		return ErrKeychainLocked
-	case status == int(C.codex_folio_keychain_status_auth_failed()) || status == int(C.codex_folio_keychain_status_user_canceled()):
+	case status == int(C.codex_folio_keychain_status_auth_failed()) ||
+		status == int(C.codex_folio_keychain_status_user_canceled()) ||
+		status == int(C.codex_folio_keychain_status_interaction_required()) ||
+		status == int(C.codex_folio_keychain_status_no_access()):
 		return ErrKeychainAccessDenied
 	case status == int(C.codex_folio_keychain_status_decode()):
 		return ErrKeychainProtectedMaterial
