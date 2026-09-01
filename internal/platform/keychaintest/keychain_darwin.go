@@ -8,6 +8,8 @@ package keychaintest
 #cgo darwin LDFLAGS: -framework Security -framework CoreFoundation
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
+#include <Security/SecAccess.h>
+#include <Security/SecACL.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -75,6 +77,67 @@ static int delete_codex_folio_keychain_record(const char *service, const char *a
 	CFRelease(query);
 	return status == errSecItemNotFound ? errSecSuccess : status;
 }
+
+static int lock_codex_folio_default_keychain(void) {
+	SecKeychainRef keychain = NULL;
+	OSStatus status = SecKeychainCopyDefault(&keychain);
+	if (status == errSecSuccess) {
+		status = SecKeychainLock(keychain);
+		CFRelease(keychain);
+	}
+	return status;
+}
+
+static int unlock_codex_folio_default_keychain(const char *password) {
+	SecKeychainRef keychain = NULL;
+	OSStatus status = SecKeychainCopyDefault(&keychain);
+	if (status == errSecSuccess) {
+		status = SecKeychainUnlock(keychain, (UInt32)strlen(password), password, true);
+		CFRelease(keychain);
+	}
+	return status;
+}
+
+static int set_codex_folio_keychain_item_trust(const char *service, const char *account, Boolean trust_all) {
+	CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+	CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
+	if (service_value == NULL || account_value == NULL) {
+		if (service_value != NULL) CFRelease(service_value);
+		if (account_value != NULL) CFRelease(account_value);
+		return errSecParam;
+	}
+	const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnRef, kSecMatchLimit};
+	const void *values[] = {kSecClassGenericPassword, service_value, account_value, kCFBooleanTrue, kSecMatchLimitOne};
+	CFDictionaryRef query = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 5,
+		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	CFRelease(service_value);
+	CFRelease(account_value);
+	if (query == NULL) return errSecAllocate;
+	SecKeychainItemRef item = NULL;
+	OSStatus status = SecItemCopyMatching(query, (CFTypeRef *)&item);
+	CFRelease(query);
+	if (status != errSecSuccess) return status;
+	SecAccessRef access = NULL;
+	status = SecKeychainItemCopyAccess(item, &access);
+	if (status == errSecSuccess) {
+		CFArrayRef acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
+		if (acls == NULL) {
+			status = errSecInvalidACL;
+		} else {
+			CFArrayRef applications = trust_all ? NULL : CFArrayCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeArrayCallBacks);
+			CFIndex count = CFArrayGetCount(acls);
+			for (CFIndex index = 0; status == errSecSuccess && index < count; index++) {
+				SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, index);
+				status = SecACLSetContents(acl, applications, CFSTR("CodexFolio native test"), 0);
+			}
+			if (applications != NULL) CFRelease(applications);
+			CFRelease(acls);
+		}
+		CFRelease(access);
+	}
+	CFRelease(item);
+	return status;
+}
 */
 import "C"
 
@@ -114,6 +177,38 @@ func Delete(service, account string) error {
 
 	status := C.delete_codex_folio_keychain_record(serviceValue, accountValue)
 	if int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
+	}
+	return nil
+}
+
+// LockDefault locks the current user's default login Keychain.
+func LockDefault() error {
+	if status := C.lock_codex_folio_default_keychain(); int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
+	}
+	return nil
+}
+
+// UnlockDefault unlocks the current user's default login Keychain with the
+// ephemeral test-runner password.
+func UnlockDefault(password string) error {
+	passwordValue := C.CString(password)
+	defer C.free(unsafe.Pointer(passwordValue))
+	if status := C.unlock_codex_folio_default_keychain(passwordValue); int(status) != 0 {
+		return fmt.Errorf("Security.framework status %d", int(status))
+	}
+	return nil
+}
+
+// SetItemTrustAll changes the ACL of a test item so native reads are either
+// allowed or denied without involving a user prompt.
+func SetItemTrustAll(service, account string, trustAll bool) error {
+	serviceValue := C.CString(service)
+	accountValue := C.CString(account)
+	defer C.free(unsafe.Pointer(serviceValue))
+	defer C.free(unsafe.Pointer(accountValue))
+	if status := C.set_codex_folio_keychain_item_trust(serviceValue, accountValue, C.Boolean(trustAll)); int(status) != 0 {
 		return fmt.Errorf("Security.framework status %d", int(status))
 	}
 	return nil

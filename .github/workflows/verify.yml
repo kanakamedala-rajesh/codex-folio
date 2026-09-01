@@ -41,5 +41,18 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             .nvmrc
+      - name: Prepare an ephemeral user Keychain for native tests
+        if: matrix.runner == 'macos-15'
+        shell: bash
+        run: |
+          keychain_path="$RUNNER_TEMP/codex-folio-ci.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          echo "::add-mask::$keychain_password"
+          echo "CODEX_FOLIO_TEST_KEYCHAIN_PASSWORD=$keychain_password" >> "$GITHUB_ENV"
       - name: Run the repository verification contract
         run: node scripts/verify.mjs
