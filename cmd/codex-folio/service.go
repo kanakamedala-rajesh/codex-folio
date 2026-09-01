@@ -22,6 +22,7 @@ import (
 type serviceOptions struct {
 	stateRoot *string
 	json      bool
+	candidate string
 	vaultMode platform.VaultMode
 }
 
@@ -42,14 +43,45 @@ func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Write
 	}
 
 	command := args[0]
-	if command != "status" && command != "start" {
+	recoveryAction := ""
+	serviceArgs := args[1:]
+	if command == "recovery" {
+		if len(args) < 2 {
+			fmt.Fprintf(stderr, "codex-folio [%s]: recovery requires verify, list, or restore\n", apperrors.CLIUsage)
+			writeServiceUsage(stderr)
+			return exitUsage
+		}
+		recoveryAction = args[1]
+		if recoveryAction != "verify" && recoveryAction != "list" && recoveryAction != "restore" {
+			fmt.Fprintf(stderr, "codex-folio [%s]: unknown recovery action %q\n", apperrors.CLIUsage, recoveryAction)
+			writeServiceUsage(stderr)
+			return exitUsage
+		}
+		serviceArgs = args[2:]
+	}
+	if command != "status" && command != "start" && command != "recovery" {
 		fmt.Fprintf(stderr, "codex-folio [%s]: unknown service command %q\n", apperrors.CLIUsage, command)
 		writeServiceUsage(stderr)
 		return exitUsage
 	}
-	options, err := parseServiceOptions(args[1:])
+	options, err := parseServiceOptions(serviceArgs)
 	if err != nil {
 		fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", apperrors.CLIUsage, err)
+		writeServiceUsage(stderr)
+		return exitUsage
+	}
+	if recoveryAction == "restore" && options.candidate == "" {
+		fmt.Fprintf(stderr, "codex-folio [%s]: recovery restore requires --candidate ID\n", apperrors.CLIUsage)
+		writeServiceUsage(stderr)
+		return exitUsage
+	}
+	if recoveryAction == "" && options.candidate != "" {
+		fmt.Fprintf(stderr, "codex-folio [%s]: --candidate is only valid for recovery restore\n", apperrors.CLIUsage)
+		writeServiceUsage(stderr)
+		return exitUsage
+	}
+	if recoveryAction != "" && recoveryAction != "restore" && options.candidate != "" {
+		fmt.Fprintf(stderr, "codex-folio [%s]: --candidate is only valid for recovery restore\n", apperrors.CLIUsage)
 		writeServiceUsage(stderr)
 		return exitUsage
 	}
@@ -72,6 +104,8 @@ func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Write
 		return runServiceStatus(paths, options, stdout, stderr)
 	case "start":
 		return runServiceStartWithInput(paths, options, input, stdout, stderr)
+	case "recovery":
+		return runServiceRecovery(paths, recoveryAction, options, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "codex-folio [%s]: unknown service command %q\n", apperrors.CLIUsage, command)
 		writeServiceUsage(stderr)
@@ -99,6 +133,18 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			}
 		case strings.HasPrefix(arg, "--state-root="):
 			if err := setServiceStateRoot(&options, strings.TrimPrefix(arg, "--state-root=")); err != nil {
+				return serviceOptions{}, err
+			}
+		case arg == "--candidate":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			index++
+			if err := setServiceCandidate(&options, args[index]); err != nil {
+				return serviceOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--candidate="):
+			if err := setServiceCandidate(&options, strings.TrimPrefix(arg, "--candidate=")); err != nil {
 				return serviceOptions{}, err
 			}
 		case arg == "--vault-mode":
@@ -137,6 +183,18 @@ func setServiceStateRoot(options *serviceOptions, value string) error {
 		return errors.New("only one state-root override may be supplied")
 	}
 	options.stateRoot = &value
+	return nil
+}
+
+func setServiceCandidate(options *serviceOptions, value string) error {
+	if options.candidate != "" {
+		return errors.New("only one recovery candidate may be supplied")
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("recovery candidate must not be empty")
+	}
+	options.candidate = value
 	return nil
 }
 
@@ -249,6 +307,86 @@ func runServiceStartWithInput(paths platform.Paths, options serviceOptions, inpu
 	return waitForServiceStop(owner, stateStore, server, options, stdout, stderr, false, serveErrors)
 }
 
+func runServiceRecovery(paths platform.Paths, action string, options serviceOptions, stdout, stderr io.Writer) (resultCode int) {
+	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	if err != nil {
+		return writeServiceError(stderr, err)
+	}
+	if status.Running {
+		return writeServiceError(stderr, apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("recovery requires the service owner to be stopped")))
+	}
+
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	if err != nil {
+		return writeServiceError(stderr, err)
+	}
+	defer func() {
+		if closeErr := owner.Close(); closeErr != nil && resultCode == exitSuccess {
+			resultCode = writeServiceError(stderr, closeErr)
+		}
+	}()
+
+	recovery, err := store.NewRecovery(store.RecoveryOptions{DatabasePath: paths.DatabaseFile})
+	if err != nil {
+		return writeServiceError(stderr, err)
+	}
+
+	switch action {
+	case "verify":
+		verification, verifyErr := recovery.VerifyActive(context.Background())
+		if verifyErr != nil {
+			return writeServiceError(stderr, verifyErr)
+		}
+		if options.json {
+			if err := writeServiceJSON(stdout, verification); err != nil {
+				return writeServiceError(stderr, err)
+			}
+		} else {
+			_, _ = fmt.Fprintf(stdout, "active database verified (schema %d)\n", verification.SchemaVersion)
+		}
+	case "list":
+		candidates, listErr := recovery.ListCandidates(context.Background())
+		if listErr != nil {
+			return writeServiceError(stderr, listErr)
+		}
+		if options.json {
+			if err := writeServiceJSON(stdout, struct {
+				Candidates []store.RecoveryCandidate `json:"candidates"`
+			}{Candidates: candidates}); err != nil {
+				return writeServiceError(stderr, err)
+			}
+		} else if len(candidates) == 0 {
+			_, _ = io.WriteString(stdout, "no recovery candidates\n")
+		} else {
+			for _, candidate := range candidates {
+				state := "invalid"
+				if candidate.Valid {
+					state = "valid"
+				}
+				_, _ = fmt.Fprintf(stdout, "%s: %s (schema %d, captured %s)\n", candidate.ID, state, candidate.SchemaVersion, candidate.CreatedAt.UTC().Format(time.RFC3339))
+			}
+		}
+	case "restore":
+		restored, restoreErr := recovery.Restore(context.Background(), options.candidate)
+		if restoreErr != nil {
+			return writeServiceError(stderr, restoreErr)
+		}
+		if options.json {
+			if err := writeServiceJSON(stdout, restored); err != nil {
+				return writeServiceError(stderr, err)
+			}
+		} else {
+			_, _ = fmt.Fprintf(stdout, "restored %s; known loss window %s to %s\n", restored.CandidateID, restored.KnownLossWindowStart.UTC().Format(time.RFC3339), restored.KnownLossWindowEnd.UTC().Format(time.RFC3339))
+			if restored.PreservedDatabaseID != "" {
+				_, _ = fmt.Fprintf(stdout, "preserved displaced state: %s\n", restored.PreservedDatabaseID)
+			}
+		}
+	default:
+		return writeServiceError(stderr, apperrors.New(apperrors.CLIUsage, errors.New("unknown recovery action")))
+	}
+	return resultCode
+}
+
 func waitForServiceStop(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
@@ -323,7 +461,7 @@ func writeServiceStateWithDashboard(stdout, stderr io.Writer, jsonOutput bool, s
 	return nil
 }
 
-func writeServiceJSON(stdout io.Writer, output serviceOutput) error {
+func writeServiceJSON(stdout io.Writer, output any) error {
 	encoded, err := json.Marshal(output)
 	if err != nil {
 		return err
@@ -367,6 +505,14 @@ func serviceRemediation(code string) string {
 		return "the local SQLite migration failed; the previous state was preserved"
 	case apperrors.StoreMigrationPartial:
 		return "the local SQLite migration is incomplete; writes are stopped"
+	case apperrors.StoreBackupFailed:
+		return "a validated local SQLite recovery backup could not be created; writes are stopped"
+	case apperrors.StoreRecoveryCandidateInvalid:
+		return "the selected recovery candidate failed validation"
+	case apperrors.StoreRecoveryCandidateNotFound:
+		return "the recovery candidate was not found; list candidates and choose one explicitly"
+	case apperrors.StoreRecoveryRestoreFailed:
+		return "the local SQLite restore failed; active state was preserved or rolled back"
 	case apperrors.VaultUnavailable:
 		return "the local encryption vault is unavailable; sensitive state is blocked"
 	case apperrors.VaultLocked:
@@ -382,6 +528,7 @@ func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service recovery {verify|list|restore} [--state-root PATH] [--candidate ID] [--json]")
 }
 
 func readServiceVaultPassphrase(input io.Reader) (string, error) {

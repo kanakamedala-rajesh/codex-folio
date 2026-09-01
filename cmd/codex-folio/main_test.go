@@ -13,6 +13,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/platform"
+	"venkatasudha.com/codex-folio/internal/store"
 )
 
 func TestVersionJSONIsMachineReadable(t *testing.T) {
@@ -321,6 +322,118 @@ func TestServicePathsResolveForAbsoluteTemporaryOverride(t *testing.T) {
 	}
 	if paths.Root != stateRoot {
 		t.Fatalf("Root = %q, want %q", paths.Root, stateRoot)
+	}
+}
+
+func TestServiceRecoveryListsAndRestoresOnlyAnExplicitRedactedCandidate(t *testing.T) {
+	home := testServiceTempDir(t)
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+	override := stateRoot
+	paths, err := platform.ResolvePaths(platform.PathOptions{
+		Platform:          platform.Platform(runtime.GOOS),
+		HomeDir:           home,
+		OwnerHomeDir:      home,
+		Environment:       map[string]string{},
+		StateRootOverride: &override,
+	})
+	if err != nil {
+		t.Fatalf("ResolvePaths() error = %v", err)
+	}
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatalf("MkdirAll() state root error = %v", err)
+	}
+	foundation, err := store.Open(paths.DatabaseFile)
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	if _, err := foundation.CreateRecoveryCheckpoint(nil); err != nil {
+		t.Fatalf("CreateRecoveryCheckpoint() error = %v", err)
+	}
+	if err := foundation.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	resolver := testServicePathResolver(home)
+	var listStdout, listStderr bytes.Buffer
+	if exitCode := runWithServicePathResolver([]string{"service", "recovery", "list", "--state-root", stateRoot, "--json"}, &listStdout, &listStderr, buildinfo.Metadata{}, resolver); exitCode != exitSuccess {
+		t.Fatalf("recovery list exit code = %d, want 0; stderr = %q", exitCode, listStderr.String())
+	}
+	if listStderr.Len() != 0 {
+		t.Fatalf("recovery list stderr = %q, want empty", listStderr.String())
+	}
+	var listed struct {
+		Candidates []store.RecoveryCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(listStdout.Bytes(), &listed); err != nil {
+		t.Fatalf("recovery list output is not JSON: %v\noutput: %s", err, listStdout.String())
+	}
+	if len(listed.Candidates) == 0 || !listed.Candidates[0].Valid {
+		t.Fatalf("recovery candidates = %#v, want a valid candidate", listed.Candidates)
+	}
+	for _, forbidden := range []string{paths.DatabaseFile, filepath.Join(paths.Root, "recovery")} {
+		if bytes.Contains(listStdout.Bytes(), []byte(forbidden)) {
+			t.Fatalf("recovery list output contains forbidden path %q: %q", forbidden, listStdout.String())
+		}
+	}
+
+	var restoreStdout, restoreStderr bytes.Buffer
+	if exitCode := runWithServicePathResolver([]string{"service", "recovery", "restore", "--state-root", stateRoot, "--candidate", listed.Candidates[0].ID, "--json"}, &restoreStdout, &restoreStderr, buildinfo.Metadata{}, resolver); exitCode != exitSuccess {
+		t.Fatalf("recovery restore exit code = %d, want 0; stderr = %q", exitCode, restoreStderr.String())
+	}
+	if restoreStderr.Len() != 0 {
+		t.Fatalf("recovery restore stderr = %q, want empty", restoreStderr.String())
+	}
+	var restored store.RecoveryResult
+	if err := json.Unmarshal(restoreStdout.Bytes(), &restored); err != nil {
+		t.Fatalf("recovery restore output is not JSON: %v\noutput: %s", err, restoreStdout.String())
+	}
+	if restored.CandidateID != listed.Candidates[0].ID || restored.PreservedDatabaseID == "" {
+		t.Fatalf("recovery restore result = %#v, want selected candidate and preserved state", restored)
+	}
+	if bytes.Contains(restoreStdout.Bytes(), []byte(paths.DatabaseFile)) || bytes.Contains(restoreStdout.Bytes(), []byte(paths.Root)) {
+		t.Fatalf("recovery restore output contains a canonical path: %q", restoreStdout.String())
+	}
+}
+
+func TestServiceRecoveryRestoreRequiresAnExplicitCandidate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if exitCode := runWithServicePathResolver([]string{"service", "recovery", "restore", "--state-root", filepath.Join(t.TempDir(), "state")}, &stdout, &stderr, buildinfo.Metadata{}, func(*string) (platform.Paths, error) {
+		t.Fatal("path resolver should not run before candidate validation")
+		return platform.Paths{}, nil
+	}); exitCode != exitUsage {
+		t.Fatalf("recovery restore exit code = %d, want %d; stderr = %q", exitCode, exitUsage, stderr.String())
+	}
+	if stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte("requires --candidate")) {
+		t.Fatalf("recovery restore output = %q / %q, want usage diagnostic", stdout.String(), stderr.String())
+	}
+}
+
+func TestServiceRecoveryRejectsACompetingLiveServiceOwner(t *testing.T) {
+	home := testServiceTempDir(t)
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+	override := stateRoot
+	paths, err := platform.ResolvePaths(platform.PathOptions{
+		Platform:          platform.Platform(runtime.GOOS),
+		HomeDir:           home,
+		OwnerHomeDir:      home,
+		Environment:       map[string]string{},
+		StateRootOverride: &override,
+	})
+	if err != nil {
+		t.Fatalf("ResolvePaths() error = %v", err)
+	}
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{ProcessID: func() int { return 9901 }})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	defer func() { _ = owner.Close() }()
+
+	var stdout, stderr bytes.Buffer
+	if exitCode := runWithServicePathResolver([]string{"service", "recovery", "list", "--state-root", stateRoot, "--json"}, &stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home)); exitCode != exitFailure {
+		t.Fatalf("recovery list exit code = %d, want %d; stderr = %q", exitCode, exitFailure, stderr.String())
+	}
+	if stdout.Len() != 0 || !bytes.Contains(stderr.Bytes(), []byte(apperrors.PlatformServiceAlreadyRunning)) {
+		t.Fatalf("recovery list output = %q / %q, want live-owner error", stdout.String(), stderr.String())
 	}
 }
 

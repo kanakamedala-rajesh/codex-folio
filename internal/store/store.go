@@ -67,19 +67,23 @@ type Options struct {
 	Path          string
 	Clock         Clock
 	Vault         Vault
+	FileSystem    FileSystem
 	OpenDatabase  func(path string) (*sql.DB, error)
 	MigrationHook MigrationHooks
+	RecoveryHooks RecoveryHooks
 }
 
 // Store is a verified service-owned SQLite database. The raw database handle
 // intentionally remains private so callers cannot create an unreviewed write
 // path around the schema and state-owner protocol.
 type Store struct {
-	db      *sql.DB
-	path    string
-	version int
-	clock   Clock
-	vault   Vault
+	db          *sql.DB
+	path        string
+	version     int
+	clock       Clock
+	vault       Vault
+	recovery    *Recovery
+	operationMu sync.RWMutex
 
 	closeOnce sync.Once
 	closeErr  error
@@ -128,6 +132,16 @@ func openVerifiedDatabase(database *sql.DB, databasePath string, options Options
 	if opened.clock == nil {
 		opened.clock = systemClock{}
 	}
+	recovery, err := NewRecovery(RecoveryOptions{
+		DatabasePath: databasePath,
+		Clock:        opened.clock,
+		FileSystem:   options.FileSystem,
+		Hooks:        options.RecoveryHooks,
+	})
+	if err != nil {
+		return nil, err
+	}
+	opened.recovery = recovery
 	keepOpen := false
 	defer func() {
 		if !keepOpen {
@@ -171,8 +185,18 @@ func openVerifiedDatabase(database *sql.DB, databasePath string, options Options
 		return nil, err
 	}
 
+	if version < CurrentSchemaVersion {
+		if _, err := recovery.CreateBackup(ctx, BackupReasonMigration); err != nil {
+			return nil, err
+		}
+	}
 	if err := applyMigrations(ctx, database, version, opened.clock, options.MigrationHook); err != nil {
 		return nil, err
+	}
+	if options.RecoveryHooks.AfterMigrationBeforeActivation != nil {
+		if err := options.RecoveryHooks.AfterMigrationBeforeActivation(CurrentSchemaVersion); err != nil {
+			return nil, coded(apperrors.StoreMigrationFailed, errors.Join(ErrMigration, err))
+		}
 	}
 	if err := validateMigrationLedger(ctx, database, CurrentSchemaVersion); err != nil {
 		return nil, err
@@ -205,6 +229,8 @@ func (store *Store) VerifyIntegrity() error {
 	if store == nil || store.db == nil {
 		return coded(apperrors.StoreOpenFailed, ErrDatabaseOpen)
 	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
 	return verifyIntegrity(context.Background(), store.db)
 }
 
@@ -214,6 +240,8 @@ func (store *Store) Close() error {
 		return nil
 	}
 	store.closeOnce.Do(func() {
+		store.operationMu.Lock()
+		defer store.operationMu.Unlock()
 		if store.db != nil {
 			store.closeErr = store.db.Close()
 		}

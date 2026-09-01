@@ -72,10 +72,10 @@ func runVersion(args []string, stdout, stderr io.Writer, metadata buildinfo.Meta
 
 func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintf(stdout, "%s %s\n", metadata.Product, metadata.Version)
-	fmt.Fprintln(stdout, "Phase 0 scaffold: runtime product capabilities are not enabled.")
+	fmt.Fprintln(stdout, "Local service foundation: encrypted state recovery is available.")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
-	fmt.Fprintln(stdout, "  codex-folio service {status|start} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

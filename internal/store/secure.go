@@ -65,6 +65,8 @@ func (store *Store) PutProjectIdentity(ctx context.Context, identity ProjectIden
 	if err != nil {
 		return err
 	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
 	ctx = contextOrBackground(ctx)
 	ciphertext, err := encryptField(ctx, secureVault, []byte(identity.CanonicalPath), projectIdentityAAD(identity.ProjectIdentityID))
 	if err != nil {
@@ -97,6 +99,8 @@ func (store *Store) GetProjectIdentity(ctx context.Context, projectIdentityID st
 	if err != nil {
 		return ProjectIdentity{}, err
 	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
 	ctx = contextOrBackground(ctx)
 	var identity ProjectIdentity
 	var ciphertext []byte
@@ -136,6 +140,8 @@ func (store *Store) PutCheckpoint(ctx context.Context, checkpoint Checkpoint) er
 	if err != nil {
 		return err
 	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
 	ctx = contextOrBackground(ctx)
 	fields := []struct {
 		value *string
@@ -208,6 +214,8 @@ func (store *Store) GetCheckpoint(ctx context.Context, checkpointID string) (Che
 	if err != nil {
 		return Checkpoint{}, err
 	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
 	ctx = contextOrBackground(ctx)
 	var checkpoint Checkpoint
 	var projectIdentityID sql.NullString
