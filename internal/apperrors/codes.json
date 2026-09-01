@@ -14,6 +14,18 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
+      "owner": "diagnostics",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_DIAGNOSTICS_EVENT_INVALID",
+      "owner": "diagnostics",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PLATFORM_STATE_PATH_INVALID",
       "owner": "platform",
       "lifecycle": "active",
@@ -141,6 +153,12 @@
     },
     {
       "code": "CF_STORE_WRITE_FAILED",
+      "owner": "store",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_STORE_DIAGNOSTIC_WRITE_FAILED",
       "owner": "store",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"

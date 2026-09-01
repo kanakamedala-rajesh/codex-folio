@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
@@ -37,9 +38,12 @@ func runServiceWithPathResolver(args []string, stdout, stderr io.Writer, resolve
 }
 
 func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver) int {
+	return runServiceWithInputAndDiagnostics(args, input, stdout, stderr, resolvePaths, newServiceDiagnosticSink())
+}
+
+func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, diagnosticSink diagnostics.Sink) int {
 	if len(args) == 0 {
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "a service command is required", diagnosticSink)
 	}
 
 	command := args[0]
@@ -47,43 +51,29 @@ func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Write
 	serviceArgs := args[1:]
 	if command == "recovery" {
 		if len(args) < 2 {
-			fmt.Fprintf(stderr, "codex-folio [%s]: recovery requires verify, list, or restore\n", apperrors.CLIUsage)
-			writeServiceUsage(stderr)
-			return exitUsage
+			return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "recovery requires verify, list, or restore", diagnosticSink)
 		}
 		recoveryAction = args[1]
 		if recoveryAction != "verify" && recoveryAction != "list" && recoveryAction != "restore" {
-			fmt.Fprintf(stderr, "codex-folio [%s]: unknown recovery action %q\n", apperrors.CLIUsage, recoveryAction)
-			writeServiceUsage(stderr)
-			return exitUsage
+			return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown recovery action", diagnosticSink)
 		}
 		serviceArgs = args[2:]
 	}
 	if command != "status" && command != "start" && command != "recovery" {
-		fmt.Fprintf(stderr, "codex-folio [%s]: unknown service command %q\n", apperrors.CLIUsage, command)
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown service command", diagnosticSink)
 	}
 	options, err := parseServiceOptions(serviceArgs)
 	if err != nil {
-		fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", apperrors.CLIUsage, err)
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid service arguments", diagnosticSink)
 	}
 	if recoveryAction == "restore" && options.candidate == "" {
-		fmt.Fprintf(stderr, "codex-folio [%s]: recovery restore requires --candidate ID\n", apperrors.CLIUsage)
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "recovery restore requires --candidate ID", diagnosticSink)
 	}
 	if recoveryAction == "" && options.candidate != "" {
-		fmt.Fprintf(stderr, "codex-folio [%s]: --candidate is only valid for recovery restore\n", apperrors.CLIUsage)
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--candidate is only valid for recovery restore", diagnosticSink)
 	}
 	if recoveryAction != "" && recoveryAction != "restore" && options.candidate != "" {
-		fmt.Fprintf(stderr, "codex-folio [%s]: --candidate is only valid for recovery restore\n", apperrors.CLIUsage)
-		writeServiceUsage(stderr)
-		return exitUsage
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--candidate is only valid for recovery restore", diagnosticSink)
 	}
 
 	paths, err := resolvePaths(options.stateRoot)
@@ -91,21 +81,19 @@ func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Write
 		if options.stateRoot != nil {
 			code := apperrors.Code(err)
 			if code == apperrors.PlatformStatePathInvalid || code == apperrors.PlatformStatePathUnsafe {
-				fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", code, serviceRemediation(code))
-				writeServiceUsage(stderr)
-				return exitUsage
+				return writeServiceUsageDiagnostic(stderr, code, serviceRemediation(code), diagnosticSink)
 			}
 		}
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 
 	switch command {
 	case "status":
-		return runServiceStatus(paths, options, stdout, stderr)
+		return runServiceStatusWithDiagnostics(paths, options, stdout, stderr, diagnosticSink)
 	case "start":
-		return runServiceStartWithInput(paths, options, input, stdout, stderr)
+		return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, diagnosticSink)
 	case "recovery":
-		return runServiceRecovery(paths, recoveryAction, options, stdout, stderr)
+		return runServiceRecoveryWithDiagnostics(paths, recoveryAction, options, stdout, stderr, diagnosticSink)
 	default:
 		fmt.Fprintf(stderr, "codex-folio [%s]: unknown service command %q\n", apperrors.CLIUsage, command)
 		writeServiceUsage(stderr)
@@ -125,7 +113,7 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			options.json = true
 		case arg == "--state-root":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return serviceOptions{}, fmt.Errorf("%s requires a value", arg)
+				return serviceOptions{}, errors.New("--state-root requires a value")
 			}
 			index++
 			if err := setServiceStateRoot(&options, args[index]); err != nil {
@@ -137,7 +125,7 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			}
 		case arg == "--candidate":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return serviceOptions{}, fmt.Errorf("%s requires a value", arg)
+				return serviceOptions{}, errors.New("--candidate requires a value")
 			}
 			index++
 			if err := setServiceCandidate(&options, args[index]); err != nil {
@@ -149,7 +137,7 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			}
 		case arg == "--vault-mode":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
-				return serviceOptions{}, fmt.Errorf("%s requires a value", arg)
+				return serviceOptions{}, errors.New("--vault-mode requires a value")
 			}
 			index++
 			if err := setServiceVaultMode(&options, args[index]); err != nil {
@@ -160,7 +148,7 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 				return serviceOptions{}, err
 			}
 		default:
-			return serviceOptions{}, fmt.Errorf("unexpected service argument %q", arg)
+			return serviceOptions{}, errors.New("unexpected service argument")
 		}
 	}
 	return options, nil
@@ -221,9 +209,13 @@ func resolveCLIPaths(override *string) (platform.Paths, error) {
 }
 
 func runServiceStatus(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer) int {
+	return runServiceStatusWithDiagnostics(paths, options, stdout, stderr, nil)
+}
+
+func runServiceStatusWithDiagnostics(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if options.json {
 		if err := writeServiceJSON(stdout, serviceOutput{
@@ -232,6 +224,7 @@ func runServiceStatus(paths platform.Paths, options serviceOptions, stdout, stde
 			StartedAt: metadataStart(status.Metadata),
 			Reused:    false,
 		}); err != nil {
+			recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode service status\n", apperrors.CLIInternal)
 			return exitFailure
 		}
@@ -250,12 +243,17 @@ func runServiceStart(paths platform.Paths, options serviceOptions, stdout, stder
 }
 
 func runServiceStartWithInput(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer) int {
+	return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, nil)
+}
+
+func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
 		if err := writeServiceState(stdout, stderr, options.json, status, true); err != nil {
+			recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 			return exitFailure
 		}
 		return exitSuccess
@@ -267,79 +265,85 @@ func runServiceStartWithInput(paths platform.Paths, options serviceOptions, inpu
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
 				if err := writeServiceState(stdout, stderr, options.json, status, true); err != nil {
+					recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 					return exitFailure
 				}
 				return exitSuccess
 			}
 		}
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {
 		passphrase, err = readServiceVaultPassphrase(input)
 		if err != nil {
 			_ = owner.Close()
-			return writeServiceError(stderr, err)
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 	}
 	stateStore, err := openServiceStoreWithVaultMode(paths, options.vaultMode, passphrase)
 	if err != nil {
 		_ = owner.Close()
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{})
+	attachServiceDiagnosticStore(diagnosticSink, stateStore)
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	listener, err := server.Listen()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
 
-	return waitForServiceStop(owner, stateStore, server, options, stdout, stderr, false, serveErrors)
+	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
 }
 
 func runServiceRecovery(paths platform.Paths, action string, options serviceOptions, stdout, stderr io.Writer) (resultCode int) {
+	return runServiceRecoveryWithDiagnostics(paths, action, options, stdout, stderr, nil)
+}
+
+func runServiceRecoveryWithDiagnostics(paths platform.Paths, action string, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) (resultCode int) {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
-		return writeServiceError(stderr, apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("recovery requires the service owner to be stopped")))
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("recovery requires the service owner to be stopped")), diagnosticSink)
 	}
 
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
 	if err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	defer func() {
 		if closeErr := owner.Close(); closeErr != nil && resultCode == exitSuccess {
-			resultCode = writeServiceError(stderr, closeErr)
+			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
 		}
 	}()
 
 	recovery, err := store.NewRecovery(store.RecoveryOptions{DatabasePath: paths.DatabaseFile})
 	if err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 
 	switch action {
 	case "verify":
 		verification, verifyErr := recovery.VerifyActive(context.Background())
 		if verifyErr != nil {
-			return writeServiceError(stderr, verifyErr)
+			return writeServiceErrorWithDiagnostics(stderr, verifyErr, diagnosticSink)
 		}
 		if options.json {
 			if err := writeServiceJSON(stdout, verification); err != nil {
-				return writeServiceError(stderr, err)
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 			}
 		} else {
 			_, _ = fmt.Fprintf(stdout, "active database verified (schema %d)\n", verification.SchemaVersion)
@@ -347,13 +351,13 @@ func runServiceRecovery(paths platform.Paths, action string, options serviceOpti
 	case "list":
 		candidates, listErr := recovery.ListCandidates(context.Background())
 		if listErr != nil {
-			return writeServiceError(stderr, listErr)
+			return writeServiceErrorWithDiagnostics(stderr, listErr, diagnosticSink)
 		}
 		if options.json {
 			if err := writeServiceJSON(stdout, struct {
 				Candidates []store.RecoveryCandidate `json:"candidates"`
 			}{Candidates: candidates}); err != nil {
-				return writeServiceError(stderr, err)
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 			}
 		} else if len(candidates) == 0 {
 			_, _ = io.WriteString(stdout, "no recovery candidates\n")
@@ -369,11 +373,11 @@ func runServiceRecovery(paths platform.Paths, action string, options serviceOpti
 	case "restore":
 		restored, restoreErr := recovery.Restore(context.Background(), options.candidate)
 		if restoreErr != nil {
-			return writeServiceError(stderr, restoreErr)
+			return writeServiceErrorWithDiagnostics(stderr, restoreErr, diagnosticSink)
 		}
 		if options.json {
 			if err := writeServiceJSON(stdout, restored); err != nil {
-				return writeServiceError(stderr, err)
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 			}
 		} else {
 			_, _ = fmt.Fprintf(stdout, "restored %s; known loss window %s to %s\n", restored.CandidateID, restored.KnownLossWindowStart.UTC().Format(time.RFC3339), restored.KnownLossWindowEnd.UTC().Format(time.RFC3339))
@@ -382,15 +386,20 @@ func runServiceRecovery(paths platform.Paths, action string, options serviceOpti
 			}
 		}
 	default:
-		return writeServiceError(stderr, apperrors.New(apperrors.CLIUsage, errors.New("unknown recovery action")))
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.CLIUsage, errors.New("unknown recovery action")), diagnosticSink)
 	}
 	return resultCode
 }
 
 func waitForServiceStop(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
+	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, reused, serveErrors, nil)
+}
+
+func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error, diagnosticSink diagnostics.Sink) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
 	if err := writeServiceStateWithDashboard(stdout, stderr, options.json, status, reused, server.BootstrapURL()); err != nil {
+		recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 		_ = server.Close()
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -405,21 +414,21 @@ func waitForServiceStop(owner *platform.Owner, stateStore *store.Store, server *
 		_ = stateStore.Close()
 		_ = owner.Close()
 		if err != nil {
-			return writeServiceError(stderr, err)
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitSuccess
 	}
 	if err := server.Close(); err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if err := stateStore.Close(); err != nil {
 		_ = owner.Close()
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if err := owner.Close(); err != nil {
-		return writeServiceError(stderr, err)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	return exitSuccess
 }
@@ -471,16 +480,125 @@ func writeServiceJSON(stdout io.Writer, output any) error {
 }
 
 func writeServiceError(stderr io.Writer, err error) int {
-	code := apperrors.Code(err)
-	if code == "" {
-		code = apperrors.CLIInternal
+	return writeServiceErrorWithDiagnostics(stderr, err, nil)
+}
+
+type serviceDiagnosticSink struct {
+	recorder   *diagnostics.Recorder
+	stateStore *store.Store
+}
+
+func newServiceDiagnosticSink() diagnostics.Sink {
+	recorder, err := diagnostics.NewRecorder(diagnostics.RecorderOptions{})
+	if err != nil {
+		return nil
 	}
+	return &serviceDiagnosticSink{recorder: recorder}
+}
+
+func attachServiceDiagnosticStore(sink diagnostics.Sink, stateStore *store.Store) {
+	serviceSink, ok := sink.(*serviceDiagnosticSink)
+	if !ok {
+		return
+	}
+	serviceSink.stateStore = stateStore
+}
+
+func (sink *serviceDiagnosticSink) Record(event diagnostics.Event) error {
+	if sink == nil {
+		return nil
+	}
+	if sink.recorder != nil {
+		if err := sink.recorder.Record(event); err != nil {
+			return err
+		}
+	}
+	if sink.stateStore != nil {
+		return sink.stateStore.RecordDiagnostic(context.Background(), event)
+	}
+	return nil
+}
+
+func writeServiceErrorWithDiagnostics(stderr io.Writer, err error, diagnosticSink diagnostics.Sink) int {
+	code := diagnostics.CodeFor(err, apperrors.CLIInternal)
+	recordServiceDiagnostic(diagnosticSink, code, diagnostics.SeverityError)
 	fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", code, serviceRemediation(code))
 	return exitFailure
 }
 
+func writeServiceUsageDiagnostic(stderr io.Writer, code, message string, diagnosticSink diagnostics.Sink) int {
+	code = diagnostics.CodeFor(nil, code)
+	if strings.TrimSpace(message) == "" {
+		message = serviceRemediation(code)
+	}
+	recordServiceDiagnostic(diagnosticSink, code, diagnostics.SeverityWarning)
+	fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", code, message)
+	writeServiceUsage(stderr)
+	return exitUsage
+}
+
+func recordServiceDiagnostic(diagnosticSink diagnostics.Sink, code string, severity diagnostics.Severity) {
+	if diagnosticSink == nil {
+		return
+	}
+	code = diagnostics.CodeFor(nil, code)
+	event, err := diagnostics.NewEvent(time.Now().UTC(), severity, diagnostics.ComponentForCode(code), code, diagnostics.Context{
+		Operation: diagnostics.OperationCommand,
+		State:     serviceDiagnosticState(code),
+	})
+	if err != nil {
+		return
+	}
+	_ = diagnosticSink.Record(event)
+}
+
+func serviceDiagnosticState(code string) string {
+	switch code {
+	case apperrors.CLIUsage,
+		apperrors.HTTPAPIHostInvalid,
+		apperrors.HTTPAPIOriginInvalid,
+		apperrors.HTTPAPIBootstrapInvalid,
+		apperrors.HTTPAPISessionInvalid,
+		apperrors.HTTPAPISessionExpired,
+		apperrors.HTTPAPICSRFInvalid,
+		apperrors.HTTPAPIMethodNotAllowed,
+		apperrors.HTTPAPIRouteNotFound:
+		return diagnostics.StateRejected
+	case apperrors.PlatformStatePathInvalid,
+		apperrors.PlatformStatePathUnsafe,
+		apperrors.DiagnosticsConfigurationInvalid,
+		apperrors.DiagnosticsEventInvalid,
+		apperrors.StoreSchemaIncompatible,
+		apperrors.StoreIntegrityFailed,
+		apperrors.StoreMigrationFailed,
+		apperrors.StoreMigrationPartial,
+		apperrors.VaultKeyInvalid,
+		apperrors.VaultEnvelopeInvalid,
+		apperrors.VaultEnvelopeUnsupported,
+		apperrors.VaultKeyGenerationMismatch,
+		apperrors.VaultEncryptionFailed:
+		return diagnostics.StateInvalid
+	case apperrors.PlatformServiceAlreadyRunning:
+		return diagnostics.StateContention
+	case apperrors.VaultLocked:
+		return diagnostics.StateLocked
+	case apperrors.PlatformPermissionDenied,
+		apperrors.PlatformServiceUnavailable,
+		apperrors.HTTPAPIServiceUnavailable,
+		apperrors.StoreOpenFailed,
+		apperrors.VaultUnavailable:
+		return diagnostics.StateUnavailable
+	default:
+		return diagnostics.StateFailed
+	}
+}
+
 func serviceRemediation(code string) string {
 	switch code {
+	case apperrors.DiagnosticsConfigurationInvalid:
+		return "the local diagnostics configuration is invalid"
+	case apperrors.DiagnosticsEventInvalid:
+		return "the diagnostic event was rejected"
 	case apperrors.PlatformStatePathInvalid:
 		return "state root must be an absolute path"
 	case apperrors.PlatformStatePathUnsafe:
@@ -505,6 +623,12 @@ func serviceRemediation(code string) string {
 		return "the local SQLite migration failed; the previous state was preserved"
 	case apperrors.StoreMigrationPartial:
 		return "the local SQLite migration is incomplete; writes are stopped"
+	case apperrors.StoreReadFailed:
+		return "the local SQLite state could not be read"
+	case apperrors.StoreWriteFailed:
+		return "the local SQLite write failed; no partial state was accepted"
+	case apperrors.StoreDiagnosticWriteFailed:
+		return "local diagnostics could not be stored; the operation remains bounded"
 	case apperrors.StoreBackupFailed:
 		return "a validated local SQLite recovery backup could not be created; writes are stopped"
 	case apperrors.StoreRecoveryCandidateInvalid:
@@ -519,6 +643,14 @@ func serviceRemediation(code string) string {
 		return "the local encryption vault is locked; unlock it before using sensitive state"
 	case apperrors.VaultKeyInvalid:
 		return "the local encryption vault material is invalid; sensitive state is blocked"
+	case apperrors.VaultEnvelopeInvalid:
+		return "the local encryption envelope is invalid; sensitive state is blocked"
+	case apperrors.VaultEnvelopeUnsupported:
+		return "the local encryption envelope is not supported by this build"
+	case apperrors.VaultKeyGenerationMismatch:
+		return "the local encryption vault generation does not match this state"
+	case apperrors.VaultEncryptionFailed:
+		return "local encryption failed; sensitive state was not written"
 	default:
 		return "the command could not complete"
 	}

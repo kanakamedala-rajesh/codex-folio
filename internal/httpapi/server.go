@@ -21,6 +21,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 )
 
 const (
@@ -58,6 +59,7 @@ type Options struct {
 	SessionTTL   time.Duration
 	Random       io.Reader
 	Clock        Clock
+	Diagnostics  diagnostics.Sink
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -75,6 +77,7 @@ type Server struct {
 	random       io.Reader
 	randomMu     sync.Mutex
 	clock        Clock
+	diagnostics  diagnostics.Sink
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -127,6 +130,7 @@ func NewServer(options Options) (*Server, error) {
 
 	token, err := readRandom(randomReader, randomTokenSize)
 	if err != nil {
+		recordDiagnostic(options.Diagnostics, clock.Now(), diagnostics.ComponentHTTPAPI, diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateUnavailable})
 		return nil, apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
 	}
 	encodedToken := base64.RawURLEncoding.EncodeToString(token)
@@ -137,6 +141,7 @@ func NewServer(options Options) (*Server, error) {
 		sessionTTL:         sessionTTL,
 		random:             randomReader,
 		clock:              clock,
+		diagnostics:        options.Diagnostics,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt: now.Add(bootstrapTTL),
@@ -151,10 +156,12 @@ func NewServer(options Options) (*Server, error) {
 func (server *Server) Listen() (net.Listener, error) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
+		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateUnavailable})
 		return nil, apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
 	}
 	if err := server.attachListener(listener); err != nil {
 		_ = listener.Close()
+		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, diagnostics.CodeFor(err, apperrors.HTTPAPIServiceUnavailable), diagnostics.Context{State: diagnostics.StateInvalid})
 		return nil, err
 	}
 	return listener, nil
@@ -164,6 +171,7 @@ func (server *Server) Listen() (net.Listener, error) {
 // it and invalidate all in-memory sessions.
 func (server *Server) Serve(listener net.Listener) error {
 	if listener == nil {
+		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateInvalid})
 		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("listener is required"))
 	}
 	server.mu.Lock()
@@ -174,6 +182,7 @@ func (server *Server) Serve(listener net.Listener) error {
 		return nil
 	}
 	if err := server.attachListener(listener); err != nil {
+		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, diagnostics.CodeFor(err, apperrors.HTTPAPIServiceUnavailable), diagnostics.Context{State: diagnostics.StateInvalid})
 		return err
 	}
 
@@ -185,6 +194,7 @@ func (server *Server) Serve(listener net.Listener) error {
 	}
 	if server.httpServer != nil {
 		server.mu.Unlock()
+		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateRejected})
 		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("server is already serving"))
 	}
 	httpServer := &http.Server{
@@ -203,6 +213,7 @@ func (server *Server) Serve(listener net.Listener) error {
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
+	server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateUnavailable})
 	return apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
 }
 
@@ -230,12 +241,14 @@ func (server *Server) Close() error {
 
 	if httpServer != nil {
 		if err := httpServer.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			server.recordDiagnostic(diagnostics.OperationShutdown, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateFailed})
 			return apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
 		}
 		return nil
 	}
 	if listener != nil {
 		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			server.recordDiagnostic(diagnostics.OperationShutdown, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateFailed})
 			return apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
 		}
 	}
@@ -307,36 +320,36 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	setSecurityHeaders(response)
 
 	if !server.validHost(request.Host) {
-		writeAPIError(response, http.StatusBadRequest, apperrors.HTTPAPIHostInvalid)
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.HTTPAPIHostInvalid)
 		return
 	}
 	if !server.validOrigin(request) {
-		writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
+		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
 		return
 	}
 
 	switch request.URL.Path {
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
-			writeMethodError(response, http.MethodGet)
+			server.writeMethodError(response, http.MethodGet)
 			return
 		}
 		server.serveAsset(response, request, "index.html")
 	case "/assets/app.js":
 		if !isReadMethod(request.Method) {
-			writeMethodError(response, http.MethodGet)
+			server.writeMethodError(response, http.MethodGet)
 			return
 		}
 		server.serveAsset(response, request, "app.js")
 	case "/assets/styles.css":
 		if !isReadMethod(request.Method) {
-			writeMethodError(response, http.MethodGet)
+			server.writeMethodError(response, http.MethodGet)
 			return
 		}
 		server.serveAsset(response, request, "styles.css")
 	case BootstrapPath:
 		if request.Method != http.MethodPost {
-			writeMethodError(response, http.MethodPost)
+			server.writeMethodError(response, http.MethodPost)
 			return
 		}
 		server.exchangeBootstrap(response, request)
@@ -346,10 +359,10 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		}
 		if !isReadMethod(request.Method) {
 			if !server.validCSRF(request) {
-				writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+				server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
 				return
 			}
-			writeMethodError(response, http.MethodGet)
+			server.writeMethodError(response, http.MethodGet)
 			return
 		}
 		server.writeMetadata(response, request)
@@ -359,22 +372,22 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 				return
 			}
 			if !isReadMethod(request.Method) && !server.validCSRF(request) {
-				writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+				server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
 				return
 			}
 		}
-		writeAPIError(response, http.StatusNotFound, apperrors.HTTPAPIRouteNotFound)
+		server.writeAPIError(response, http.StatusNotFound, apperrors.HTTPAPIRouteNotFound)
 	}
 }
 
 func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *http.Request) {
 	contentType, _, contentTypeErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if contentTypeErr != nil || contentType != "application/json" {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
 		return
 	}
 	if request.ContentLength > maxBootstrapBodySize {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
 		return
 	}
 
@@ -382,12 +395,12 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 	decoder.DisallowUnknownFields()
 	var input BootstrapRequest
 	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.BootstrapToken) == "" {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
 		return
 	}
 
@@ -405,18 +418,18 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 	}
 	server.mu.Unlock()
 	if !valid {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid)
 		return
 	}
 
 	sessionBytes, err := server.randomBytes(randomTokenSize)
 	if err != nil {
-		writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
 	csrfBytes, err := server.randomBytes(randomTokenSize)
 	if err != nil {
-		writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
 	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
@@ -447,7 +460,7 @@ func (server *Server) authorize(response http.ResponseWriter, request *http.Requ
 		}
 	}
 	if len(matching) != 1 || matching[0].Value == "" {
-		writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
 		return false
 	}
 
@@ -462,9 +475,9 @@ func (server *Server) authorize(response http.ResponseWriter, request *http.Requ
 	server.mu.Unlock()
 	if !ok {
 		if current.expiresAt.IsZero() {
-			writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
+			server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
 		} else {
-			writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionExpired)
+			server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionExpired)
 		}
 		return false
 	}
@@ -513,10 +526,35 @@ func (server *Server) writeMetadata(response http.ResponseWriter, request *http.
 	})
 }
 
+func (server *Server) writeAPIError(response http.ResponseWriter, status int, code string) {
+	context := diagnostics.Context{
+		Operation:  httpDiagnosticOperation(code),
+		State:      httpDiagnosticState(code),
+		HTTPStatus: status,
+	}
+	server.recordDiagnostic(context.Operation, httpDiagnosticSeverity(code), code, context)
+	writeAPIError(response, status, code)
+}
+
+func (server *Server) writeMethodError(response http.ResponseWriter, allowed string) {
+	response.Header().Set("Allow", allowed)
+	server.writeAPIError(response, http.StatusMethodNotAllowed, apperrors.HTTPAPIMethodNotAllowed)
+}
+
+func (server *Server) recordDiagnostic(operation string, severity diagnostics.Severity, code string, context diagnostics.Context) {
+	if server == nil || server.diagnostics == nil {
+		return
+	}
+	if context.Operation == "" {
+		context.Operation = operation
+	}
+	recordDiagnostic(server.diagnostics, server.clock.Now(), diagnostics.ComponentHTTPAPI, operation, severity, code, context)
+}
+
 func (server *Server) serveAsset(response http.ResponseWriter, request *http.Request, name string) {
 	asset, err := embeddedAssets.ReadFile("assets/" + name)
 	if err != nil {
-		writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
 	contentType := map[string]string{
@@ -573,10 +611,27 @@ func setSecurityHeaders(response http.ResponseWriter) {
 }
 
 func writeAPIError(response http.ResponseWriter, status int, code string) {
+	if !apperrors.IsRegistered(code) {
+		code = apperrors.HTTPAPIServiceUnavailable
+	}
 	writeJSON(response, status, map[string]string{
 		"code":    code,
 		"message": safeMessage(code),
 	})
+}
+
+func recordDiagnostic(sink diagnostics.Sink, at time.Time, component, operation string, severity diagnostics.Severity, code string, context diagnostics.Context) {
+	if sink == nil {
+		return
+	}
+	if context.Operation == "" {
+		context.Operation = operation
+	}
+	event, err := diagnostics.NewEvent(at, severity, component, code, context)
+	if err != nil {
+		return
+	}
+	_ = sink.Record(event)
 }
 
 func writeMethodError(response http.ResponseWriter, allowed string) {
@@ -604,9 +659,49 @@ func safeMessage(code string) string {
 		return "This dashboard request method is not available."
 	case apperrors.HTTPAPIRouteNotFound:
 		return "The requested dashboard resource was not found."
+	case apperrors.HTTPAPIServiceUnavailable:
+		return "The local dashboard is temporarily unavailable. Relaunch CodexFolio."
 	default:
 		return "The local dashboard could not complete the request."
 	}
+}
+
+func httpDiagnosticOperation(code string) string {
+	switch code {
+	case apperrors.HTTPAPIBootstrapInvalid:
+		return diagnostics.OperationHTTPBootstrap
+	case apperrors.HTTPAPISessionInvalid, apperrors.HTTPAPISessionExpired:
+		return diagnostics.OperationHTTPSession
+	case apperrors.HTTPAPIHostInvalid, apperrors.HTTPAPIOriginInvalid, apperrors.HTTPAPICSRFInvalid:
+		return diagnostics.OperationHTTPAuthorization
+	case apperrors.HTTPAPIServiceUnavailable:
+		return diagnostics.OperationHTTPListen
+	default:
+		return diagnostics.OperationHTTPAuthorization
+	}
+}
+
+func httpDiagnosticState(code string) string {
+	switch code {
+	case apperrors.HTTPAPISessionExpired:
+		return diagnostics.StateExpired
+	case apperrors.HTTPAPISessionInvalid, apperrors.HTTPAPIBootstrapInvalid, apperrors.HTTPAPICSRFInvalid, apperrors.HTTPAPIHostInvalid, apperrors.HTTPAPIOriginInvalid, apperrors.HTTPAPIMethodNotAllowed, apperrors.HTTPAPIRouteNotFound:
+		return diagnostics.StateRejected
+	case apperrors.HTTPAPIServiceUnavailable:
+		return diagnostics.StateUnavailable
+	default:
+		return diagnostics.StateFailed
+	}
+}
+
+func httpDiagnosticSeverity(code string) diagnostics.Severity {
+	if code == apperrors.HTTPAPIServiceUnavailable {
+		return diagnostics.SeverityError
+	}
+	if code == apperrors.HTTPAPIRouteNotFound || code == apperrors.HTTPAPIMethodNotAllowed {
+		return diagnostics.SeverityInfo
+	}
+	return diagnostics.SeverityWarning
 }
 
 func isReadMethod(method string) bool {

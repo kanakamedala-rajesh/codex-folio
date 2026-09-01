@@ -10,10 +10,12 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 )
 
 type testClock struct {
@@ -22,6 +24,24 @@ type testClock struct {
 
 func (clock *testClock) Now() time.Time {
 	return clock.now
+}
+
+type diagnosticCapture struct {
+	mu     sync.Mutex
+	events []diagnostics.Event
+}
+
+func (capture *diagnosticCapture) Record(event diagnostics.Event) error {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	capture.events = append(capture.events, event)
+	return nil
+}
+
+func (capture *diagnosticCapture) Events() []diagnostics.Event {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return append([]diagnostics.Event(nil), capture.events...)
 }
 
 func TestServerBindsOnlyToLoopbackAndPublishesOneTimeURL(t *testing.T) {
@@ -183,6 +203,91 @@ func TestHostOriginAndCSRFChecksFailClosedWithoutCORS(t *testing.T) {
 	}
 	assertErrorResponse(t, validCSRFWrongMethod, http.StatusMethodNotAllowed, apperrors.HTTPAPIMethodNotAllowed, token)
 	assertNoCORS(t, validCSRFWrongMethod)
+}
+
+func TestHTTPAuthorizationFailuresEmitStableRedactedDiagnostics(t *testing.T) {
+	capture := &diagnosticCapture{}
+	server, _, _ := startTestServer(t, Options{Diagnostics: capture})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+
+	before, err := doRequest(client, http.MethodGet, origin+MetadataPath, server.Address(), origin, nil, "")
+	if err != nil {
+		t.Fatalf("unbootstrapped request: %v", err)
+	}
+	assertErrorResponse(t, before, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid, token)
+
+	hostAttack, err := doRequest(client, http.MethodGet, origin+MetadataPath, "localhost:"+serverPort(server), origin, nil, "")
+	if err != nil {
+		t.Fatalf("host attack: %v", err)
+	}
+	assertErrorResponse(t, hostAttack, http.StatusBadRequest, apperrors.HTTPAPIHostInvalid, token)
+
+	originAttack, err := doRequest(client, http.MethodGet, origin+MetadataPath, server.Address(), "http://evil.example", nil, "")
+	if err != nil {
+		t.Fatalf("origin attack: %v", err)
+	}
+	assertErrorResponse(t, originAttack, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid, token)
+
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatalf("bootstrap exchange: %v", err)
+	}
+	var bootstrapResponse BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrapResponse); err != nil {
+		t.Fatalf("decode bootstrap response: %v", err)
+	}
+	_ = exchange.Body.Close()
+
+	forgedCSRF, err := doRequest(client, http.MethodPost, origin+MetadataPath, server.Address(), origin, nil, "forged-csrf")
+	if err != nil {
+		t.Fatalf("forged CSRF request: %v", err)
+	}
+	assertErrorResponse(t, forgedCSRF, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid, token)
+
+	seen := make(map[string]diagnostics.Event)
+	for _, event := range capture.Events() {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("captured event %#v failed validation: %v", event, err)
+		}
+		seen[event.ErrorCode] = event
+	}
+	for _, code := range []string{
+		apperrors.HTTPAPISessionInvalid,
+		apperrors.HTTPAPIHostInvalid,
+		apperrors.HTTPAPIOriginInvalid,
+		apperrors.HTTPAPICSRFInvalid,
+	} {
+		event, ok := seen[code]
+		if !ok {
+			t.Fatalf("captured diagnostics = %#v, want code %q", capture.Events(), code)
+		}
+		if event.Component != diagnostics.ComponentHTTPAPI || event.Context == nil || event.Context.HTTPStatus == 0 {
+			t.Fatalf("captured event = %#v, want HTTP component/status context", event)
+		}
+	}
+	encoded, err := json.Marshal(capture.Events())
+	if err != nil {
+		t.Fatalf("json.Marshal(diagnostics) error = %v", err)
+	}
+	for _, forbidden := range []string{"bootstrap_token", token, "forged-csrf", "evil.example", "localhost"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("diagnostics %q contain forbidden value %q", encoded, forbidden)
+		}
+	}
+}
+
+func TestNewServerFailureEmitsSafePreListenerDiagnostic(t *testing.T) {
+	capture := &diagnosticCapture{}
+	_, err := NewServer(Options{Random: strings.NewReader(""), Diagnostics: capture})
+	if err == nil || apperrors.Code(err) != apperrors.HTTPAPIServiceUnavailable {
+		t.Fatalf("NewServer() error = %v, want stable service-unavailable error", err)
+	}
+	events := capture.Events()
+	if len(events) != 1 || events[0].ErrorCode != apperrors.HTTPAPIServiceUnavailable || events[0].Context == nil || events[0].Context.State != diagnostics.StateUnavailable {
+		t.Fatalf("pre-listener diagnostics = %#v, want bounded unavailable event", events)
+	}
 }
 
 func TestSessionExpiryAndRestartInvalidation(t *testing.T) {

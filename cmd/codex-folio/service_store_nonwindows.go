@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
 )
@@ -37,7 +38,7 @@ func openServiceStoreWithVaultMode(paths platform.Paths, mode platform.VaultMode
 		}
 		return store.OpenWithVault(paths.DatabaseFile, secureVault)
 	default:
-		return nil, errors.New("unsupported vault mode")
+		return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("unsupported vault mode"))
 	}
 }
 

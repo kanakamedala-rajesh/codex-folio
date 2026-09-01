@@ -12,6 +12,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
 )
@@ -87,6 +88,9 @@ func TestUnknownCommandUsesUsageExitCode(t *testing.T) {
 	if !bytes.Contains(stderr.Bytes(), []byte("unknown command")) {
 		t.Fatalf("stderr = %q, want unknown-command diagnostic", stderr.String())
 	}
+	if bytes.Contains(stderr.Bytes(), []byte("profiles")) {
+		t.Fatalf("stderr = %q, must not echo the command", stderr.String())
+	}
 	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.CLIUsage)) {
 		t.Fatalf("stderr = %q, want stable error code %q", stderr.String(), apperrors.CLIUsage)
 	}
@@ -104,6 +108,9 @@ func TestUnknownServiceCommandUsesUsageExitCodeBeforeResolvingPaths(t *testing.T
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte(apperrors.CLIUsage)) {
 		t.Fatalf("stderr = %q, want stable usage code %q", stderr.String(), apperrors.CLIUsage)
+	}
+	if bytes.Contains(stderr.Bytes(), []byte("relative-state")) {
+		t.Fatalf("stderr = %q, must not echo the supplied path", stderr.String())
 	}
 }
 
@@ -294,6 +301,48 @@ func TestServiceDiagnosticRedactsSensitiveVaultCause(t *testing.T) {
 	}
 	if !bytes.Contains(stderr.Bytes(), []byte(serviceRemediation(apperrors.VaultLocked))) {
 		t.Fatalf("stderr = %q, want safe remediation", stderr.String())
+	}
+}
+
+func TestServiceDiagnosticSinkStoresOnlyStableRedactedProjection(t *testing.T) {
+	t.Parallel()
+
+	const sentinel = "login identity repository path cookie bootstrap session csrf envelope passphrase ciphertext raw provider payload"
+	resolver := func(*string) (platform.Paths, error) {
+		return platform.Paths{}, apperrors.New(apperrors.VaultLocked, errors.New(sentinel))
+	}
+	var events []diagnostics.Event
+	sink := diagnostics.SinkFunc(func(event diagnostics.Event) error {
+		events = append(events, event)
+		return nil
+	})
+	var stdout, stderr bytes.Buffer
+
+	if exitCode := runServiceWithInputAndDiagnostics(
+		[]string{"status", "--state-root", filepath.Join(t.TempDir(), "sensitive-state")},
+		nil,
+		&stdout,
+		&stderr,
+		resolver,
+		sink,
+	); exitCode != exitFailure {
+		t.Fatalf("runServiceWithInputAndDiagnostics() exit code = %d, want %d; stderr = %q", exitCode, exitFailure, stderr.String())
+	}
+	if len(events) != 1 {
+		t.Fatalf("diagnostic events = %#v, want one event", events)
+	}
+	if events[0].ErrorCode != apperrors.VaultLocked || events[0].Component != diagnostics.ComponentVault {
+		t.Fatalf("diagnostic event = %#v, want stable vault projection", events[0])
+	}
+	if events[0].Context == nil || events[0].Context.Operation != diagnostics.OperationCommand || events[0].Context.State != diagnostics.StateLocked {
+		t.Fatalf("diagnostic context = %#v, want bounded command/locked context", events[0].Context)
+	}
+	encoded, err := json.Marshal(events)
+	if err != nil {
+		t.Fatalf("json.Marshal(events) error = %v", err)
+	}
+	if bytes.Contains(encoded, []byte(sentinel)) {
+		t.Fatalf("diagnostic events contain a forbidden cause: %s", encoded)
 	}
 }
 

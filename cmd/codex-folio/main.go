@@ -39,7 +39,7 @@ func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadat
 		writeUsage(stdout, metadata)
 		return exitSuccess
 	default:
-		fmt.Fprintf(stderr, "codex-folio [%s]: unknown command %q\n", apperrors.CLIUsage, command)
+		fmt.Fprintf(stderr, "codex-folio [%s]: unknown command\n", apperrors.CLIUsage)
 		fmt.Fprintln(stderr, "Run 'codex-folio --help' for usage.")
 		return exitUsage
 	}
@@ -52,14 +52,14 @@ func runVersion(args []string, stdout, stderr io.Writer, metadata buildinfo.Meta
 			jsonOutput = true
 			continue
 		}
-		fmt.Fprintf(stderr, "codex-folio [%s]: unexpected version argument %q\n", apperrors.CLIUsage, arg)
+		fmt.Fprintf(stderr, "codex-folio [%s]: unexpected version argument\n", apperrors.CLIUsage)
 		return exitUsage
 	}
 
 	if jsonOutput {
 		encoded, err := metadata.JSON()
 		if err != nil {
-			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode version metadata: %v\n", apperrors.CLIInternal, err)
+			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode version metadata\n", apperrors.CLIInternal)
 			return exitFailure
 		}
 		_, _ = fmt.Fprintln(stdout, string(encoded))
