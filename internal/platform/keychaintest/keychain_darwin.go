@@ -208,7 +208,11 @@ func SetItemTrustAll(service, account string, trustAll bool) error {
 	accountValue := C.CString(account)
 	defer C.free(unsafe.Pointer(serviceValue))
 	defer C.free(unsafe.Pointer(accountValue))
-	if status := C.set_codex_folio_keychain_item_trust(serviceValue, accountValue, C.Boolean(trustAll)); int(status) != 0 {
+	trustAllValue := C.Boolean(0)
+	if trustAll {
+		trustAllValue = C.Boolean(1)
+	}
+	if status := C.set_codex_folio_keychain_item_trust(serviceValue, accountValue, trustAllValue); int(status) != 0 {
 		return fmt.Errorf("Security.framework status %d", int(status))
 	}
 	return nil
