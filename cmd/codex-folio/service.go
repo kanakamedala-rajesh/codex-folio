@@ -555,6 +555,8 @@ func recordServiceDiagnostic(diagnosticSink diagnostics.Sink, code string, sever
 func serviceDiagnosticState(code string) string {
 	switch code {
 	case apperrors.CLIUsage,
+		apperrors.LaunchLeaseInvalid,
+		apperrors.LaunchProfileNotFound,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -566,6 +568,8 @@ func serviceDiagnosticState(code string) string {
 		return diagnostics.StateRejected
 	case apperrors.PlatformStatePathInvalid,
 		apperrors.PlatformStatePathUnsafe,
+		apperrors.LaunchPlanInvalid,
+		apperrors.LaunchProcessStatusInvalid,
 		apperrors.DiagnosticsConfigurationInvalid,
 		apperrors.DiagnosticsEventInvalid,
 		apperrors.StoreSchemaIncompatible,
@@ -583,6 +587,7 @@ func serviceDiagnosticState(code string) string {
 	case apperrors.VaultLocked:
 		return diagnostics.StateLocked
 	case apperrors.PlatformPermissionDenied,
+		apperrors.LaunchProfileUnavailable,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -611,6 +616,18 @@ func serviceRemediation(code string) string {
 		return "the Identity Home could not be resolved or validated safely"
 	case apperrors.ProfileValidationFailed:
 		return "Codex did not validate the Identity Home"
+	case apperrors.LaunchProfileNotFound:
+		return "the requested Identity Profile was not found"
+	case apperrors.LaunchProfileUnavailable:
+		return "the requested Identity Profile is not ready to launch"
+	case apperrors.LaunchPlanInvalid:
+		return "the launch plan is invalid"
+	case apperrors.LaunchLeaseInvalid:
+		return "the Managed Launch lease is invalid or already completed"
+	case apperrors.LaunchProcessStartFailed:
+		return "Codex could not be started in the foreground"
+	case apperrors.LaunchProcessStatusInvalid:
+		return "Codex returned an invalid process status"
 	case apperrors.DiagnosticsConfigurationInvalid:
 		return "the local diagnostics configuration is invalid"
 	case apperrors.DiagnosticsEventInvalid:

@@ -40,6 +40,21 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 4,
+			name:    "managed-launch-lifecycle",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					"ALTER TABLE managed_launches ADD COLUMN process_id INTEGER CHECK (process_id IS NULL OR process_id > 0)",
+					"ALTER TABLE managed_launches ADD COLUMN exit_status INTEGER CHECK (exit_status IS NULL OR (exit_status >= 0 AND exit_status <= 4294967295))",
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -292,7 +307,7 @@ var expectedTables = map[string][]string{
 	"experimental_transactions": {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":            {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":         {"profile_id", "display_name", "status", "identity_home_id", "created_at", "updated_at"},
-	"managed_launches":          {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at"},
+	"managed_launches":          {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
 	"metric_availability":       {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
 	"metric_provenance":         {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
 	"observed_sessions":         {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},

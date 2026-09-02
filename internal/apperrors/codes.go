@@ -10,6 +10,12 @@ const (
 	LaunchCodexAmbiguous            = "CF_LAUNCH_CODEX_AMBIGUOUS"
 	LaunchCodexPathInvalid          = "CF_LAUNCH_CODEX_PATH_INVALID"
 	LaunchCodexVersionInvalid       = "CF_LAUNCH_CODEX_VERSION_INVALID"
+	LaunchPlanInvalid               = "CF_LAUNCH_PLAN_INVALID"
+	LaunchLeaseInvalid              = "CF_LAUNCH_LEASE_INVALID"
+	LaunchProfileNotFound           = "CF_LAUNCH_PROFILE_NOT_FOUND"
+	LaunchProfileUnavailable        = "CF_LAUNCH_PROFILE_UNAVAILABLE"
+	LaunchProcessStartFailed        = "CF_LAUNCH_PROCESS_START_FAILED"
+	LaunchProcessStatusInvalid      = "CF_LAUNCH_PROCESS_STATUS_INVALID"
 	ProfileSetupInvalid             = "CF_PROFILE_SETUP_INVALID"
 	ProfileAliasInvalid             = "CF_PROFILE_ALIAS_INVALID"
 	ProfileAliasTaken               = "CF_PROFILE_ALIAS_TAKEN"
@@ -97,6 +103,12 @@ func IsRegistered(code string) bool {
 		LaunchCodexAmbiguous,
 		LaunchCodexPathInvalid,
 		LaunchCodexVersionInvalid,
+		LaunchPlanInvalid,
+		LaunchLeaseInvalid,
+		LaunchProfileNotFound,
+		LaunchProfileUnavailable,
+		LaunchProcessStartFailed,
+		LaunchProcessStatusInvalid,
 		ProfileSetupInvalid,
 		ProfileAliasInvalid,
 		ProfileAliasTaken,

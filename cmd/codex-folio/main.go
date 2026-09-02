@@ -45,6 +45,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runCodex(args[1:], stdout, stderr, resolver)
 	case "profile":
 		return runProfile(args[1:], stdout, stderr, resolvePaths, resolver)
+	case "launch":
+		return runLaunch(args[1:], stdout, stderr, resolvePaths, resolver)
 	case "help", "--help", "-h":
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -89,5 +91,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

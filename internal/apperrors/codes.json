@@ -38,6 +38,42 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_LAUNCH_PLAN_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_LEASE_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROFILE_NOT_FOUND",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROFILE_UNAVAILABLE",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROCESS_START_FAILED",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROCESS_STATUS_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PROFILE_SETUP_INVALID",
       "owner": "profile",
       "lifecycle": "active",
