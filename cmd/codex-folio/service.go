@@ -595,6 +595,22 @@ func serviceDiagnosticState(code string) string {
 
 func serviceRemediation(code string) string {
 	switch code {
+	case apperrors.ProfileSetupInvalid:
+		return "profile setup state or arguments are invalid"
+	case apperrors.ProfileAliasInvalid:
+		return "alias must start with a letter or number and contain only portable ASCII letters, numbers, '.', '_' or '-'; maximum 64 characters"
+	case apperrors.ProfileAliasTaken:
+		return "profile alias is already in use; choose another alias"
+	case apperrors.ProfileSetupChoiceRequired:
+		return "non-interactive setup requires exactly one of --browser or --device-code"
+	case apperrors.ProfileAuthenticationCancelled:
+		return "Codex authentication was cancelled; rerun profile add to resume the pending profile"
+	case apperrors.ProfileAuthenticationFailed:
+		return "Codex authentication failed; rerun profile add to resume the pending profile"
+	case apperrors.ProfileHomeInvalid:
+		return "the managed Identity Home could not be created safely"
+	case apperrors.ProfileValidationFailed:
+		return "Codex did not validate the managed Identity Home"
 	case apperrors.DiagnosticsConfigurationInvalid:
 		return "the local diagnostics configuration is invalid"
 	case apperrors.DiagnosticsEventInvalid:

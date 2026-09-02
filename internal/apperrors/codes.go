@@ -10,6 +10,14 @@ const (
 	LaunchCodexAmbiguous            = "CF_LAUNCH_CODEX_AMBIGUOUS"
 	LaunchCodexPathInvalid          = "CF_LAUNCH_CODEX_PATH_INVALID"
 	LaunchCodexVersionInvalid       = "CF_LAUNCH_CODEX_VERSION_INVALID"
+	ProfileSetupInvalid             = "CF_PROFILE_SETUP_INVALID"
+	ProfileAliasInvalid             = "CF_PROFILE_ALIAS_INVALID"
+	ProfileAliasTaken               = "CF_PROFILE_ALIAS_TAKEN"
+	ProfileSetupChoiceRequired      = "CF_PROFILE_SETUP_CHOICE_REQUIRED"
+	ProfileAuthenticationFailed     = "CF_PROFILE_AUTHENTICATION_FAILED"
+	ProfileAuthenticationCancelled  = "CF_PROFILE_AUTHENTICATION_CANCELLED"
+	ProfileHomeInvalid              = "CF_PROFILE_HOME_INVALID"
+	ProfileValidationFailed         = "CF_PROFILE_VALIDATION_FAILED"
 	DiagnosticsConfigurationInvalid = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid         = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid        = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -89,6 +97,14 @@ func IsRegistered(code string) bool {
 		LaunchCodexAmbiguous,
 		LaunchCodexPathInvalid,
 		LaunchCodexVersionInvalid,
+		ProfileSetupInvalid,
+		ProfileAliasInvalid,
+		ProfileAliasTaken,
+		ProfileSetupChoiceRequired,
+		ProfileAuthenticationFailed,
+		ProfileAuthenticationCancelled,
+		ProfileHomeInvalid,
+		ProfileValidationFailed,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

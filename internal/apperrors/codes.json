@@ -38,6 +38,54 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_PROFILE_SETUP_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_ALIAS_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_ALIAS_TAKEN",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_SETUP_CHOICE_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_FAILED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_CANCELLED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_HOME_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_VALIDATION_FAILED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

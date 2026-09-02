@@ -17,11 +17,18 @@ type migration struct {
 }
 
 func migrations() []migration {
-	return []migration{{
-		version: 1,
-		name:    "allowlisted-foundation",
-		apply:   applyFoundationMigration,
-	}}
+	return []migration{
+		{
+			version: 1,
+			name:    "allowlisted-foundation",
+			apply:   applyFoundationMigration,
+		},
+		{
+			version: 2,
+			name:    "profile-setup-stages",
+			apply:   applyProfileSetupMigration,
+		},
+	}
 }
 
 func applyFoundationMigration(ctx context.Context, tx *sql.Tx) error {
@@ -31,6 +38,20 @@ func applyFoundationMigration(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+func applyProfileSetupMigration(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE profile_setup_stages (
+		profile_id TEXT PRIMARY KEY NOT NULL,
+		discovery_completed INTEGER NOT NULL CHECK (discovery_completed IN (0, 1)),
+		home_completed INTEGER NOT NULL CHECK (home_completed IN (0, 1)),
+		authentication_completed INTEGER NOT NULL CHECK (authentication_completed IN (0, 1)),
+		validation_completed INTEGER NOT NULL CHECK (validation_completed IN (0, 1)),
+		selection_completed INTEGER NOT NULL CHECK (selection_completed IN (0, 1)),
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+	)`)
+	return err
 }
 
 var foundationSchemaStatements = []string{
@@ -264,6 +285,7 @@ var expectedTables = map[string][]string{
 	"metric_provenance":         {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
 	"observed_sessions":         {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
 	"pending_profiles":          {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
+	"profile_setup_stages":      {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"project_identities":        {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
 	"retention_state":           {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
 	"schema_migrations":         {"version", "name", "applied_at"},

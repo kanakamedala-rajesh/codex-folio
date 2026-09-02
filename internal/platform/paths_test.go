@@ -88,6 +88,9 @@ func TestResolvePathsUsesPlatformAppLocalDefaults(t *testing.T) {
 			if paths.VaultFile != filepath.Join(paths.Root, "codex-folio.vault") {
 				t.Fatalf("VaultFile = %q, want codex-folio.vault below state root", paths.VaultFile)
 			}
+			if paths.ManagedHomes != filepath.Join(paths.Root, managedHomesName) {
+				t.Fatalf("ManagedHomes = %q, want managed-homes below state root", paths.ManagedHomes)
+			}
 		})
 	}
 }
