@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 )
 
 func TestAuthenticatorDelegatesLoginWithoutCapturingCodexOutput(t *testing.T) {
+	executablePath := filepath.Join(t.TempDir(), "codex")
+	identityHome := filepath.Join(t.TempDir(), "managed-homes", "profile-1")
 	var executable string
 	var args []string
 	var environment []string
@@ -21,22 +24,24 @@ func TestAuthenticatorDelegatesLoginWithoutCapturingCodexOutput(t *testing.T) {
 	})
 
 	err := authenticator.Authenticate(context.Background(), profile.AuthenticationRequest{
-		Discovery:    profile.Discovery{Executable: "/opt/codex/bin/codex"},
-		IdentityHome: "/private/managed-homes/profile-1",
+		Discovery:    profile.Discovery{Executable: executablePath},
+		IdentityHome: identityHome,
 		Method:       profile.AuthMethodDeviceCode,
 	})
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
-	if executable != "/opt/codex/bin/codex" || strings.Join(args, " ") != "login --device-auth" {
+	if executable != executablePath || strings.Join(args, " ") != "login --device-auth" {
 		t.Fatalf("command = %q %v, want Codex device login", executable, args)
 	}
-	if !containsEnvironment(environment, "CODEX_HOME=/private/managed-homes/profile-1") {
+	if !containsEnvironment(environment, "CODEX_HOME="+filepath.Clean(identityHome)) {
 		t.Fatalf("environment does not set target CODEX_HOME: %v", environment)
 	}
 }
 
 func TestAuthenticatorUsesLoginStatusAndMapsFailureToNotAuthenticated(t *testing.T) {
+	executablePath := filepath.Join(t.TempDir(), "codex")
+	identityHome := filepath.Join(t.TempDir(), "managed-homes", "profile-1")
 	var args []string
 	authenticator := NewAuthenticatorWithCommandRunner(func(_ context.Context, _ string, gotArgs, _ []string, _ io.Reader, _, _ io.Writer) error {
 		args = append([]string(nil), gotArgs...)
@@ -44,8 +49,8 @@ func TestAuthenticatorUsesLoginStatusAndMapsFailureToNotAuthenticated(t *testing
 	})
 
 	err := authenticator.Check(context.Background(), profile.AuthenticationRequest{
-		Discovery:    profile.Discovery{Executable: "/opt/codex/bin/codex"},
-		IdentityHome: "/private/managed-homes/profile-1",
+		Discovery:    profile.Discovery{Executable: executablePath},
+		IdentityHome: identityHome,
 	})
 	if err != profile.ErrNotAuthenticated {
 		t.Fatalf("Check() error = %v, want not-authenticated", err)

@@ -20,7 +20,7 @@ import (
 )
 
 func TestProfileAddCLIComposesStoreHomeAndCodexWithoutPrintingHomePath(t *testing.T) {
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	paths := platform.Paths{
 		Root:         stateRoot,
 		Runtime:      filepath.Join(stateRoot, "runtime"),
@@ -89,7 +89,7 @@ func TestProfileAddCLIRejectsInvalidAliasAsUsageError(t *testing.T) {
 }
 
 func TestProfileAddCLIResumesPendingAuthenticationWithRealStore(t *testing.T) {
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	paths := platform.Paths{
 		Root:         stateRoot,
 		Runtime:      filepath.Join(stateRoot, "runtime"),
@@ -140,7 +140,7 @@ func TestProfileAddCLIResumesPendingAuthenticationWithRealStore(t *testing.T) {
 }
 
 func TestProfileAddCLIResumesEveryCommittedStageWithRealStoreAndFakeSeams(t *testing.T) {
-	stateRoot := filepath.Join(t.TempDir(), "state")
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	paths := platform.Paths{Root: stateRoot, Runtime: filepath.Join(stateRoot, "runtime"), LockFile: filepath.Join(stateRoot, "runtime", "owner.lock"), MetadataFile: filepath.Join(stateRoot, "runtime", "owner.json"), DatabaseFile: filepath.Join(stateRoot, "profiles.sqlite3"), ManagedHomes: filepath.Join(stateRoot, "managed-homes")}
 	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x61}, 32), "profile-stage-resume")
 	if err != nil {

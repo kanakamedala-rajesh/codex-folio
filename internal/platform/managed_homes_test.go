@@ -11,7 +11,7 @@ import (
 )
 
 func TestManagedHomeProvisionerCreatesPrivateStableHome(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "managed-homes")
+	root := filepath.Join(testTempDir(t), "managed-homes")
 	provisioner, err := NewManagedHomeProvisioner(root)
 	if err != nil {
 		t.Fatalf("NewManagedHomeProvisioner() error = %v", err)
@@ -42,7 +42,7 @@ func TestManagedHomeProvisionerCreatesPrivateStableHome(t *testing.T) {
 }
 
 func TestManagedHomeProvisionerRejectsUnsafeProfileIdentifiers(t *testing.T) {
-	provisioner, err := NewManagedHomeProvisioner(filepath.Join(t.TempDir(), "managed-homes"))
+	provisioner, err := NewManagedHomeProvisioner(filepath.Join(testTempDir(t), "managed-homes"))
 	if err != nil {
 		t.Fatalf("NewManagedHomeProvisioner() error = %v", err)
 	}
