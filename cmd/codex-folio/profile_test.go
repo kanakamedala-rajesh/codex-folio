@@ -88,6 +88,127 @@ func TestProfileAddCLIRejectsInvalidAliasAsUsageError(t *testing.T) {
 	}
 }
 
+func TestProfileAddCLIRegistersReferencedHomeWithoutPrintingItsPath(t *testing.T) {
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+	externalHome := filepath.Join(testServiceTempDir(t), "existing-codex-home")
+	if err := os.MkdirAll(externalHome, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	markerPath := filepath.Join(externalHome, "existing-state")
+	marker := []byte("Codex-owned state remains external")
+	if err := os.WriteFile(markerPath, marker, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	paths := platform.Paths{
+		Root:         stateRoot,
+		Runtime:      filepath.Join(stateRoot, "runtime"),
+		LockFile:     filepath.Join(stateRoot, "runtime", "service.owner.lock"),
+		MetadataFile: filepath.Join(stateRoot, "runtime", "service.owner.json"),
+		DatabaseFile: filepath.Join(stateRoot, "codex-folio.sqlite3"),
+		VaultFile:    filepath.Join(stateRoot, "codex-folio.vault"),
+		ManagedHomes: filepath.Join(stateRoot, "managed-homes"),
+	}
+	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x38}, 32), "cli-referenced-profile-generation")
+	if err != nil {
+		t.Fatalf("NewInMemoryVault() error = %v", err)
+	}
+	authenticator := &cliProfileAuthenticator{}
+	var stdout, stderr bytes.Buffer
+	resultCode := runProfileWithInputAndDependencies(
+		[]string{"add", "external", "--identity-home", externalHome, "--non-interactive", "--json"},
+		strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		cliProfileResolver{},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(root string) (profilefeature.ManagedHomeProvisioner, error) {
+			return platform.NewManagedHomeProvisioner(root)
+		},
+		func() profilefeature.Authenticator { return authenticator },
+		nil,
+	)
+	if resultCode != exitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr = %q", resultCode, exitSuccess, stderr.String())
+	}
+	var result profilefeature.SetupResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("profile JSON error = %v; output = %q", err, stdout.String())
+	}
+	if result.Profile.Status != profilefeature.StatusReady || !result.Profile.Selected || result.Profile.IdentityHomeOwnership != profilefeature.HomeOwnershipReferenced {
+		t.Fatalf("result = %#v, want ready selected referenced profile", result)
+	}
+	if result.AuthenticationMethod != profilefeature.AuthMethodReused || authenticator.authenticateCalls != 0 {
+		t.Fatalf("authentication = method:%q calls:%d, want reused without login", result.AuthenticationMethod, authenticator.authenticateCalls)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want no warning without documented metadata", result.Warnings)
+	}
+	if strings.Contains(stdout.String(), externalHome) || stderr.Len() != 0 {
+		t.Fatalf("stdout/stderr = %q/%q, want redacted JSON and no diagnostics", stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(paths.ManagedHomes); !os.IsNotExist(err) {
+		t.Fatalf("managed homes stat error = %v, want no managed home creation", err)
+	}
+	if got, err := os.ReadFile(markerPath); err != nil || !bytes.Equal(got, marker) {
+		t.Fatalf("referenced home state = %q/%v, want unchanged marker", got, err)
+	}
+}
+
+func TestProfileAddCLILeavesInvalidReferencedHomePending(t *testing.T) {
+	stateRoot := filepath.Join(testServiceTempDir(t), "state")
+	missingHome := filepath.Join(testServiceTempDir(t), "missing-codex-home")
+	paths := platform.Paths{
+		Root:         stateRoot,
+		Runtime:      filepath.Join(stateRoot, "runtime"),
+		LockFile:     filepath.Join(stateRoot, "runtime", "service.owner.lock"),
+		MetadataFile: filepath.Join(stateRoot, "runtime", "service.owner.json"),
+		DatabaseFile: filepath.Join(stateRoot, "codex-folio.sqlite3"),
+		VaultFile:    filepath.Join(stateRoot, "codex-folio.vault"),
+		ManagedHomes: filepath.Join(stateRoot, "managed-homes"),
+	}
+	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x39}, 32), "cli-invalid-referenced-profile-generation")
+	if err != nil {
+		t.Fatalf("NewInMemoryVault() error = %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	resultCode := runProfileWithInputAndDependencies(
+		[]string{"add", "external", "--identity-home", missingHome, "--device-code", "--non-interactive", "--json"},
+		strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		cliProfileResolver{},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(root string) (profilefeature.ManagedHomeProvisioner, error) {
+			return platform.NewManagedHomeProvisioner(root)
+		},
+		func() profilefeature.Authenticator { return &cliProfileAuthenticator{} },
+		nil,
+	)
+	if resultCode != exitFailure || stdout.Len() != 0 {
+		t.Fatalf("exit/stdout = %d/%q, want failure and no JSON", resultCode, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), apperrors.ProfileHomeInvalid) || strings.Contains(stderr.String(), missingHome) {
+		t.Fatalf("stderr = %q, want stable redacted home error", stderr.String())
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	pending, err := stateStore.FindPendingProfile(context.Background(), "EXTERNAL")
+	if err != nil {
+		t.Fatalf("FindPendingProfile() error = %v", err)
+	}
+	if pending.Status != profilefeature.StatusPending || pending.Stages.Discovery != true || pending.Stages.Home || pending.IdentityHomeID != "" {
+		t.Fatalf("pending = %#v, want discovery-only pending profile", pending)
+	}
+	if _, err := os.Stat(paths.ManagedHomes); !os.IsNotExist(err) {
+		t.Fatalf("managed homes stat error = %v, want no managed home creation", err)
+	}
+}
+
 func TestProfileAddCLIResumesPendingAuthenticationWithRealStore(t *testing.T) {
 	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	paths := platform.Paths{

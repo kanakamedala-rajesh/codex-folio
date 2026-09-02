@@ -28,7 +28,10 @@ const (
 
 type HomeOwnership string
 
-const HomeOwnershipManaged HomeOwnership = "managed"
+const (
+	HomeOwnershipManaged    HomeOwnership = "managed"
+	HomeOwnershipReferenced HomeOwnership = "referenced"
+)
 
 type AuthMethod string
 
@@ -90,14 +93,15 @@ type PendingProfile struct {
 }
 
 type SetupRequest struct {
-	Alias          string
-	DisplayName    string
-	CodexOverride  string
-	AuthMethod     AuthMethod
-	NonInteractive bool
-	Stdin          io.Reader
-	Stdout         io.Writer
-	Stderr         io.Writer
+	Alias              string
+	DisplayName        string
+	CodexOverride      string
+	ReferencedHomePath string
+	AuthMethod         AuthMethod
+	NonInteractive     bool
+	Stdin              io.Reader
+	Stdout             io.Writer
+	Stderr             io.Writer
 }
 
 type SetupResult struct {
@@ -106,23 +110,31 @@ type SetupResult struct {
 	Stages               SetupStages     `json:"stages"`
 	Resumed              bool            `json:"resumed"`
 	AuthenticationMethod AuthMethod      `json:"authentication_method,omitempty"`
+	Warnings             []string        `json:"warnings,omitempty"`
 }
 
+const ReferencedHomeDuplicateWarning = "Codex-reported Login Identity or Workspace may already be registered; this local profile remains distinct."
+
 var (
-	ErrNotFound             = errors.New("profile was not found")
-	ErrAliasInvalid         = errors.New("profile alias is invalid")
-	ErrAliasTaken           = errors.New("profile alias is already in use")
-	ErrSetupChoiceRequired  = errors.New("profile setup requires an explicit choice")
-	ErrAuthCancelled        = errors.New("Codex authentication was cancelled")
-	ErrAuthenticationFailed = errors.New("Codex authentication failed")
-	ErrBrowserUnavailable   = errors.New("Codex browser authentication is unavailable")
-	ErrNotAuthenticated     = errors.New("Codex authentication is not usable")
-	ErrHomeInvalid          = errors.New("managed Identity Home is invalid")
-	ErrValidationFailed     = errors.New("Identity Home validation failed")
+	ErrNotFound                      = errors.New("profile was not found")
+	ErrAliasInvalid                  = errors.New("profile alias is invalid")
+	ErrAliasTaken                    = errors.New("profile alias is already in use")
+	ErrSetupChoiceRequired           = errors.New("profile setup requires an explicit choice")
+	ErrAuthCancelled                 = errors.New("Codex authentication was cancelled")
+	ErrAuthenticationFailed          = errors.New("Codex authentication failed")
+	ErrBrowserUnavailable            = errors.New("Codex browser authentication is unavailable")
+	ErrNotAuthenticated              = errors.New("Codex authentication is not usable")
+	ErrDocumentedMetadataUnavailable = errors.New("Codex documented identity metadata is unavailable")
+	ErrHomeInvalid                   = errors.New("managed Identity Home is invalid")
+	ErrValidationFailed              = errors.New("Identity Home validation failed")
 )
 
 type Discoverer interface {
 	Discover(override string) (Discovery, error)
+}
+
+type ReferencedHomeResolver interface {
+	Resolve(context.Context, string) (string, error)
 }
 
 type ManagedHomeProvisioner interface {
@@ -143,11 +155,22 @@ type Authenticator interface {
 	Check(context.Context, AuthenticationRequest) error
 }
 
+type DocumentedMetadata struct {
+	LoginIdentity string
+	Workspace     string
+}
+
+type DocumentedMetadataObserver interface {
+	ObserveDocumentedMetadata(context.Context, AuthenticationRequest) (DocumentedMetadata, error)
+}
+
 type Repository interface {
 	FindPendingProfile(context.Context, string) (PendingProfile, error)
 	GetPendingProfile(context.Context, string) (PendingProfile, error)
 	CreatePendingProfile(context.Context, PendingProfile) error
 	SetManagedHome(context.Context, string, string, string) error
+	SetReferencedHome(context.Context, string, string, string) error
+	SaveDocumentedMetadata(context.Context, string, DocumentedMetadata) (bool, error)
 	SaveSetupStage(context.Context, string, SetupStage) error
 	ResetAuthentication(context.Context, string) error
 	PromotePendingProfile(context.Context, string) (IdentityProfile, error)
@@ -155,19 +178,21 @@ type Repository interface {
 }
 
 type WorkflowOptions struct {
-	Repository      Repository
-	Discoverer      Discoverer
-	HomeProvisioner ManagedHomeProvisioner
-	Authenticator   Authenticator
-	IDGenerator     func() (string, error)
+	Repository             Repository
+	Discoverer             Discoverer
+	HomeProvisioner        ManagedHomeProvisioner
+	ReferencedHomeResolver ReferencedHomeResolver
+	Authenticator          Authenticator
+	IDGenerator            func() (string, error)
 }
 
 type Workflow struct {
-	repository      Repository
-	discoverer      Discoverer
-	homeProvisioner ManagedHomeProvisioner
-	authenticator   Authenticator
-	idGenerator     func() (string, error)
+	repository             Repository
+	discoverer             Discoverer
+	homeProvisioner        ManagedHomeProvisioner
+	referencedHomeResolver ReferencedHomeResolver
+	authenticator          Authenticator
+	idGenerator            func() (string, error)
 }
 
 func NewWorkflow(options WorkflowOptions) (*Workflow, error) {
@@ -179,11 +204,12 @@ func NewWorkflow(options WorkflowOptions) (*Workflow, error) {
 		idGenerator = newProfileID
 	}
 	return &Workflow{
-		repository:      options.Repository,
-		discoverer:      options.Discoverer,
-		homeProvisioner: options.HomeProvisioner,
-		authenticator:   options.Authenticator,
-		idGenerator:     idGenerator,
+		repository:             options.Repository,
+		discoverer:             options.Discoverer,
+		homeProvisioner:        options.HomeProvisioner,
+		referencedHomeResolver: options.ReferencedHomeResolver,
+		authenticator:          options.Authenticator,
+		idGenerator:            idGenerator,
 	}, nil
 }
 
@@ -259,18 +285,38 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 		pending.Stages.Discovery = true
 	}
 
-	homePath, err := workflow.homeProvisioner.Ensure(ctx, pending.ID)
+	homeOwnership := HomeOwnershipManaged
+	var homePath string
+	if pending.IdentityHomeOwnership == HomeOwnershipReferenced || strings.TrimSpace(request.ReferencedHomePath) != "" {
+		homeOwnership = HomeOwnershipReferenced
+		referencedPath := request.ReferencedHomePath
+		if strings.TrimSpace(referencedPath) == "" {
+			referencedPath = pending.IdentityHomePath
+		}
+		if workflow.referencedHomeResolver == nil {
+			return workflow.result(pending, discovery, resumed, ""), apperrors.New(apperrors.ProfileHomeInvalid, ErrHomeInvalid)
+		}
+		homePath, err = workflow.referencedHomeResolver.Resolve(ctx, referencedPath)
+	} else {
+		homePath, err = workflow.homeProvisioner.Ensure(ctx, pending.ID)
+	}
 	if err != nil {
 		return workflow.result(pending, discovery, resumed, ""), wrapHomeError(err)
 	}
 	if pending.IdentityHomeID == "" {
-		if err := workflow.repository.SetManagedHome(ctx, pending.ID, pending.ID, homePath); err != nil {
-			return workflow.result(pending, discovery, resumed, ""), err
+		var setHomeErr error
+		if homeOwnership == HomeOwnershipReferenced {
+			setHomeErr = workflow.repository.SetReferencedHome(ctx, pending.ID, pending.ID, homePath)
+		} else {
+			setHomeErr = workflow.repository.SetManagedHome(ctx, pending.ID, pending.ID, homePath)
+		}
+		if setHomeErr != nil {
+			return workflow.result(pending, discovery, resumed, ""), setHomeErr
 		}
 		pending.IdentityHomeID = pending.ID
-		pending.IdentityHomeOwnership = HomeOwnershipManaged
+		pending.IdentityHomeOwnership = homeOwnership
 		pending.IdentityHomePath = homePath
-	} else if pending.IdentityHomePath == "" || filepath.Clean(pending.IdentityHomePath) != filepath.Clean(homePath) {
+	} else if pending.IdentityHomeOwnership != homeOwnership || pending.IdentityHomePath == "" || filepath.Clean(pending.IdentityHomePath) != filepath.Clean(homePath) {
 		return workflow.result(pending, discovery, resumed, ""), apperrors.New(apperrors.ProfileHomeInvalid, ErrHomeInvalid)
 	}
 	if !pending.Stages.Home {
@@ -286,6 +332,19 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 	}
 	pending.Stages.Authentication = true
 	pending.Stages.Validation = true
+	duplicate := false
+	if observer, ok := workflow.authenticator.(DocumentedMetadataObserver); ok {
+		metadata, metadataErr := observer.ObserveDocumentedMetadata(ctx, AuthenticationRequest{
+			Discovery: discovery, IdentityHome: pending.IdentityHomePath, Method: authenticationMethod,
+			Stdin: request.Stdin, Stdout: request.Stdout, Stderr: request.Stderr,
+		})
+		if metadataErr == nil && (strings.TrimSpace(metadata.LoginIdentity) != "" || strings.TrimSpace(metadata.Workspace) != "") {
+			duplicate, err = workflow.repository.SaveDocumentedMetadata(ctx, pending.ID, metadata)
+			if err != nil {
+				return workflow.result(pending, discovery, resumed, authenticationMethod), err
+			}
+		}
+	}
 
 	ready, err := workflow.repository.PromotePendingProfile(ctx, pending.ID)
 	if err != nil {
@@ -296,13 +355,17 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 		return workflow.result(pending, discovery, resumed, authenticationMethod), err
 	}
 	pending.Stages.Selection = true
-	return SetupResult{
+	result := SetupResult{
 		Profile:              selectedProfile(ready, selected),
 		Discovery:            discovery,
 		Stages:               pending.Stages,
 		Resumed:              resumed,
 		AuthenticationMethod: authenticationMethod,
-	}, nil
+	}
+	if duplicate {
+		result.Warnings = []string{ReferencedHomeDuplicateWarning}
+	}
+	return result, nil
 }
 
 func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request SetupRequest, preferred AuthMethod, pending PendingProfile, discovery Discovery) (AuthMethod, error) {
@@ -314,6 +377,20 @@ func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request S
 		Stderr:       request.Stderr,
 	}
 	method := AuthMethodReused
+	if pending.IdentityHomeOwnership == HomeOwnershipReferenced && !pending.Stages.Authentication && !pending.Stages.Validation && preferred == AuthMethodAutomatic {
+		authRequest.Method = AuthMethodReused
+		if err := workflow.authenticator.Check(ctx, authRequest); err == nil {
+			if err := workflow.repository.SaveSetupStage(ctx, pending.ID, StageAuthentication); err != nil {
+				return method, err
+			}
+			if err := workflow.repository.SaveSetupStage(ctx, pending.ID, StageValidation); err != nil {
+				return method, err
+			}
+			return method, nil
+		} else if !errors.Is(err, ErrNotAuthenticated) {
+			return method, wrapValidationError(err)
+		}
+	}
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if pending.Stages.Validation {

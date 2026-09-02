@@ -20,6 +20,7 @@ import (
 type profileOptions struct {
 	serviceOptions
 	codexBin       string
+	identityHome   string
 	authMethod     profilefeature.AuthMethod
 	displayName    string
 	nonInteractive bool
@@ -105,23 +106,25 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authenticator is unavailable")), diagnosticSink)
 	}
 	workflow, err := profilefeature.NewWorkflow(profilefeature.WorkflowOptions{
-		Repository:      stateStore,
-		Discoverer:      profileDiscoverer{resolver: resolver},
-		HomeProvisioner: homeProvisioner,
-		Authenticator:   newAuthenticator(),
+		Repository:             stateStore,
+		Discoverer:             profileDiscoverer{resolver: resolver},
+		HomeProvisioner:        homeProvisioner,
+		ReferencedHomeResolver: platform.NewReferencedHomeResolver(paths.ManagedHomes),
+		Authenticator:          newAuthenticator(),
 	})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	request := profilefeature.SetupRequest{
-		Alias:          alias,
-		DisplayName:    options.displayName,
-		CodexOverride:  options.codexBin,
-		AuthMethod:     options.authMethod,
-		NonInteractive: options.nonInteractive,
-		Stdin:          input,
-		Stdout:         stderr,
-		Stderr:         stderr,
+		Alias:              alias,
+		DisplayName:        options.displayName,
+		CodexOverride:      options.codexBin,
+		ReferencedHomePath: options.identityHome,
+		AuthMethod:         options.authMethod,
+		NonInteractive:     options.nonInteractive,
+		Stdin:              input,
+		Stdout:             stderr,
+		Stderr:             stderr,
 	}
 	result, err := workflow.Add(context.Background(), request)
 	if err != nil {
@@ -198,6 +201,23 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 			if options.codexBin == "" {
 				return profileOptions{}, errors.New("--codex-bin requires one value")
 			}
+		case arg == "--identity-home":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.identityHome != "" {
+				return profileOptions{}, errors.New("--identity-home requires one value")
+			}
+			index++
+			options.identityHome = strings.TrimSpace(args[index])
+			if options.identityHome == "" {
+				return profileOptions{}, errors.New("--identity-home requires one value")
+			}
+		case strings.HasPrefix(arg, "--identity-home="):
+			if options.identityHome != "" {
+				return profileOptions{}, errors.New("--identity-home may be supplied only once")
+			}
+			options.identityHome = strings.TrimSpace(strings.TrimPrefix(arg, "--identity-home="))
+			if options.identityHome == "" {
+				return profileOptions{}, errors.New("--identity-home requires one value")
+			}
 		case arg == "--state-root":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
 				return profileOptions{}, errors.New("--state-root requires a value")
@@ -249,6 +269,9 @@ func writeProfileResult(stdout io.Writer, result profilefeature.SetupResult) {
 	if result.AuthenticationMethod != "" {
 		_, _ = fmt.Fprintf(stdout, "Authentication: %s\n", result.AuthenticationMethod)
 	}
+	for _, warning := range result.Warnings {
+		_, _ = fmt.Fprintf(stdout, "Warning: %s\n", warning)
+	}
 }
 
 func writeProfileUsageDiagnostic(stderr io.Writer, code, message string, diagnosticSink diagnostics.Sink) int {
@@ -264,5 +287,5 @@ func writeProfileUsageDiagnostic(stderr io.Writer, code, message string, diagnos
 
 func writeProfileUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
 }

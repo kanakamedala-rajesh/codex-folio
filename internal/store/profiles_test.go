@@ -129,6 +129,108 @@ func TestProfileStateRejectsAliasCollisionAndIncompletePromotion(t *testing.T) {
 	}
 }
 
+func TestReferencedProfileStatePersistsOwnershipAndOpaqueHome(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "profiles.sqlite3")
+	homePath := filepath.Join(t.TempDir(), "codex-home")
+	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x72}, 32), "referenced-profile-generation")
+	if err != nil {
+		t.Fatalf("NewInMemoryVault() error = %v", err)
+	}
+	clock := profileStoreClock{now: time.Date(2026, time.September, 2, 13, 0, 0, 0, time.UTC)}
+	stateStore, err := OpenWithOptions(Options{Path: databasePath, Clock: clock, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("OpenWithOptions() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-1", Alias: "external", DisplayName: "External"}); err != nil {
+		t.Fatalf("CreatePendingProfile() error = %v", err)
+	}
+	if err := stateStore.SetReferencedHome(ctx, "profile-1", "home-1", homePath); err != nil {
+		t.Fatalf("SetReferencedHome() error = %v", err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-1", stage); err != nil {
+			t.Fatalf("SaveSetupStage(%q) error = %v", stage, err)
+		}
+	}
+	pending, err := stateStore.FindPendingProfile(ctx, "EXTERNAL")
+	if err != nil {
+		t.Fatalf("FindPendingProfile() error = %v", err)
+	}
+	if pending.IdentityHomePath != homePath || pending.IdentityHomeOwnership != profile.HomeOwnershipReferenced {
+		t.Fatalf("pending = %#v, want persisted referenced home", pending)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	stateStore, err = OpenWithOptions(Options{Path: databasePath, Clock: clock, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	pending, err = stateStore.FindPendingProfile(ctx, "external")
+	if err != nil {
+		t.Fatalf("FindPendingProfile() after reopen error = %v", err)
+	}
+	if pending.IdentityHomePath != homePath || pending.IdentityHomeOwnership != profile.HomeOwnershipReferenced {
+		t.Fatalf("reopened pending = %#v, want referenced home", pending)
+	}
+	ready, err := stateStore.PromotePendingProfile(ctx, "profile-1")
+	if err != nil {
+		t.Fatalf("PromotePendingProfile() error = %v", err)
+	}
+	if ready.Status != profile.StatusReady || ready.IdentityHomeOwnership != profile.HomeOwnershipReferenced {
+		t.Fatalf("ready = %#v, want ready referenced profile", ready)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	databaseBytes, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if bytes.Contains(databaseBytes, []byte(homePath)) {
+		t.Fatalf("database contains plaintext referenced home path %q", homePath)
+	}
+}
+
+func TestDocumentedMetadataPersistsEncryptedAndMatchesByEitherIdentifier(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	for _, id := range []string{"profile-1", "profile-2"} {
+		if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: id, Alias: id, DisplayName: id}); err != nil {
+			t.Fatalf("CreatePendingProfile(%q) error = %v", id, err)
+		}
+		if err := stateStore.SetManagedHome(ctx, id, "home-"+id, filepath.Join(t.TempDir(), id)); err != nil {
+			t.Fatalf("SetManagedHome(%q) error = %v", id, err)
+		}
+	}
+	if duplicate, err := stateStore.SaveDocumentedMetadata(ctx, "profile-1", profile.DocumentedMetadata{LoginIdentity: "login-1", Workspace: "workspace-1"}); err != nil || duplicate {
+		t.Fatalf("first metadata save = duplicate:%v error:%v, want no duplicate", duplicate, err)
+	}
+	duplicate, err := stateStore.SaveDocumentedMetadata(ctx, "profile-2", profile.DocumentedMetadata{Workspace: "workspace-1"})
+	if err != nil || !duplicate {
+		t.Fatalf("matching workspace save = duplicate:%v error:%v, want duplicate", duplicate, err)
+	}
+	duplicate, err = stateStore.SaveDocumentedMetadata(ctx, "profile-2", profile.DocumentedMetadata{LoginIdentity: "login-2"})
+	if err != nil || duplicate {
+		t.Fatalf("distinct login save = duplicate:%v error:%v, want no duplicate", duplicate, err)
+	}
+	data, err := os.ReadFile(stateStore.Path())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, value := range []string{"login-1", "workspace-1", "login-2"} {
+		if bytes.Contains(data, []byte(value)) {
+			t.Fatalf("database contains plaintext documented metadata %q", value)
+		}
+	}
+}
+
 type profileStoreClock struct{ now time.Time }
 
 func (clock profileStoreClock) Now() time.Time { return clock.now }

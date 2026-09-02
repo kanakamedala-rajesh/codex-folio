@@ -91,7 +91,7 @@ func (store *Store) GetPendingProfile(ctx context.Context, profileID string) (pr
 		Selection:      selection != 0,
 	}
 	if pending.IdentityHomeID != "" {
-		if pending.IdentityHomeOwnership != profile.HomeOwnershipManaged {
+		if pending.IdentityHomeOwnership != profile.HomeOwnershipManaged && pending.IdentityHomeOwnership != profile.HomeOwnershipReferenced {
 			return profile.PendingProfile{}, apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
 		}
 		secureVault, vaultErr := store.requireVault()
@@ -171,10 +171,83 @@ func (store *Store) CreatePendingProfile(ctx context.Context, pending profile.Pe
 }
 
 func (store *Store) SetManagedHome(ctx context.Context, profileID, homeID, homePath string) error {
+	return store.setHome(ctx, profileID, homeID, profile.HomeOwnershipManaged, homePath)
+}
+
+func (store *Store) SetReferencedHome(ctx context.Context, profileID, homeID, homePath string) error {
+	return store.setHome(ctx, profileID, homeID, profile.HomeOwnershipReferenced, homePath)
+}
+
+func (store *Store) SaveDocumentedMetadata(ctx context.Context, profileID string, metadata profile.DocumentedMetadata) (bool, error) {
+	if store == nil || store.db == nil {
+		return false, coded(apperrors.StoreWriteFailed, ErrProfileState)
+	}
+	loginIdentity := strings.TrimSpace(metadata.LoginIdentity)
+	workspace := strings.TrimSpace(metadata.Workspace)
+	if loginIdentity == "" && workspace == "" {
+		return false, nil
+	}
+	secureVault, err := store.requireVault()
+	if err != nil {
+		return false, err
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	rows, err := store.db.QueryContext(ctx, `SELECT identity_home_id, profile_id, documented_login_identity_ciphertext, documented_workspace_ciphertext FROM identity_homes`)
+	if err != nil {
+		return false, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	defer rows.Close()
+	duplicate := false
+	for rows.Next() {
+		var homeID, existingProfile string
+		var loginCiphertext, workspaceCiphertext []byte
+		if err := rows.Scan(&homeID, &existingProfile, &loginCiphertext, &workspaceCiphertext); err != nil {
+			return false, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		if existingProfile == profileID {
+			continue
+		}
+		var existingLogin, existingWorkspace string
+		if len(loginCiphertext) > 0 {
+			existingLogin, err = decryptField(ctx, secureVault, loginCiphertext, documentedMetadataAAD(existingProfile, "login-identity"))
+			if err != nil {
+				return false, err
+			}
+		}
+		if len(workspaceCiphertext) > 0 {
+			existingWorkspace, err = decryptField(ctx, secureVault, workspaceCiphertext, documentedMetadataAAD(existingProfile, "workspace"))
+			if err != nil {
+				return false, err
+			}
+		}
+		if (loginIdentity != "" && loginIdentity == existingLogin) || (workspace != "" && workspace == existingWorkspace) {
+			duplicate = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	loginCiphertext, err := encryptField(ctx, secureVault, []byte(loginIdentity), documentedMetadataAAD(profileID, "login-identity"))
+	if err != nil {
+		return false, err
+	}
+	workspaceCiphertext, err := encryptField(ctx, secureVault, []byte(workspace), documentedMetadataAAD(profileID, "workspace"))
+	if err != nil {
+		return false, err
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE identity_homes SET documented_login_identity_ciphertext = ?, documented_workspace_ciphertext = ? WHERE profile_id = ?`, loginCiphertext, workspaceCiphertext, profileID); err != nil {
+		return false, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	return duplicate, nil
+}
+
+func (store *Store) setHome(ctx context.Context, profileID, homeID string, ownership profile.HomeOwnership, homePath string) error {
 	if store == nil || store.db == nil {
 		return coded(apperrors.StoreWriteFailed, ErrProfileState)
 	}
-	if strings.TrimSpace(profileID) == "" || strings.TrimSpace(homeID) == "" || !filepath.IsAbs(homePath) {
+	if (ownership != profile.HomeOwnershipManaged && ownership != profile.HomeOwnershipReferenced) || strings.TrimSpace(profileID) == "" || strings.TrimSpace(homeID) == "" || !filepath.IsAbs(homePath) {
 		return apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
 	}
 	secureVault, err := store.requireVault()
@@ -223,8 +296,8 @@ func (store *Store) SetManagedHome(ctx context.Context, profileID, homeID, homeP
 		}
 		return profile.ErrNotFound
 	}
-	var existingProfileID string
-	if err := tx.QueryRowContext(ctx, `SELECT profile_id FROM identity_homes WHERE identity_home_id = ?`, homeID).Scan(&existingProfileID); err == nil && existingProfileID != profileID {
+	var existingProfileID, existingOwnership string
+	if err := tx.QueryRowContext(ctx, `SELECT profile_id, ownership FROM identity_homes WHERE identity_home_id = ?`, homeID).Scan(&existingProfileID, &existingOwnership); err == nil && (existingProfileID != profileID || existingOwnership != string(ownership)) {
 		rollback()
 		return apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -232,12 +305,12 @@ func (store *Store) SetManagedHome(ctx context.Context, profileID, homeID, homeP
 		return coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_homes (identity_home_id, profile_id, ownership, location_ciphertext, created_at, updated_at)
-		VALUES (?, ?, 'managed', ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(identity_home_id) DO UPDATE SET
 			profile_id = excluded.profile_id,
 			ownership = excluded.ownership,
 			location_ciphertext = excluded.location_ciphertext,
-			updated_at = excluded.updated_at`, homeID, profileID, ciphertext, encodedNow, encodedNow); err != nil {
+			updated_at = excluded.updated_at`, homeID, profileID, string(ownership), ciphertext, encodedNow, encodedNow); err != nil {
 		rollback()
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
 	}
@@ -496,4 +569,8 @@ func setupStageColumn(stage profile.SetupStage) (string, bool) {
 
 func identityHomeAAD(homeID string) []byte {
 	return []byte("codex-folio/identity-homes/" + homeID + "/location")
+}
+
+func documentedMetadataAAD(homeID, field string) []byte {
+	return []byte("codex-folio/identity-homes/" + homeID + "/" + field)
 }

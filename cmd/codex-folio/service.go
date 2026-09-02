@@ -608,9 +608,9 @@ func serviceRemediation(code string) string {
 	case apperrors.ProfileAuthenticationFailed:
 		return "Codex authentication failed; rerun profile add to resume the pending profile"
 	case apperrors.ProfileHomeInvalid:
-		return "the managed Identity Home could not be created safely"
+		return "the Identity Home could not be resolved or validated safely"
 	case apperrors.ProfileValidationFailed:
-		return "Codex did not validate the managed Identity Home"
+		return "Codex did not validate the Identity Home"
 	case apperrors.DiagnosticsConfigurationInvalid:
 		return "the local diagnostics configuration is invalid"
 	case apperrors.DiagnosticsEventInvalid:
