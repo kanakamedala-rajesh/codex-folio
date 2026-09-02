@@ -209,7 +209,11 @@ func TestNativeForegroundProcessForwardsStreamsAndStatus(t *testing.T) {
 
 func launchTestPaths(t *testing.T) platform.Paths {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "state")
+	tempRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(temp dir): %v", err)
+	}
+	root := filepath.Join(tempRoot, "state")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll(state) error = %v", err)
 	}

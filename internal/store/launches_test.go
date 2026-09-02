@@ -106,7 +106,8 @@ func TestReconcileManagedLaunchesMarksUnknownExitAsAbandoned(t *testing.T) {
 }
 
 func TestPrepareLaunchRejectsNonReadyProfilesAndInvalidLeases(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "codex-folio.sqlite3")
+	testRoot := t.TempDir()
+	databasePath := filepath.Join(testRoot, "codex-folio.sqlite3")
 	secureVault, err := vault.NewInMemoryVault(make([]byte, 32), "launch-invalid")
 	if err != nil {
 		t.Fatalf("NewInMemoryVault() error = %v", err)
@@ -122,8 +123,8 @@ func TestPrepareLaunchRejectsNonReadyProfilesAndInvalidLeases(t *testing.T) {
 
 	_, err = stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
 		Alias:            "pending",
-		Executable:       filepath.Join(string(filepath.Separator), "codex"),
-		WorkingDirectory: filepath.Join(string(filepath.Separator), "workspace"),
+		Executable:       filepath.Join(testRoot, "codex"),
+		WorkingDirectory: filepath.Join(testRoot, "workspace"),
 	})
 	if err == nil || !errors.Is(err, launch.ErrProfileUnavailable) {
 		t.Fatalf("PrepareLaunch() error = %v, want unavailable profile", err)

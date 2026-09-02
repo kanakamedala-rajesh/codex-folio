@@ -40,11 +40,12 @@ func TestWorkflowPreparePreservesValidatedLaunchInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkflow() error = %v", err)
 	}
+	testRoot := t.TempDir()
 
 	request := PrepareRequest{
 		Alias:            "Work",
-		Executable:       filepath.Join(string(filepath.Separator), "opt", "codex"),
-		WorkingDirectory: filepath.Join(string(filepath.Separator), "workspace"),
+		Executable:       filepath.Join(testRoot, "opt", "codex"),
+		WorkingDirectory: filepath.Join(testRoot, "workspace"),
 		Arguments:        []string{"--model", "value with spaces"},
 	}
 	plan, err := workflow.Prepare(context.Background(), request)
@@ -64,16 +65,19 @@ func TestWorkflowPrepareRejectsRelativeExecutableAndWorkingDirectory(t *testing.
 	if err != nil {
 		t.Fatalf("NewWorkflow() error = %v", err)
 	}
+	testRoot := t.TempDir()
+	absoluteExecutable := filepath.Join(testRoot, "opt", "codex")
+	absoluteWorkingDirectory := filepath.Join(testRoot, "workspace")
 
 	for name, request := range map[string]PrepareRequest{
 		"relative executable": {
 			Alias:            "work",
 			Executable:       "codex",
-			WorkingDirectory: filepath.Join(string(filepath.Separator), "workspace"),
+			WorkingDirectory: absoluteWorkingDirectory,
 		},
 		"relative working directory": {
 			Alias:            "work",
-			Executable:       filepath.Join(string(filepath.Separator), "opt", "codex"),
+			Executable:       absoluteExecutable,
 			WorkingDirectory: "workspace",
 		},
 	} {
