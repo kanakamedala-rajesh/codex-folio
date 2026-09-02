@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -90,7 +91,7 @@ func TestResolverUsesOnlyNonMutatingVersionInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(arguments.log) error = %v", err)
 	}
-	if string(arguments) != "--version\n" {
+	if strings.TrimSpace(string(arguments)) != "--version" {
 		t.Fatalf("Codex invocation arguments = %q, want --version only", arguments)
 	}
 }
@@ -112,13 +113,23 @@ func TestResolverDoesNotExposeCandidateDetailsInErrors(t *testing.T) {
 
 func writeFakeCodex(t *testing.T, directory, version, logPath string) string {
 	t.Helper()
-	path := filepath.Join(directory, "codex")
+	name := "codex"
 	quotedVersion := shellQuote(version)
 	logCommand := ""
 	if logPath != "" {
 		logCommand = "printf '%s\\n' \"$*\" > " + shellQuote(logPath) + "\n"
 	}
 	script := "#!/bin/sh\n" + logCommand + "printf '%s\\n' " + quotedVersion + "\n"
+	if runtime.GOOS == "windows" {
+		name = "codex.cmd"
+		quotedLogPath := strings.ReplaceAll(logPath, `"`, `""`)
+		script = "@echo off\r\n"
+		if logPath != "" {
+			script += "echo %* > \"" + quotedLogPath + "\"\r\n"
+		}
+		script += "echo " + version + "\r\n"
+	}
+	path := filepath.Join(directory, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}

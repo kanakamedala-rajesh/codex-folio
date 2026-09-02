@@ -146,31 +146,51 @@ func candidateNames() []string {
 	}
 
 	names := []string{"codex"}
+	for _, extension := range candidateExtensions() {
+		names = append(names, "codex"+extension)
+	}
+	return names
+}
+
+func candidateExtensions() []string {
 	pathext := os.Getenv("PATHEXT")
 	if pathext == "" {
 		pathext = ".COM;.EXE;.BAT;.CMD"
 	}
-	seen := map[string]struct{}{"codex": {}}
+
+	var extensions []string
+	seen := make(map[string]struct{})
 	for _, extension := range strings.Split(pathext, ";") {
-		extension = strings.TrimSpace(extension)
+		extension = strings.ToLower(strings.TrimSpace(extension))
 		if extension == "" {
 			continue
 		}
-		name := "codex" + strings.ToLower(extension)
-		if _, exists := seen[name]; exists {
+		if !strings.HasPrefix(extension, ".") {
+			extension = "." + extension
+		}
+		if _, exists := seen[extension]; exists {
 			continue
 		}
-		seen[name] = struct{}{}
-		names = append(names, name)
+		seen[extension] = struct{}{}
+		extensions = append(extensions, extension)
 	}
-	return names
+	return extensions
 }
 
 func isExecutable(info os.FileInfo) bool {
 	if info == nil || !info.Mode().IsRegular() {
 		return false
 	}
-	return runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0
+	if runtime.GOOS == "windows" {
+		extension := strings.ToLower(filepath.Ext(info.Name()))
+		for _, candidate := range candidateExtensions() {
+			if extension == candidate {
+				return true
+			}
+		}
+		return false
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 func runVersion(path string) ([]byte, error) {
