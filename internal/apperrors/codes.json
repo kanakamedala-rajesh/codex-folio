@@ -14,6 +14,30 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_LAUNCH_CODEX_NOT_FOUND",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_AMBIGUOUS",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_PATH_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_VERSION_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

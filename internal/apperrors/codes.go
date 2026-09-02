@@ -6,6 +6,10 @@ import "errors"
 const (
 	CLIUsage                        = "CF_CLI_USAGE"
 	CLIInternal                     = "CF_CLI_INTERNAL"
+	LaunchCodexNotFound             = "CF_LAUNCH_CODEX_NOT_FOUND"
+	LaunchCodexAmbiguous            = "CF_LAUNCH_CODEX_AMBIGUOUS"
+	LaunchCodexPathInvalid          = "CF_LAUNCH_CODEX_PATH_INVALID"
+	LaunchCodexVersionInvalid       = "CF_LAUNCH_CODEX_VERSION_INVALID"
 	DiagnosticsConfigurationInvalid = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid         = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid        = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -81,6 +85,10 @@ func IsRegistered(code string) bool {
 	switch code {
 	case CLIUsage,
 		CLIInternal,
+		LaunchCodexNotFound,
+		LaunchCodexAmbiguous,
+		LaunchCodexPathInvalid,
+		LaunchCodexVersionInvalid,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

@@ -5,8 +5,10 @@ import (
 	"io"
 	"os"
 
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/launch"
 )
 
 const (
@@ -20,10 +22,14 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata) int {
-	return runWithServicePathResolver(args, stdout, stderr, metadata, resolveCLIPaths)
+	return runWithServicePathResolverAndCodexResolver(args, stdout, stderr, metadata, resolveCLIPaths, codexadapter.NewResolver(codexadapter.ResolverOptions{}))
 }
 
 func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver) int {
+	return runWithServicePathResolverAndCodexResolver(args, stdout, stderr, metadata, resolvePaths, codexadapter.NewResolver(codexadapter.ResolverOptions{}))
+}
+
+func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
 	if len(args) == 0 {
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -35,6 +41,8 @@ func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadat
 		return runVersion(args, stdout, stderr, metadata)
 	case "service":
 		return runServiceWithPathResolver(args[1:], stdout, stderr, resolvePaths)
+	case "codex":
+		return runCodex(args[1:], stdout, stderr, resolver)
 	case "help", "--help", "-h":
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -77,5 +85,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
 	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

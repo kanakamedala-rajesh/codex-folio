@@ -21,6 +21,7 @@ const (
 	SeverityError   Severity = "error"
 
 	ComponentCLI         = "cli"
+	ComponentLaunch      = "launch"
 	ComponentDiagnostics = "diagnostics"
 	ComponentHTTPAPI     = "httpapi"
 	ComponentPlatform    = "platform"
@@ -30,6 +31,7 @@ const (
 	OperationCommand           = "command"
 	OperationResolvePaths      = "resolve_paths"
 	OperationDiscoverOwner     = "discover_owner"
+	OperationDiscoverCodex     = "discover_codex"
 	OperationAcquireOwner      = "acquire_owner"
 	OperationOpenStore         = "open_store"
 	OperationIntegrityCheck    = "integrity_check"
@@ -188,7 +190,7 @@ func validSeverity(value Severity) bool {
 
 func validComponent(value string) bool {
 	switch value {
-	case ComponentCLI, ComponentDiagnostics, ComponentHTTPAPI, ComponentPlatform, ComponentStore, ComponentVault:
+	case ComponentCLI, ComponentLaunch, ComponentDiagnostics, ComponentHTTPAPI, ComponentPlatform, ComponentStore, ComponentVault:
 		return true
 	default:
 		return false
@@ -197,7 +199,7 @@ func validComponent(value string) bool {
 
 func validOperation(value string) bool {
 	switch value {
-	case OperationCommand, OperationResolvePaths, OperationDiscoverOwner, OperationAcquireOwner, OperationOpenStore, OperationIntegrityCheck, OperationMigration, OperationBackup, OperationRecoveryVerify, OperationRecoveryList, OperationRecoveryRestore, OperationVault, OperationHTTPBootstrap, OperationHTTPAuthorization, OperationHTTPSession, OperationHTTPAsset, OperationHTTPListen, OperationShutdown:
+	case OperationCommand, OperationResolvePaths, OperationDiscoverOwner, OperationDiscoverCodex, OperationAcquireOwner, OperationOpenStore, OperationIntegrityCheck, OperationMigration, OperationBackup, OperationRecoveryVerify, OperationRecoveryList, OperationRecoveryRestore, OperationVault, OperationHTTPBootstrap, OperationHTTPAuthorization, OperationHTTPSession, OperationHTTPAsset, OperationHTTPListen, OperationShutdown:
 		return true
 	default:
 		return false
@@ -249,6 +251,8 @@ func ComponentForCode(code string) string {
 	switch {
 	case strings.HasPrefix(code, "CF_DIAGNOSTICS_"):
 		return ComponentDiagnostics
+	case strings.HasPrefix(code, "CF_LAUNCH_"):
+		return ComponentLaunch
 	case strings.HasPrefix(code, "CF_HTTPAPI_"):
 		return ComponentHTTPAPI
 	case strings.HasPrefix(code, "CF_PLATFORM_"):
