@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"venkatasudha.com/codex-folio/internal/apperrors"
 )
 
 func TestAddProfilePromotesOnlyAfterAuthenticationAndHomeValidation(t *testing.T) {
@@ -182,6 +184,135 @@ func TestAddReferencedHomeKeepsValidationFailurePending(t *testing.T) {
 	}
 }
 
+func TestReauthenticateUsesSavedDevicePreferenceAndExistingHome(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:                    "profile-1",
+		Alias:                 "work",
+		Status:                StatusNeedsReauthentication,
+		IdentityHomeID:        "home-1",
+		IdentityHomeOwnership: HomeOwnershipManaged,
+		IdentityHomePath:      "/existing/codex-home",
+		AuthenticationMethod:  AuthMethodDeviceCode,
+	}}
+	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
+
+	result, err := Reauthenticate(context.Background(), repository, recordingDiscoverer{}, authenticator, ReauthenticationRequest{Alias: "WORK"})
+	if err != nil {
+		t.Fatalf("Reauthenticate() error = %v", err)
+	}
+	if !result.Reauthenticated || result.Profile.Status != StatusReady || result.AuthenticationMethod != AuthMethodDeviceCode {
+		t.Fatalf("result = %#v, want successful device-code recovery", result)
+	}
+	if authenticator.methods[len(authenticator.methods)-1] != AuthMethodDeviceCode || authenticator.identityHome != "/existing/codex-home" {
+		t.Fatalf("authentication = methods:%v home:%q, want device-code and existing home", authenticator.methods, authenticator.identityHome)
+	}
+	if repository.status != StatusReady || repository.method != AuthMethodDeviceCode {
+		t.Fatalf("saved state = status:%q method:%q, want ready/device-code", repository.status, repository.method)
+	}
+}
+
+func TestVerifyAuthenticationStopsLaunchAndMarksProfileForReauthentication(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:               "profile-1",
+		Alias:            "work",
+		Status:           StatusReady,
+		IdentityHomeID:   "home-1",
+		IdentityHomePath: "/existing/codex-home",
+	}}
+	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
+
+	item, err := VerifyAuthentication(context.Background(), repository, authenticator, AuthenticationCheckRequest{
+		Alias:     "work",
+		Discovery: Discovery{Executable: "/opt/codex/bin/codex"},
+	})
+	if err == nil || !errors.Is(err, ErrReauthenticationRequired) {
+		t.Fatalf("VerifyAuthentication() error = %v, want reauthentication required", err)
+	}
+	if apperrors.Code(err) != apperrors.ProfileReauthenticationRequired || item.Status != StatusNeedsReauthentication || repository.status != StatusNeedsReauthentication {
+		t.Fatalf("result/error/state = %#v/%v/%q, want coded needs-reauthentication state", item, err, repository.status)
+	}
+}
+
+func TestVerifyAuthenticationMarksStatusInterfaceFailureUnavailable(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:               "profile-1",
+		Alias:            "work",
+		Status:           StatusReady,
+		IdentityHomeID:   "home-1",
+		IdentityHomePath: "/existing/codex-home",
+	}}
+
+	item, err := VerifyAuthentication(context.Background(), repository, &recordingAuthenticator{checkErr: ErrAuthenticationUnavailable}, AuthenticationCheckRequest{
+		Alias:     "work",
+		Discovery: Discovery{Executable: "/opt/codex/bin/codex"},
+	})
+	if err == nil || apperrors.Code(err) != apperrors.ProfileAuthenticationUnavailable {
+		t.Fatalf("VerifyAuthentication() error = %v, want authentication unavailable", err)
+	}
+	if item.Status != StatusUnavailable || repository.status != StatusUnavailable {
+		t.Fatalf("result/state = %q/%q, want unavailable", item.Status, repository.status)
+	}
+}
+
+func TestReauthenticateReusesUsableAuthenticationWithoutLogin(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:                   "profile-1",
+		Alias:                "work",
+		Status:               StatusNeedsReauthentication,
+		IdentityHomeID:       "home-1",
+		IdentityHomePath:     "/existing/codex-home",
+		AuthenticationMethod: AuthMethodBrowser,
+	}}
+	authenticator := &recordingAuthenticator{}
+
+	result, err := Reauthenticate(context.Background(), repository, recordingDiscoverer{}, authenticator, ReauthenticationRequest{Alias: "work"})
+	if err != nil || result.Reauthenticated || result.AuthenticationMethod != AuthMethodReused {
+		t.Fatalf("result/error = %#v/%v, want reused authentication without reauth", result, err)
+	}
+	if authenticator.authenticateCalls != 0 || repository.status != StatusReady {
+		t.Fatalf("authentication/state = %d/%q, want no login and ready state", authenticator.authenticateCalls, repository.status)
+	}
+}
+
+func TestReauthenticateNonInteractiveRequiresSavedOrExplicitMethod(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:               "profile-1",
+		Alias:            "work",
+		Status:           StatusReady,
+		IdentityHomeID:   "home-1",
+		IdentityHomePath: "/existing/codex-home",
+	}}
+	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
+
+	_, err := Reauthenticate(context.Background(), repository, recordingDiscoverer{}, authenticator, ReauthenticationRequest{Alias: "work", NonInteractive: true})
+	if err == nil || apperrors.Code(err) != apperrors.ProfileSetupChoiceRequired || !errors.Is(err, ErrSetupChoiceRequired) {
+		t.Fatalf("Reauthenticate() error = %v, want precise non-interactive choice guidance", err)
+	}
+	if repository.status != StatusNeedsReauthentication || authenticator.authenticateCalls != 0 {
+		t.Fatalf("state/authentication = %q/%d, want needs-reauthentication without prompt", repository.status, authenticator.authenticateCalls)
+	}
+}
+
+func TestReauthenticateCancellationLeavesProfileUnlaunchable(t *testing.T) {
+	repository := &authenticationRepositoryStub{profile: IdentityProfile{
+		ID:                   "profile-1",
+		Alias:                "work",
+		Status:               StatusNeedsReauthentication,
+		IdentityHomeID:       "home-1",
+		IdentityHomePath:     "/existing/codex-home",
+		AuthenticationMethod: AuthMethodDeviceCode,
+	}}
+	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated, authenticateErr: ErrAuthCancelled}
+
+	_, err := Reauthenticate(context.Background(), repository, recordingDiscoverer{}, authenticator, ReauthenticationRequest{Alias: "work"})
+	if err == nil || apperrors.Code(err) != apperrors.ProfileAuthenticationCancelled || !errors.Is(err, ErrAuthCancelled) {
+		t.Fatalf("Reauthenticate() error = %v, want cancellation", err)
+	}
+	if repository.status != StatusNeedsReauthentication {
+		t.Fatalf("profile state = %q, want needs reauthentication after cancellation", repository.status)
+	}
+}
+
 func TestValidateAliasUsesPortableCaseInsensitiveRules(t *testing.T) {
 	for _, alias := range []string{"work", "Work_Profile", "personal-2", "a.b"} {
 		if err := ValidateAlias(alias); err != nil {
@@ -206,9 +337,31 @@ type recordingAuthenticator struct {
 	browserErr        error
 	checkErr          error
 	metadata          DocumentedMetadata
+	identityHome      string
 	methods           []AuthMethod
 	authenticateCalls int
 	checkCalls        int
+}
+
+type authenticationRepositoryStub struct {
+	profile IdentityProfile
+	status  Status
+	method  AuthMethod
+}
+
+func (repository *authenticationRepositoryStub) GetProfile(context.Context, string) (IdentityProfile, error) {
+	return repository.profile, nil
+}
+
+func (repository *authenticationRepositoryStub) SetAuthenticationState(_ context.Context, profileID string, status Status, method AuthMethod) error {
+	if profileID != repository.profile.ID {
+		return ErrNotFound
+	}
+	repository.status = status
+	if method != "" {
+		repository.method = method
+	}
+	return nil
 }
 
 func (auth *recordingAuthenticator) ObserveDocumentedMetadata(context.Context, AuthenticationRequest) (DocumentedMetadata, error) {
@@ -217,6 +370,7 @@ func (auth *recordingAuthenticator) ObserveDocumentedMetadata(context.Context, A
 
 func (auth *recordingAuthenticator) Authenticate(_ context.Context, request AuthenticationRequest) error {
 	auth.authenticateCalls++
+	auth.identityHome = request.IdentityHome
 	auth.methods = append(auth.methods, request.Method)
 	if request.Method == AuthMethodBrowser && auth.browserErr != nil {
 		return auth.browserErr

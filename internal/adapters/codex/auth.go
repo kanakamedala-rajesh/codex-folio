@@ -67,7 +67,7 @@ func (authenticator *Authenticator) Authenticate(ctx context.Context, request pr
 
 func (authenticator *Authenticator) Check(ctx context.Context, request profile.AuthenticationRequest) error {
 	if authenticator == nil || authenticator.run == nil || !validRequest(request) {
-		return profile.ErrNotAuthenticated
+		return profile.ErrAuthenticationUnavailable
 	}
 	ctx = contextOrBackground(ctx)
 	authenticated, err := authenticator.readAccount(ctx, request)
@@ -87,7 +87,7 @@ func (authenticator *Authenticator) Check(ctx context.Context, request profile.A
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return profile.ErrNotAuthenticated
+	return profile.ErrAuthenticationUnavailable
 }
 
 func (authenticator *Authenticator) ObserveDocumentedMetadata(ctx context.Context, request profile.AuthenticationRequest) (profile.DocumentedMetadata, error) {

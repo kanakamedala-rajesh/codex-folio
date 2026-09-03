@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -36,7 +37,9 @@ type foregroundProcess interface {
 type launchProcessFactory func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error)
 
 func runLaunch(args []string, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
-	return runLaunchWithInputAndDependenciesAndOwnerOptions(args, os.Stdin, stdout, stderr, resolvePaths, resolver, openServiceStoreWithVaultMode, newForegroundProcess, newServiceDiagnosticSink(), platform.OwnerOptions{})
+	return runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args, os.Stdin, stdout, stderr, resolvePaths, resolver, openServiceStoreWithVaultMode, newForegroundProcess, newServiceDiagnosticSink(), func() profile.Authenticator {
+		return codexadapter.NewAuthenticator()
+	}, platform.OwnerOptions{})
 }
 
 func runLaunchWithInputAndDependencies(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink) int {
@@ -44,6 +47,10 @@ func runLaunchWithInputAndDependencies(args []string, input io.Reader, stdout, s
 }
 
 func runLaunchWithInputAndDependenciesAndOwnerOptions(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
+	return runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args, input, stdout, stderr, resolvePaths, resolver, openStore, newProcess, diagnosticSink, nil, ownerOptions)
+}
+
+func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions) (resultCode int) {
 	childStatusKnown := false
 	alias, options, err := parseLaunchArguments(args)
 	if err != nil {
@@ -51,10 +58,6 @@ func runLaunchWithInputAndDependenciesAndOwnerOptions(args []string, input io.Re
 	}
 	if err := profile.ValidateAlias(alias); err != nil {
 		return writeLaunchUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
-	}
-	report, err := launch.Discover(resolver, options.codexBin)
-	if err != nil {
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -110,6 +113,40 @@ func runLaunchWithInputAndDependenciesAndOwnerOptions(args []string, input io.Re
 		}
 	}()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
+	report, err := launch.Discover(resolver, options.codexBin)
+	if err != nil {
+		item, profileErr := stateStore.GetProfile(context.Background(), alias)
+		if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
+			return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
+		}
+		if profileErr == nil && item.Status != profile.StatusPending {
+			if stateErr := stateStore.SetAuthenticationState(context.Background(), item.ID, profile.StatusUnavailable, ""); stateErr != nil {
+				return writeServiceErrorWithDiagnostics(stderr, stateErr, diagnosticSink)
+			}
+		}
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if newAuthenticator != nil {
+		item, profileErr := stateStore.GetProfile(context.Background(), alias)
+		if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
+			return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
+		}
+		if profileErr == nil && (item.Status == profile.StatusReady || item.Status == profile.StatusNeedsReauthentication || item.Status == profile.StatusUnavailable) {
+			authenticator := newAuthenticator()
+			if authenticator == nil {
+				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
+			}
+			if _, authErr := profile.VerifyAuthentication(context.Background(), stateStore, authenticator, profile.AuthenticationCheckRequest{
+				Alias:     alias,
+				Discovery: profile.Discovery{Executable: report.Executable, Version: report.Version},
+				Stdin:     childInput,
+				Stdout:    stderr,
+				Stderr:    stderr,
+			}); authErr != nil {
+				return writeServiceErrorWithDiagnostics(stderr, authErr, diagnosticSink)
+			}
+		}
+	}
 	workflow, err := launch.NewWorkflow(launch.WorkflowOptions{Repository: stateStore})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)

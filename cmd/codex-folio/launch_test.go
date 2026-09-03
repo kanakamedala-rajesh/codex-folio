@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -184,6 +186,159 @@ func TestLaunchCLIRejectsPendingProfileWithoutStartingCodex(t *testing.T) {
 	)
 	if resultCode != exitFailure || started || stdout.Len() != 0 || !strings.Contains(stderr.String(), apperrors.LaunchProfileUnavailable) {
 		t.Fatalf("exit/started/stdout/stderr = %d/%t/%q/%q, want unavailable without process", resultCode, started, stdout.String(), stderr.String())
+	}
+}
+
+func TestLaunchCLINeedsReauthenticationBeforeStartingCodex(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	authenticator := &cliProfileAuthenticator{checkErr: profile.ErrNotAuthenticated}
+	started := false
+	var stdout, stderr bytes.Buffer
+	resultCode := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+		[]string{"work", "--"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+			started = true
+			return nil, errors.New("Codex must not start before reauthentication")
+		},
+		nil,
+		func() profile.Authenticator { return authenticator },
+		platform.OwnerOptions{},
+	)
+	if resultCode != exitFailure || started || stdout.Len() != 0 || !strings.Contains(stderr.String(), apperrors.ProfileReauthenticationRequired) {
+		t.Fatalf("exit/started/stdout/stderr = %d/%t/%q/%q, want reauthentication before process start", resultCode, started, stdout.String(), stderr.String())
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	item, err := stateStore.GetProfile(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("GetProfile() error = %v", err)
+	}
+	if item.Status != profile.StatusNeedsReauthentication {
+		t.Fatalf("profile status = %q, want needs reauthentication", item.Status)
+	}
+}
+
+func TestLaunchCLIRecoversWithFakeCodexAndRepeatsForegroundLaunch(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	executable := filepath.Join(paths.Root, "codex")
+	authenticated := false
+	var codexCalls []string
+	authenticator := codexadapter.NewAuthenticatorWithCommandRunner(func(_ context.Context, gotExecutable string, args, environment []string, _ io.Reader, stdout, _ io.Writer) error {
+		if gotExecutable != executable {
+			t.Fatalf("executable does not match discovered Codex")
+		}
+		if !slices.Contains(environment, "CODEX_HOME="+filepath.Join(paths.Root, "managed-home")) {
+			t.Fatal("fake Codex did not receive the existing Identity Home")
+		}
+		codexCalls = append(codexCalls, strings.Join(args, " "))
+		switch strings.Join(args, " ") {
+		case "app-server --stdio":
+			account := `{"id":2,"result":{"account":null}}`
+			if authenticated {
+				account = `{"id":2,"result":{"account":{"type":"chatgpt"}}}`
+			}
+			_, err := io.WriteString(stdout, account+"\n")
+			return err
+		case "login --device-auth":
+			authenticated = true
+			return nil
+		default:
+			return io.ErrUnexpectedEOF
+		}
+	})
+	resolvePaths := func(*string) (platform.Paths, error) { return paths, nil }
+	resolver := launchTestResolver{candidate: launch.Candidate{Path: executable, Version: "0.1.2"}}
+	openStore := func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+		return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	}
+	newAuthenticator := func() profile.Authenticator { return authenticator }
+
+	var expiredStdout, expiredStderr bytes.Buffer
+	started := 0
+	newProcess := func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+		started++
+		return &launchTestProcess{pid: 7000 + started}, nil
+	}
+	if code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+		[]string{"work", "--"}, strings.NewReader(""), &expiredStdout, &expiredStderr,
+		resolvePaths, resolver, openStore, newProcess, nil, newAuthenticator, platform.OwnerOptions{},
+	); code != exitFailure || started != 0 || expiredStdout.Len() != 0 || !strings.Contains(expiredStderr.String(), apperrors.ProfileReauthenticationRequired) {
+		t.Fatalf("expired launch = code:%d started:%d stdout:%q stderr:%q", code, started, expiredStdout.String(), expiredStderr.String())
+	}
+
+	var recoveryStdout, recoveryStderr bytes.Buffer
+	if code := runProfileWithInputAndDependenciesAndOwnerOptions(
+		[]string{"reauthenticate", "work", "--device-code", "--non-interactive", "--json"}, strings.NewReader(""), &recoveryStdout, &recoveryStderr,
+		resolvePaths, resolver, openStore,
+		func(string) (profile.ManagedHomeProvisioner, error) {
+			t.Fatal("reauthentication must not provision a new Identity Home")
+			return nil, nil
+		}, newAuthenticator, nil, platform.OwnerOptions{},
+	); code != exitSuccess || recoveryStderr.Len() != 0 || strings.Contains(recoveryStdout.String(), filepath.Join(paths.Root, "managed-home")) {
+		t.Fatalf("recovery = code:%d stdout:%q stderr:%q, want safe success", code, recoveryStdout.String(), recoveryStderr.String())
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		var stdout, stderr bytes.Buffer
+		if code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+			[]string{"work", "--"}, strings.NewReader(""), &stdout, &stderr,
+			resolvePaths, resolver, openStore, newProcess, nil, newAuthenticator, platform.OwnerOptions{},
+		); code != exitSuccess || stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("repeated launch %d = code:%d stdout:%q stderr:%q", attempt+1, code, stdout.String(), stderr.String())
+		}
+	}
+	if started != 2 {
+		t.Fatalf("foreground starts = %d, want two launches after recovery", started)
+	}
+	if strings.Join(codexCalls, ",") != "app-server --stdio,app-server --stdio,login --device-auth,app-server --stdio,app-server --stdio,app-server --stdio" {
+		t.Fatalf("fake Codex calls = %v, want expiry, recovery, and reusable authentication", codexCalls)
+	}
+}
+
+func TestLaunchCLIMarksExistingProfileUnavailableWhenDiscoveryFails(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	started := false
+	var stdout, stderr bytes.Buffer
+	resultCode := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+		[]string{"work", "--"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+			started = true
+			return nil, errors.New("Codex must not start when discovery fails")
+		},
+		nil,
+		func() profile.Authenticator { return &cliProfileAuthenticator{} },
+		platform.OwnerOptions{},
+	)
+	if resultCode != exitFailure || started || stdout.Len() != 0 || !strings.Contains(stderr.String(), apperrors.LaunchCodexPathInvalid) {
+		t.Fatalf("exit/started/stdout/stderr = %d/%t/%q/%q, want discovery failure before process start", resultCode, started, stdout.String(), stderr.String())
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	item, err := stateStore.GetProfile(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("GetProfile() error = %v", err)
+	}
+	if item.Status != profile.StatusUnavailable {
+		t.Fatalf("profile status = %q, want unavailable", item.Status)
 	}
 }
 

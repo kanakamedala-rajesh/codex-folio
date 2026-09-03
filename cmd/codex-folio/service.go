@@ -587,6 +587,7 @@ func serviceDiagnosticState(code string) string {
 		apperrors.LaunchLeaseInvalid,
 		apperrors.LaunchProfileNotFound,
 		apperrors.ProfileNotSelectable,
+		apperrors.ProfileReauthenticationRequired,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -618,6 +619,7 @@ func serviceDiagnosticState(code string) string {
 		return diagnostics.StateLocked
 	case apperrors.PlatformPermissionDenied,
 		apperrors.LaunchProfileUnavailable,
+		apperrors.ProfileAuthenticationUnavailable,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -637,11 +639,15 @@ func serviceRemediation(code string) string {
 	case apperrors.ProfileAliasTaken:
 		return "profile alias is already in use; choose another alias"
 	case apperrors.ProfileSetupChoiceRequired:
-		return "non-interactive setup requires exactly one of --browser or --device-code"
+		return "non-interactive profile authentication requires exactly one of --browser or --device-code"
 	case apperrors.ProfileAuthenticationCancelled:
-		return "Codex authentication was cancelled; rerun profile add to resume the pending profile"
+		return "Codex authentication was cancelled; rerun profile add or profile reauthenticate to retry"
 	case apperrors.ProfileAuthenticationFailed:
-		return "Codex authentication failed; rerun profile add to resume the pending profile"
+		return "Codex authentication failed; rerun profile add or profile reauthenticate to retry"
+	case apperrors.ProfileReauthenticationRequired:
+		return "Codex authentication requires recovery; run profile reauthenticate ALIAS [--browser|--device-code]"
+	case apperrors.ProfileAuthenticationUnavailable:
+		return "Codex authentication status is unavailable; retry profile reauthenticate"
 	case apperrors.ProfileHomeInvalid:
 		return "the Identity Home could not be resolved or validated safely"
 	case apperrors.ProfileValidationFailed:

@@ -116,6 +116,18 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_PROFILE_REAUTHENTICATION_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_UNAVAILABLE",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PROFILE_HOME_INVALID",
       "owner": "profile",
       "lifecycle": "active",

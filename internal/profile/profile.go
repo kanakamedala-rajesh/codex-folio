@@ -76,9 +76,11 @@ type IdentityProfile struct {
 	Status                Status        `json:"status"`
 	IdentityHomeID        string        `json:"identity_home_id"`
 	IdentityHomeOwnership HomeOwnership `json:"identity_home_ownership"`
+	AuthenticationMethod  AuthMethod    `json:"authentication_method,omitempty"`
 	Selected              bool          `json:"selected"`
 	CreatedAt             time.Time     `json:"created_at"`
 	UpdatedAt             time.Time     `json:"updated_at"`
+	IdentityHomePath      string        `json:"-"`
 }
 
 type PendingProfile struct {
@@ -113,6 +115,23 @@ type SetupResult struct {
 	Warnings             []string        `json:"warnings,omitempty"`
 }
 
+type ReauthenticationRequest struct {
+	Alias          string
+	CodexOverride  string
+	AuthMethod     AuthMethod
+	NonInteractive bool
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+}
+
+type ReauthenticationResult struct {
+	Profile              IdentityProfile `json:"profile"`
+	Discovery            Discovery       `json:"discovery"`
+	AuthenticationMethod AuthMethod      `json:"authentication_method,omitempty"`
+	Reauthenticated      bool            `json:"reauthenticated"`
+}
+
 type SelectionResult struct {
 	Profile  IdentityProfile `json:"profile"`
 	Warnings []string        `json:"warnings,omitempty"`
@@ -131,6 +150,8 @@ var (
 	ErrAuthenticationFailed          = errors.New("Codex authentication failed")
 	ErrBrowserUnavailable            = errors.New("Codex browser authentication is unavailable")
 	ErrNotAuthenticated              = errors.New("Codex authentication is not usable")
+	ErrReauthenticationRequired      = errors.New("Codex authentication requires reauthentication")
+	ErrAuthenticationUnavailable     = errors.New("Codex authentication status is unavailable")
 	ErrDocumentedMetadataUnavailable = errors.New("Codex documented identity metadata is unavailable")
 	ErrHomeInvalid                   = errors.New("managed Identity Home is invalid")
 	ErrValidationFailed              = errors.New("Identity Home validation failed")
@@ -161,6 +182,19 @@ type AuthenticationRequest struct {
 type Authenticator interface {
 	Authenticate(context.Context, AuthenticationRequest) error
 	Check(context.Context, AuthenticationRequest) error
+}
+
+type AuthenticationRepository interface {
+	GetProfile(context.Context, string) (IdentityProfile, error)
+	SetAuthenticationState(context.Context, string, Status, AuthMethod) error
+}
+
+type AuthenticationCheckRequest struct {
+	Alias     string
+	Discovery Discovery
+	Stdin     io.Reader
+	Stdout    io.Writer
+	Stderr    io.Writer
 }
 
 type DocumentedMetadata struct {
@@ -356,6 +390,15 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 	}
 	pending.Stages.Authentication = true
 	pending.Stages.Validation = true
+	if authenticationRepository, ok := workflow.repository.(AuthenticationRepository); ok {
+		persistedMethod := authenticationMethod
+		if persistedMethod == AuthMethodReused {
+			persistedMethod = ""
+		}
+		if err := authenticationRepository.SetAuthenticationState(ctx, pending.ID, StatusPending, persistedMethod); err != nil {
+			return workflow.result(pending, discovery, resumed, authenticationMethod), err
+		}
+	}
 	duplicate := false
 	if observer, ok := workflow.authenticator.(DocumentedMetadataObserver); ok {
 		metadata, metadataErr := observer.ObserveDocumentedMetadata(ctx, AuthenticationRequest{
@@ -407,6 +450,152 @@ func (selector *Selector) Select(ctx context.Context, alias string) (SelectionRe
 		return SelectionResult{}, err
 	}
 	return selector.repository.SelectProfile(contextOrBackground(ctx), alias)
+}
+
+func Reauthenticate(ctx context.Context, repository AuthenticationRepository, discoverer Discoverer, authenticator Authenticator, request ReauthenticationRequest) (ReauthenticationResult, error) {
+	if repository == nil || discoverer == nil || authenticator == nil {
+		return ReauthenticationResult{}, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authentication dependencies are incomplete"))
+	}
+	ctx = contextOrBackground(ctx)
+	if err := ValidateAlias(request.Alias); err != nil {
+		return ReauthenticationResult{}, err
+	}
+	if !validAuthMethod(request.AuthMethod) {
+		return ReauthenticationResult{}, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authentication method is invalid"))
+	}
+
+	item, err := repository.GetProfile(ctx, request.Alias)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ReauthenticationResult{}, apperrors.New(apperrors.ProfileNotSelectable, ErrNotSelectable)
+		}
+		return ReauthenticationResult{}, err
+	}
+	if item.Status == StatusPending || item.IdentityHomeID == "" || !filepath.IsAbs(item.IdentityHomePath) {
+		return ReauthenticationResult{Profile: item}, apperrors.New(apperrors.ProfileNotSelectable, ErrNotSelectable)
+	}
+	discovery, err := discoverer.Discover(request.CodexOverride)
+	if err != nil {
+		return ReauthenticationResult{Profile: item}, err
+	}
+	authInput := request.Stdin
+	if request.NonInteractive {
+		authInput = nil
+	}
+	authRequest := AuthenticationRequest{
+		Discovery:    discovery,
+		IdentityHome: item.IdentityHomePath,
+		Method:       AuthMethodReused,
+		Stdin:        authInput,
+		Stdout:       request.Stdout,
+		Stderr:       request.Stderr,
+	}
+	if err := authenticator.Check(ctx, authRequest); err == nil {
+		if item.Status != StatusReady {
+			if err := repository.SetAuthenticationState(ctx, item.ID, StatusReady, ""); err != nil {
+				return ReauthenticationResult{Profile: item, Discovery: discovery}, err
+			}
+			item.Status = StatusReady
+		}
+		return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: AuthMethodReused}, nil
+	} else if errors.Is(err, ErrAuthCancelled) || errors.Is(err, context.Canceled) {
+		if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusNeedsReauthentication, ""); stateErr != nil {
+			return ReauthenticationResult{Profile: item, Discovery: discovery}, stateErr
+		}
+		item.Status = StatusNeedsReauthentication
+		return ReauthenticationResult{Profile: item, Discovery: discovery}, wrapAuthenticationError(err)
+	} else if !errors.Is(err, ErrNotAuthenticated) {
+		if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusUnavailable, ""); stateErr != nil {
+			return ReauthenticationResult{Profile: item, Discovery: discovery}, stateErr
+		}
+		item.Status = StatusUnavailable
+		return ReauthenticationResult{Profile: item, Discovery: discovery}, apperrors.New(apperrors.ProfileAuthenticationUnavailable, ErrAuthenticationUnavailable)
+	}
+
+	if err := repository.SetAuthenticationState(ctx, item.ID, StatusNeedsReauthentication, ""); err != nil {
+		return ReauthenticationResult{Profile: item, Discovery: discovery}, err
+	}
+	item.Status = StatusNeedsReauthentication
+	preferred := normalizeAuthMethod(request.AuthMethod)
+	explicit := request.AuthMethod == AuthMethodBrowser || request.AuthMethod == AuthMethodDeviceCode
+	if request.AuthMethod == "" {
+		preferred = normalizeAuthMethod(item.AuthenticationMethod)
+	}
+	if request.NonInteractive && preferred == AuthMethodAutomatic {
+		return ReauthenticationResult{Profile: item, Discovery: discovery}, apperrors.New(apperrors.ProfileSetupChoiceRequired, ErrSetupChoiceRequired)
+	}
+	method, err := authenticateUsingPreference(ctx, authenticator, authRequest, preferred, explicit)
+	if err != nil {
+		return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, err
+	}
+	authRequest.Method = method
+	if err := authenticator.Check(ctx, authRequest); err != nil {
+		if errors.Is(err, ErrAuthCancelled) {
+			if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusNeedsReauthentication, ""); stateErr != nil {
+				return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, stateErr
+			}
+			return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, wrapAuthenticationError(err)
+		}
+		if errors.Is(err, ErrNotAuthenticated) || errors.Is(err, context.Canceled) {
+			if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusNeedsReauthentication, ""); stateErr != nil {
+				return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, stateErr
+			}
+			return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, wrapValidationError(err)
+		}
+		if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusUnavailable, ""); stateErr != nil {
+			return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, stateErr
+		}
+		return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, apperrors.New(apperrors.ProfileAuthenticationUnavailable, ErrAuthenticationUnavailable)
+	}
+	if err := repository.SetAuthenticationState(ctx, item.ID, StatusReady, method); err != nil {
+		return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method}, err
+	}
+	item.Status = StatusReady
+	item.AuthenticationMethod = method
+	return ReauthenticationResult{Profile: item, Discovery: discovery, AuthenticationMethod: method, Reauthenticated: true}, nil
+}
+
+func VerifyAuthentication(ctx context.Context, repository AuthenticationRepository, authenticator Authenticator, request AuthenticationCheckRequest) (IdentityProfile, error) {
+	if repository == nil || authenticator == nil {
+		return IdentityProfile{}, apperrors.New(apperrors.ProfileAuthenticationUnavailable, ErrAuthenticationUnavailable)
+	}
+	ctx = contextOrBackground(ctx)
+	item, err := repository.GetProfile(ctx, request.Alias)
+	if err != nil {
+		return IdentityProfile{}, err
+	}
+	if item.Status == StatusPending || item.IdentityHomeID == "" || !filepath.IsAbs(item.IdentityHomePath) {
+		return item, apperrors.New(apperrors.LaunchProfileUnavailable, ErrNotSelectable)
+	}
+	err = authenticator.Check(ctx, AuthenticationRequest{
+		Discovery:    request.Discovery,
+		IdentityHome: item.IdentityHomePath,
+		Method:       AuthMethodReused,
+		Stdin:        request.Stdin,
+		Stdout:       request.Stdout,
+		Stderr:       request.Stderr,
+	})
+	if err == nil {
+		if item.Status != StatusReady {
+			if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusReady, ""); stateErr != nil {
+				return item, stateErr
+			}
+			item.Status = StatusReady
+		}
+		return item, nil
+	}
+	if errors.Is(err, ErrNotAuthenticated) {
+		if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusNeedsReauthentication, ""); stateErr != nil {
+			return item, stateErr
+		}
+		item.Status = StatusNeedsReauthentication
+		return item, apperrors.New(apperrors.ProfileReauthenticationRequired, ErrReauthenticationRequired)
+	}
+	if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusUnavailable, ""); stateErr != nil {
+		return item, stateErr
+	}
+	item.Status = StatusUnavailable
+	return item, apperrors.New(apperrors.ProfileAuthenticationUnavailable, ErrAuthenticationUnavailable)
 }
 
 func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request SetupRequest, preferred AuthMethod, pending PendingProfile, discovery Discovery) (AuthMethod, error) {
@@ -510,6 +699,30 @@ func (workflow *Workflow) authenticate(ctx context.Context, request Authenticati
 	return AuthMethodDeviceCode, nil
 }
 
+func authenticateUsingPreference(ctx context.Context, authenticator Authenticator, request AuthenticationRequest, preferred AuthMethod, explicit bool) (AuthMethod, error) {
+	if preferred == AuthMethodDeviceCode {
+		request.Method = AuthMethodDeviceCode
+		if err := authenticator.Authenticate(ctx, request); err != nil {
+			return preferred, wrapAuthenticationError(err)
+		}
+		return preferred, nil
+	}
+	if preferred != AuthMethodAutomatic && preferred != AuthMethodBrowser {
+		return preferred, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authentication method is invalid"))
+	}
+	request.Method = AuthMethodBrowser
+	if err := authenticator.Authenticate(ctx, request); err == nil {
+		return AuthMethodBrowser, nil
+	} else if !errors.Is(err, ErrBrowserUnavailable) || explicit {
+		return AuthMethodBrowser, wrapAuthenticationError(err)
+	}
+	request.Method = AuthMethodDeviceCode
+	if err := authenticator.Authenticate(ctx, request); err != nil {
+		return AuthMethodDeviceCode, wrapAuthenticationError(err)
+	}
+	return AuthMethodDeviceCode, nil
+}
+
 func (workflow *Workflow) result(pending PendingProfile, discovery Discovery, resumed bool, method AuthMethod) SetupResult {
 	return SetupResult{
 		Profile: IdentityProfile{
@@ -539,6 +752,10 @@ func normalizeAuthMethod(method AuthMethod) AuthMethod {
 		return AuthMethodAutomatic
 	}
 	return method
+}
+
+func validAuthMethod(method AuthMethod) bool {
+	return method == "" || method == AuthMethodAutomatic || method == AuthMethodBrowser || method == AuthMethodDeviceCode
 }
 
 func equalAlias(left, right string) bool {

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,7 @@ func TestAuthenticatorDelegatesLoginWithoutCapturingCodexOutput(t *testing.T) {
 	}
 }
 
-func TestAuthenticatorUsesLoginStatusAndMapsFailureToNotAuthenticated(t *testing.T) {
+func TestAuthenticatorMapsAuthenticationStatusInterfaceFailureToUnavailable(t *testing.T) {
 	executablePath := filepath.Join(t.TempDir(), "codex")
 	identityHome := filepath.Join(t.TempDir(), "managed-homes", "profile-1")
 	var args []string
@@ -52,8 +53,8 @@ func TestAuthenticatorUsesLoginStatusAndMapsFailureToNotAuthenticated(t *testing
 		Discovery:    profile.Discovery{Executable: executablePath},
 		IdentityHome: identityHome,
 	})
-	if err != profile.ErrNotAuthenticated {
-		t.Fatalf("Check() error = %v, want not-authenticated", err)
+	if err != profile.ErrAuthenticationUnavailable {
+		t.Fatalf("Check() error = %v, want authentication unavailable", err)
 	}
 	if strings.Join(args, " ") != "login status" {
 		t.Fatalf("status command = %v, want login status", args)
@@ -104,6 +105,132 @@ func TestAuthenticatorMapsNullAccountToNotAuthenticated(t *testing.T) {
 	if err != profile.ErrNotAuthenticated {
 		t.Fatalf("Check() error = %v, want not-authenticated", err)
 	}
+}
+
+func TestAuthenticatorFakeCodexSupportsExpiryRecoveryAndRepeatedReuse(t *testing.T) {
+	executablePath := filepath.Join(t.TempDir(), "codex")
+	identityHome := filepath.Join(t.TempDir(), "managed-homes", "profile-1")
+	authenticated := false
+	var calls []string
+	var homes []string
+	authenticator := NewAuthenticatorWithCommandRunner(func(_ context.Context, gotExecutable string, args, environment []string, _ io.Reader, stdout, _ io.Writer) error {
+		if gotExecutable != executablePath {
+			t.Fatalf("executable = %q, want %q", gotExecutable, executablePath)
+		}
+		calls = append(calls, strings.Join(args, " "))
+		homes = append(homes, environmentValue(environment, "CODEX_HOME"))
+		switch strings.Join(args, " ") {
+		case "app-server --stdio":
+			account := `{"id":2,"result":{"account":{"type":"chatgpt"}}}`
+			if !authenticated {
+				account = `{"id":2,"result":{"account":null}}`
+			}
+			_, err := io.WriteString(stdout, account+"\n")
+			return err
+		case "login --device-auth":
+			authenticated = true
+			return nil
+		default:
+			return io.ErrUnexpectedEOF
+		}
+	})
+	request := profile.AuthenticationRequest{
+		Discovery:    profile.Discovery{Executable: executablePath},
+		IdentityHome: identityHome,
+		Method:       profile.AuthMethodDeviceCode,
+	}
+	if err := authenticator.Check(context.Background(), request); err != profile.ErrNotAuthenticated {
+		t.Fatalf("expired Check() error = %v, want not-authenticated", err)
+	}
+	if err := authenticator.Authenticate(context.Background(), request); err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+	if err := authenticator.Check(context.Background(), request); err != nil {
+		t.Fatalf("recovered Check() error = %v", err)
+	}
+	if err := authenticator.Check(context.Background(), request); err != nil {
+		t.Fatalf("repeated Check() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "app-server --stdio,login --device-auth,app-server --stdio,app-server --stdio" {
+		t.Fatalf("fake Codex calls = %v, want expiry, device login, and repeated reuse", calls)
+	}
+	for _, home := range homes {
+		if home != filepath.Clean(identityHome) {
+			t.Fatalf("CODEX_HOME = %q, want existing home %q", home, filepath.Clean(identityHome))
+		}
+	}
+}
+
+func TestAuthenticatorFakeCodexSupportsBrowserRecovery(t *testing.T) {
+	executablePath := filepath.Join(t.TempDir(), "codex")
+	identityHome := filepath.Join(t.TempDir(), "managed-homes", "profile-1")
+	authenticated := false
+	var calls []string
+	authenticator := NewAuthenticatorWithCommandRunner(func(_ context.Context, _ string, args, environment []string, _ io.Reader, stdout, _ io.Writer) error {
+		calls = append(calls, strings.Join(args, " "))
+		if environmentValue(environment, "CODEX_HOME") != filepath.Clean(identityHome) {
+			t.Fatalf("CODEX_HOME does not target the existing Identity Home")
+		}
+		switch strings.Join(args, " ") {
+		case "app-server --stdio":
+			account := `{"id":2,"result":{"account":null}}`
+			if authenticated {
+				account = `{"id":2,"result":{"account":{"type":"chatgpt"}}}`
+			}
+			_, err := io.WriteString(stdout, account+"\n")
+			return err
+		case "login":
+			authenticated = true
+			return nil
+		default:
+			return io.ErrUnexpectedEOF
+		}
+	})
+	request := profile.AuthenticationRequest{
+		Discovery:    profile.Discovery{Executable: executablePath},
+		IdentityHome: identityHome,
+		Method:       profile.AuthMethodBrowser,
+	}
+	if err := authenticator.Check(context.Background(), request); err != profile.ErrNotAuthenticated {
+		t.Fatalf("expired Check() error = %v, want not-authenticated", err)
+	}
+	if err := authenticator.Authenticate(context.Background(), request); err != nil {
+		t.Fatalf("browser Authenticate() error = %v", err)
+	}
+	if err := authenticator.Check(context.Background(), request); err != nil {
+		t.Fatalf("recovered Check() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "app-server --stdio,login,app-server --stdio" {
+		t.Fatalf("fake Codex calls = %v, want expiry, browser login, and recovery", calls)
+	}
+}
+
+func TestAuthenticatorFakeCodexMapsCancellationAndFailure(t *testing.T) {
+	request := profile.AuthenticationRequest{
+		Discovery:    profile.Discovery{Executable: filepath.Join(t.TempDir(), "codex")},
+		IdentityHome: filepath.Join(t.TempDir(), "managed-homes", "profile-1"),
+		Method:       profile.AuthMethodDeviceCode,
+	}
+
+	t.Run("cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		authenticator := NewAuthenticatorWithCommandRunner(func(context.Context, string, []string, []string, io.Reader, io.Writer, io.Writer) error {
+			cancel()
+			return errors.New("fake Codex cancelled")
+		})
+		if err := authenticator.Authenticate(ctx, request); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Authenticate() error = %v, want cancellation", err)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		authenticator := NewAuthenticatorWithCommandRunner(func(context.Context, string, []string, []string, io.Reader, io.Writer, io.Writer) error {
+			return errors.New("fake Codex failed")
+		})
+		if err := authenticator.Authenticate(context.Background(), request); err != profile.ErrAuthenticationFailed {
+			t.Fatalf("Authenticate() error = %v, want authentication failure", err)
+		}
+	})
 }
 
 func TestAuthenticatorReportsDocumentedMetadataUnavailableWithoutInference(t *testing.T) {
@@ -175,4 +302,14 @@ func containsEnvironment(environment []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func environmentValue(environment []string, name string) string {
+	prefix := name + "="
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }

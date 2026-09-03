@@ -314,6 +314,41 @@ func TestDocumentedMetadataPersistsEncryptedAndMatchesByEitherIdentifier(t *test
 	}
 }
 
+func TestAuthenticationStatePersistsPreferenceAndStatusWithoutExposingHome(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	homePath := addReadyProfile(t, stateStore, "profile-1", "Work")
+	ctx := context.Background()
+	if err := stateStore.SetAuthenticationState(ctx, "profile-1", profile.StatusNeedsReauthentication, profile.AuthMethodDeviceCode); err != nil {
+		t.Fatalf("SetAuthenticationState() error = %v", err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+
+	stateStore, err = OpenWithOptions(Options{Path: stateStore.Path(), Vault: stateStore.vault})
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	item, err := stateStore.GetProfile(ctx, "work")
+	if err != nil {
+		t.Fatalf("GetProfile() error = %v", err)
+	}
+	if item.Status != profile.StatusNeedsReauthentication || item.AuthenticationMethod != profile.AuthMethodDeviceCode || item.IdentityHomePath != homePath {
+		t.Fatalf("profile = %#v, want persisted reauthentication state and home", item)
+	}
+	data, err := os.ReadFile(stateStore.Path())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if bytes.Contains(data, []byte(homePath)) {
+		t.Fatalf("database contains plaintext Identity Home path %q", homePath)
+	}
+}
+
 type profileStoreClock struct{ now time.Time }
 
 func (clock profileStoreClock) Now() time.Time { return clock.now }

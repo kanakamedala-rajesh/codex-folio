@@ -44,16 +44,20 @@ func runProfileWithInputAndDependencies(args []string, input io.Reader, stdout, 
 }
 
 func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newHome profileHomeFactory, newAuthenticator profileAuthenticatorFactory, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
-	if len(args) < 1 || args[0] != "add" {
-		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add is required", diagnosticSink)
+	if len(args) < 1 || (args[0] != "add" && args[0] != "reauthenticate") {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add or reauthenticate is required", diagnosticSink)
 	}
 	if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add requires an alias", diagnosticSink)
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile command requires an alias", diagnosticSink)
 	}
+	command := args[0]
 	alias := args[1]
 	options, err := parseProfileOptions(args[2:])
 	if err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile arguments", diagnosticSink)
+	}
+	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.yes) {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid reauthentication arguments", diagnosticSink)
 	}
 	if err := profilefeature.ValidateAlias(alias); err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
@@ -98,19 +102,46 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 	}()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
 
+	if newAuthenticator == nil {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authenticator is unavailable")), diagnosticSink)
+	}
+	authenticator := newAuthenticator()
+	if authenticator == nil {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authenticator is unavailable")), diagnosticSink)
+	}
+	if command == "reauthenticate" {
+		result, err := profilefeature.Reauthenticate(context.Background(), stateStore, profileDiscoverer{resolver: resolver}, authenticator, profilefeature.ReauthenticationRequest{
+			Alias:          alias,
+			CodexOverride:  options.codexBin,
+			AuthMethod:     options.authMethod,
+			NonInteractive: options.nonInteractive,
+			Stdin:          input,
+			Stdout:         stderr,
+			Stderr:         stderr,
+		})
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if options.json {
+			if err := writeServiceJSON(stdout, result); err != nil {
+				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.CLIInternal, err), diagnosticSink)
+			}
+			return exitSuccess
+		}
+		writeReauthenticationResult(stdout, result)
+		return exitSuccess
+	}
+
 	homeProvisioner, err := newHome(paths.ManagedHomes)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	if newAuthenticator == nil {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authenticator is unavailable")), diagnosticSink)
 	}
 	workflow, err := profilefeature.NewWorkflow(profilefeature.WorkflowOptions{
 		Repository:             stateStore,
 		Discoverer:             profileDiscoverer{resolver: resolver},
 		HomeProvisioner:        homeProvisioner,
 		ReferencedHomeResolver: platform.NewReferencedHomeResolver(paths.ManagedHomes),
-		Authenticator:          newAuthenticator(),
+		Authenticator:          authenticator,
 	})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -274,6 +305,16 @@ func writeProfileResult(stdout io.Writer, result profilefeature.SetupResult) {
 	}
 }
 
+func writeReauthenticationResult(stdout io.Writer, result profilefeature.ReauthenticationResult) {
+	_, _ = fmt.Fprintf(stdout, "Profile: %s (%s)\n", result.Profile.Alias, result.Profile.Status)
+	_, _ = fmt.Fprintf(stdout, "Identity Home: %s\n", result.Profile.IdentityHomeOwnership)
+	_, _ = fmt.Fprintf(stdout, "Reauthenticated: %t\n", result.Reauthenticated)
+	_, _ = fmt.Fprintf(stdout, "Codex version: %s\n", result.Discovery.Version)
+	if result.AuthenticationMethod != "" {
+		_, _ = fmt.Fprintf(stdout, "Authentication: %s\n", result.AuthenticationMethod)
+	}
+}
+
 func writeProfileUsageDiagnostic(stderr io.Writer, code, message string, diagnosticSink diagnostics.Sink) int {
 	code = diagnostics.CodeFor(nil, code)
 	if strings.TrimSpace(message) == "" {
@@ -288,4 +329,5 @@ func writeProfileUsageDiagnostic(stderr io.Writer, code, message string, diagnos
 func writeProfileUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 }

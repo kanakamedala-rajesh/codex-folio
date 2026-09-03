@@ -113,6 +113,34 @@ func (store *Store) GetPendingProfile(ctx context.Context, profileID string) (pr
 	return pending, nil
 }
 
+func (store *Store) GetProfile(ctx context.Context, alias string) (profile.IdentityProfile, error) {
+	if store == nil || store.db == nil {
+		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, ErrProfileState)
+	}
+	if err := profile.ValidateAlias(alias); err != nil {
+		return profile.IdentityProfile{}, err
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var profileID string
+	err := store.db.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias = ? COLLATE NOCASE`, alias).Scan(&profileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return profile.IdentityProfile{}, profile.ErrNotFound
+	}
+	if err != nil {
+		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	item, err := store.getIdentityProfile(ctx, profileID)
+	if err != nil {
+		return profile.IdentityProfile{}, err
+	}
+	if err := store.populateIdentityHomePath(ctx, &item); err != nil {
+		return profile.IdentityProfile{}, err
+	}
+	return item, nil
+}
+
 func (store *Store) CreatePendingProfile(ctx context.Context, pending profile.PendingProfile) error {
 	if store == nil || store.db == nil {
 		return coded(apperrors.StoreWriteFailed, ErrProfileState)
@@ -404,6 +432,50 @@ func (store *Store) ResetAuthentication(ctx context.Context, profileID string) e
 	return nil
 }
 
+func (store *Store) SetAuthenticationState(ctx context.Context, profileID string, status profile.Status, method profile.AuthMethod) error {
+	if store == nil || store.db == nil {
+		return coded(apperrors.StoreWriteFailed, ErrProfileState)
+	}
+	if strings.TrimSpace(profileID) == "" || !validProfileStatus(status) || !validStoredAuthMethod(method) {
+		return apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileState)
+	}
+	ctx = contextOrBackground(ctx)
+	now := store.clock.Now().UTC()
+	if now.IsZero() {
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, errors.New("profile clock returned zero")))
+	}
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	rollback := func() { _ = tx.Rollback() }
+	query := `UPDATE identity_profiles SET status = ?, updated_at = ? WHERE profile_id = ?`
+	args := []any{string(status), formatStoredTime(now), profileID}
+	if method != "" {
+		query = `UPDATE identity_profiles SET status = ?, authentication_method = ?, updated_at = ? WHERE profile_id = ?`
+		args = []any{string(status), string(method), formatStoredTime(now), profileID}
+	}
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected == 0 {
+		rollback()
+		if affectedErr != nil {
+			return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, affectedErr))
+		}
+		return profile.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	return nil
+}
+
 func (store *Store) PromotePendingProfile(ctx context.Context, profileID string) (profile.IdentityProfile, error) {
 	if store == nil || store.db == nil {
 		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, ErrProfileState)
@@ -512,7 +584,7 @@ func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.Identit
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.status,
-		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.created_at, ip.updated_at,
+		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.authentication_method, ip.created_at, ip.updated_at,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
 		FROM identity_profiles ip
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
@@ -527,13 +599,14 @@ func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.Identit
 	profiles := make([]profile.IdentityProfile, 0)
 	for rows.Next() {
 		var item profile.IdentityProfile
-		var status, ownership, createdAt, updatedAt string
+		var status, ownership, authenticationMethod, createdAt, updatedAt string
 		var selected int
-		if err := rows.Scan(&item.ID, &item.Alias, &item.DisplayName, &status, &item.IdentityHomeID, &ownership, &createdAt, &updatedAt, &selected); err != nil {
+		if err := rows.Scan(&item.ID, &item.Alias, &item.DisplayName, &status, &item.IdentityHomeID, &ownership, &authenticationMethod, &createdAt, &updatedAt, &selected); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 		}
 		item.Status = profile.Status(status)
 		item.IdentityHomeOwnership = profile.HomeOwnership(ownership)
+		item.AuthenticationMethod = storedAuthMethod(authenticationMethod)
 		item.Selected = selected != 0
 		item.CreatedAt, err = parseStoredTime(createdAt)
 		if err != nil {
@@ -606,10 +679,11 @@ func (store *Store) SelectProfile(ctx context.Context, alias string) (profile.Se
 func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (profile.IdentityProfile, error) {
 	var result profile.IdentityProfile
 	var status, alias, homeID, ownership string
+	var authenticationMethod string
 	var selected int
 	var createdAt, updatedAt string
 	err := store.db.QueryRowContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.status,
-		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''),
+		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.authentication_method,
 		ip.created_at, ip.updated_at,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
 		FROM identity_profiles ip
@@ -623,6 +697,7 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 		&status,
 		&homeID,
 		&ownership,
+		&authenticationMethod,
 		&createdAt,
 		&updatedAt,
 		&selected,
@@ -637,6 +712,7 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 	result.Status = profile.Status(status)
 	result.IdentityHomeID = homeID
 	result.IdentityHomeOwnership = profile.HomeOwnership(ownership)
+	result.AuthenticationMethod = storedAuthMethod(authenticationMethod)
 	result.Selected = selected != 0
 	result.CreatedAt, err = parseStoredTime(createdAt)
 	if err != nil {
@@ -647,6 +723,33 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
 	return result, nil
+}
+
+func (store *Store) populateIdentityHomePath(ctx context.Context, item *profile.IdentityProfile) error {
+	if item == nil || item.IdentityHomeID == "" {
+		return nil
+	}
+	secureVault, err := store.requireVault()
+	if err != nil {
+		return err
+	}
+	var ciphertext []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT location_ciphertext FROM identity_homes WHERE identity_home_id = ?`, item.IdentityHomeID).Scan(&ciphertext); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
+		}
+		return coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	path, err := decryptField(ctx, secureVault, ciphertext, identityHomeAAD(item.IdentityHomeID))
+	if err != nil {
+		return err
+	}
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
+	}
+	item.IdentityHomePath = path
+	return nil
 }
 
 func setupStageColumn(stage profile.SetupStage) (string, bool) {
@@ -666,6 +769,21 @@ func setupStageColumn(stage profile.SetupStage) (string, bool) {
 	}
 }
 
+func validProfileStatus(status profile.Status) bool {
+	return status == profile.StatusPending || status == profile.StatusReady || status == profile.StatusNeedsReauthentication || status == profile.StatusUnavailable
+}
+
+func validStoredAuthMethod(method profile.AuthMethod) bool {
+	return method == "" || method == profile.AuthMethodAutomatic || method == profile.AuthMethodBrowser || method == profile.AuthMethodDeviceCode
+}
+
+func storedAuthMethod(method string) profile.AuthMethod {
+	if !validStoredAuthMethod(profile.AuthMethod(method)) || method == "" {
+		return profile.AuthMethodAutomatic
+	}
+	return profile.AuthMethod(method)
+}
+
 func identityHomeAAD(homeID string) []byte {
 	return []byte("codex-folio/identity-homes/" + homeID + "/location")
 }
@@ -673,3 +791,5 @@ func identityHomeAAD(homeID string) []byte {
 func documentedMetadataAAD(homeID, field string) []byte {
 	return []byte("codex-folio/identity-homes/" + homeID + "/" + field)
 }
+
+var _ profile.AuthenticationRepository = (*Store)(nil)

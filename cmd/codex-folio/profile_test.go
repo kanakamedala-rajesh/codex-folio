@@ -334,6 +334,40 @@ func TestProfileAddCLIResumesEveryCommittedStageWithRealStoreAndFakeSeams(t *tes
 	}
 }
 
+func TestProfileReauthenticateCLIUsesExistingHomeAndReturnsSafeResult(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	authenticator := &cliProfileAuthenticator{checkErr: profilefeature.ErrNotAuthenticated}
+	var stdout, stderr bytes.Buffer
+	resultCode := runProfileWithInputAndDependenciesAndOwnerOptions(
+		[]string{"reauthenticate", "work", "--device-code", "--non-interactive", "--json"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(string) (profilefeature.ManagedHomeProvisioner, error) {
+			t.Fatal("reauthentication must not provision a new Identity Home")
+			return nil, nil
+		},
+		func() profilefeature.Authenticator { return authenticator }, nil,
+		platform.OwnerOptions{},
+	)
+	if resultCode != exitSuccess || stderr.Len() != 0 {
+		t.Fatalf("exit/stderr = %d/%q, want successful quiet JSON result", resultCode, stderr.String())
+	}
+	var result profilefeature.ReauthenticationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("reauthentication JSON error = %v; output = %q", err, stdout.String())
+	}
+	if !result.Reauthenticated || result.Profile.Status != profilefeature.StatusReady || result.AuthenticationMethod != profilefeature.AuthMethodDeviceCode {
+		t.Fatalf("result = %#v, want recovered ready device-code profile", result)
+	}
+	if authenticator.method != profilefeature.AuthMethodDeviceCode || authenticator.authenticateCalls != 1 || strings.Contains(stdout.String(), paths.ManagedHomes) {
+		t.Fatalf("auth/output = %#v/%q, want one device-code auth and no home path", authenticator, stdout.String())
+	}
+}
+
 func assertProfileStages(t *testing.T, paths platform.Paths, secureVault vault.Vault, clock profileTestClock, want profilefeature.SetupStages) {
 	t.Helper()
 	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Clock: clock, Vault: secureVault})
