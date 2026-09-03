@@ -185,13 +185,14 @@ func TestAddReferencedHomeKeepsValidationFailurePending(t *testing.T) {
 }
 
 func TestReauthenticateUsesSavedDevicePreferenceAndExistingHome(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:                    "profile-1",
 		Alias:                 "work",
 		Status:                StatusNeedsReauthentication,
 		IdentityHomeID:        "home-1",
 		IdentityHomeOwnership: HomeOwnershipManaged,
-		IdentityHomePath:      "/existing/codex-home",
+		IdentityHomePath:      homePath,
 		AuthenticationMethod:  AuthMethodDeviceCode,
 	}}
 	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
@@ -203,7 +204,7 @@ func TestReauthenticateUsesSavedDevicePreferenceAndExistingHome(t *testing.T) {
 	if !result.Reauthenticated || result.Profile.Status != StatusReady || result.AuthenticationMethod != AuthMethodDeviceCode {
 		t.Fatalf("result = %#v, want successful device-code recovery", result)
 	}
-	if authenticator.methods[len(authenticator.methods)-1] != AuthMethodDeviceCode || authenticator.identityHome != "/existing/codex-home" {
+	if authenticator.methods[len(authenticator.methods)-1] != AuthMethodDeviceCode || authenticator.identityHome != homePath {
 		t.Fatalf("authentication = methods:%v home:%q, want device-code and existing home", authenticator.methods, authenticator.identityHome)
 	}
 	if repository.status != StatusReady || repository.method != AuthMethodDeviceCode {
@@ -212,12 +213,13 @@ func TestReauthenticateUsesSavedDevicePreferenceAndExistingHome(t *testing.T) {
 }
 
 func TestVerifyAuthenticationStopsLaunchAndMarksProfileForReauthentication(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:               "profile-1",
 		Alias:            "work",
 		Status:           StatusReady,
 		IdentityHomeID:   "home-1",
-		IdentityHomePath: "/existing/codex-home",
+		IdentityHomePath: homePath,
 	}}
 	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
 
@@ -234,12 +236,13 @@ func TestVerifyAuthenticationStopsLaunchAndMarksProfileForReauthentication(t *te
 }
 
 func TestVerifyAuthenticationMarksStatusInterfaceFailureUnavailable(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:               "profile-1",
 		Alias:            "work",
 		Status:           StatusReady,
 		IdentityHomeID:   "home-1",
-		IdentityHomePath: "/existing/codex-home",
+		IdentityHomePath: homePath,
 	}}
 
 	item, err := VerifyAuthentication(context.Background(), repository, &recordingAuthenticator{checkErr: ErrAuthenticationUnavailable}, AuthenticationCheckRequest{
@@ -255,12 +258,13 @@ func TestVerifyAuthenticationMarksStatusInterfaceFailureUnavailable(t *testing.T
 }
 
 func TestReauthenticateReusesUsableAuthenticationWithoutLogin(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:                   "profile-1",
 		Alias:                "work",
 		Status:               StatusNeedsReauthentication,
 		IdentityHomeID:       "home-1",
-		IdentityHomePath:     "/existing/codex-home",
+		IdentityHomePath:     homePath,
 		AuthenticationMethod: AuthMethodBrowser,
 	}}
 	authenticator := &recordingAuthenticator{}
@@ -275,12 +279,13 @@ func TestReauthenticateReusesUsableAuthenticationWithoutLogin(t *testing.T) {
 }
 
 func TestReauthenticateNonInteractiveRequiresSavedOrExplicitMethod(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:               "profile-1",
 		Alias:            "work",
 		Status:           StatusReady,
 		IdentityHomeID:   "home-1",
-		IdentityHomePath: "/existing/codex-home",
+		IdentityHomePath: homePath,
 	}}
 	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated}
 
@@ -294,12 +299,13 @@ func TestReauthenticateNonInteractiveRequiresSavedOrExplicitMethod(t *testing.T)
 }
 
 func TestReauthenticateCancellationLeavesProfileUnlaunchable(t *testing.T) {
+	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:                   "profile-1",
 		Alias:                "work",
 		Status:               StatusNeedsReauthentication,
 		IdentityHomeID:       "home-1",
-		IdentityHomePath:     "/existing/codex-home",
+		IdentityHomePath:     homePath,
 		AuthenticationMethod: AuthMethodDeviceCode,
 	}}
 	authenticator := &recordingAuthenticator{checkErr: ErrNotAuthenticated, authenticateErr: ErrAuthCancelled}
