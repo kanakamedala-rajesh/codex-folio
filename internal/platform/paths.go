@@ -26,6 +26,7 @@ const (
 	runtimeDirectory   = "runtime"
 	lockFileName       = "service.owner.lock"
 	metadataFileName   = "service.owner.json"
+	clientFileName     = "service.client.json"
 	vaultFileName      = "codex-folio.vault"
 	managedHomesName   = "managed-homes"
 )
@@ -57,6 +58,7 @@ type Paths struct {
 	Runtime      string
 	LockFile     string
 	MetadataFile string
+	ClientFile   string
 	DatabaseFile string
 	VaultFile    string
 	ManagedHomes string
@@ -108,6 +110,7 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 		Runtime:      filepath.Join(root, runtimeDirectory),
 		LockFile:     filepath.Join(ownerRuntime, lockFileName),
 		MetadataFile: filepath.Join(ownerRuntime, metadataFileName),
+		ClientFile:   filepath.Join(ownerRuntime, clientFileName),
 		DatabaseFile: filepath.Join(root, "codex-folio.sqlite3"),
 		VaultFile:    filepath.Join(root, vaultFileName),
 		ManagedHomes: filepath.Join(root, managedHomesName),

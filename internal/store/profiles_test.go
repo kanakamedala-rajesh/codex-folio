@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
@@ -126,6 +127,88 @@ func TestProfileStateRejectsAliasCollisionAndIncompletePromotion(t *testing.T) {
 	}
 	if _, err := stateStore.PromotePendingProfile(ctx, first.ID); err == nil || apperrors.Code(err) != apperrors.ProfileValidationFailed {
 		t.Fatalf("incomplete promotion error = %v, want validation-failed", err)
+	}
+}
+
+func TestSelectProfilePersistsAndWarnsWithoutChangingRunningLaunches(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	ctx := context.Background()
+	firstHome := addReadyProfile(t, stateStore, "profile-1", "Work")
+	addReadyProfile(t, stateStore, "profile-2", "Personal")
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1"); err != nil {
+		t.Fatalf("CompleteInitialSelection() error = %v", err)
+	}
+	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{
+		Alias: "Work", Executable: filepath.Join(firstHome, "codex"), WorkingDirectory: firstHome,
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(ctx, plan.LeaseID, 1234); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted() error = %v", err)
+	}
+	personalPlan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(firstHome, "codex"), WorkingDirectory: firstHome,
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch(Personal) error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(ctx, personalPlan.LeaseID, 5678); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted(Personal) error = %v", err)
+	}
+
+	result, err := stateStore.SelectProfile(ctx, "personal")
+	if err != nil {
+		t.Fatalf("SelectProfile() error = %v", err)
+	}
+	if result.Profile.ID != "profile-2" || !result.Profile.Selected || len(result.Warnings) != 1 {
+		t.Fatalf("selection = %#v, want selected personal profile and one running-launch warning", result)
+	}
+	launchRecord, err := stateStore.GetManagedLaunch(ctx, plan.LeaseID)
+	if err != nil {
+		t.Fatalf("GetManagedLaunch() error = %v", err)
+	}
+	if launchRecord.ProfileID != "profile-1" {
+		t.Fatalf("running Launch Profile = %q, want immutable profile-1", launchRecord.ProfileID)
+	}
+	personalLaunch, err := stateStore.GetManagedLaunch(ctx, personalPlan.LeaseID)
+	if err != nil || personalLaunch.ProfileID != "profile-2" {
+		t.Fatalf("Personal running Launch Profile = %#v/%v, want immutable profile-2", personalLaunch, err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	stateStore, err = OpenWithOptions(Options{Path: stateStore.Path(), Clock: profileStoreClock{now: time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)}, Vault: stateStore.vault})
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	profiles, err := stateStore.ListEligibleProfiles(ctx)
+	if err != nil {
+		t.Fatalf("ListEligibleProfiles() error = %v", err)
+	}
+	if len(profiles) != 2 || profiles[0].Alias != "Personal" || !profiles[0].Selected || profiles[1].Alias != "Work" || profiles[1].Selected {
+		t.Fatalf("eligible profiles = %#v, want selected profile first after restart", profiles)
+	}
+}
+
+func TestSelectProfileRejectsMissingAndNonReadyProfiles(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "pending-1", Alias: "Pending", DisplayName: "Pending"}); err != nil {
+		t.Fatalf("CreatePendingProfile() error = %v", err)
+	}
+	for _, alias := range []string{"pending", "missing"} {
+		if _, err := stateStore.SelectProfile(ctx, alias); err == nil || apperrors.Code(err) != apperrors.ProfileNotSelectable {
+			t.Fatalf("SelectProfile(%q) error = %v, want not-selectable", alias, err)
+		}
 	}
 }
 
@@ -246,4 +329,25 @@ func openProfileTestStore(t *testing.T) (*Store, error) {
 		Clock: profileStoreClock{now: time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)},
 		Vault: secureVault,
 	})
+}
+
+func addReadyProfile(t *testing.T, stateStore *Store, id, alias string) string {
+	t.Helper()
+	ctx := context.Background()
+	home := filepath.Join(t.TempDir(), id)
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: id, Alias: alias, DisplayName: alias}); err != nil {
+		t.Fatalf("CreatePendingProfile(%q) error = %v", alias, err)
+	}
+	if err := stateStore.SetManagedHome(ctx, id, id, home); err != nil {
+		t.Fatalf("SetManagedHome(%q) error = %v", alias, err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, id, stage); err != nil {
+			t.Fatalf("SaveSetupStage(%q, %q) error = %v", alias, stage, err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, id); err != nil {
+		t.Fatalf("PromotePendingProfile(%q) error = %v", alias, err)
+	}
+	return home
 }

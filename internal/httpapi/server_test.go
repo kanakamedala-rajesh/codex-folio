@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 type testClock struct {
@@ -151,6 +153,77 @@ func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
 		t.Fatalf("bootstrap replay: %v", err)
 	}
 	assertErrorResponse(t, replay, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid, token)
+}
+
+func TestAuthorizedSelectionAPIReadsAndUpdatesSelectedProfile(t *testing.T) {
+	repository := &selectionRepository{profiles: []profile.IdentityProfile{
+		{ID: "profile-1", Alias: "Work", DisplayName: "Work", Status: profile.StatusReady, Selected: true},
+		{ID: "profile-2", Alias: "Personal", DisplayName: "Personal", Status: profile.StatusReady},
+	}}
+	selector, err := profile.NewSelector(repository)
+	if err != nil {
+		t.Fatalf("NewSelector() error = %v", err)
+	}
+	server, _, _ := startTestServer(t, Options{Selection: selector})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatalf("bootstrap exchange: %v", err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatalf("decode bootstrap: %v", err)
+	}
+	_ = exchange.Body.Close()
+
+	current, err := doRequest(client, http.MethodGet, origin+SelectionPath, server.Address(), origin, nil, "")
+	if err != nil {
+		t.Fatalf("get selection: %v", err)
+	}
+	var currentSelection SelectionResponse
+	if err := json.NewDecoder(current.Body).Decode(&currentSelection); err != nil {
+		t.Fatalf("decode current selection: %v", err)
+	}
+	_ = current.Body.Close()
+	if currentSelection.Alias != "Work" {
+		t.Fatalf("current selection = %#v, want Work", currentSelection)
+	}
+
+	updated, err := doRequest(client, http.MethodPut, origin+SelectionPath, server.Address(), origin, []byte(`{"alias":"personal"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatalf("put selection: %v", err)
+	}
+	var updatedSelection SelectionResponse
+	if err := json.NewDecoder(updated.Body).Decode(&updatedSelection); err != nil {
+		t.Fatalf("decode updated selection: %v", err)
+	}
+	_ = updated.Body.Close()
+	if updatedSelection.Alias != "Personal" || repository.profiles[1].Selected != true || repository.profiles[0].Selected {
+		t.Fatalf("updated selection/repository = %#v/%#v, want Personal selected", updatedSelection, repository.profiles)
+	}
+}
+
+type selectionRepository struct {
+	profiles []profile.IdentityProfile
+}
+
+func (repository *selectionRepository) ListEligibleProfiles(context.Context) ([]profile.IdentityProfile, error) {
+	return append([]profile.IdentityProfile(nil), repository.profiles...), nil
+}
+
+func (repository *selectionRepository) SelectProfile(_ context.Context, alias string) (profile.SelectionResult, error) {
+	for index := range repository.profiles {
+		if !strings.EqualFold(repository.profiles[index].Alias, alias) {
+			continue
+		}
+		for other := range repository.profiles {
+			repository.profiles[other].Selected = other == index
+		}
+		return profile.SelectionResult{Profile: repository.profiles[index]}, nil
+	}
+	return profile.SelectionResult{}, profile.ErrNotSelectable
 }
 
 func TestHostOriginAndCSRFChecksFailClosedWithoutCORS(t *testing.T) {

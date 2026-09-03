@@ -48,6 +48,47 @@
         "product"
       ],
       "type": "object"
+    },
+    "SelectionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "description": "The CLI Alias of the Ready Identity Profile to select.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias"
+      ],
+      "type": "object"
+    },
+    "SelectionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "description": "The immutable identifier of the Selected Profile.",
+          "type": "string"
+        },
+        "alias": {
+          "description": "The Selected Profile CLI Alias.",
+          "type": "string"
+        },
+        "display_name": {
+          "description": "The Selected Profile display label.",
+          "type": "string"
+        },
+        "warning": {
+          "description": "A safe warning when a running Launch Profile differs, otherwise empty.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "alias",
+        "display_name",
+        "warning"
+      ],
+      "type": "object"
     }
   },
   "info": {
@@ -97,6 +138,48 @@
               }
             },
             "description": "Returns non-product API metadata."
+          }
+        }
+      }
+    },
+    "/api/v1/selection": {
+      "get": {
+        "operationId": "getSelection",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/$defs/SelectionResponse"
+                }
+              }
+            },
+            "description": "Returns the current Selected Profile."
+          }
+        }
+      },
+      "put": {
+        "operationId": "setSelection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/$defs/SelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/$defs/SelectionResponse"
+                }
+              }
+            },
+            "description": "Persists one Ready Identity Profile as Selected Profile."
           }
         }
       }

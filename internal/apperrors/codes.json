@@ -92,6 +92,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_PROFILE_NOT_SELECTABLE",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PROFILE_SETUP_CHOICE_REQUIRED",
       "owner": "profile",
       "lifecycle": "active",

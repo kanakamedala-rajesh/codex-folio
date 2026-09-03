@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,6 +216,38 @@ func TestAcquireCreatesPrivateStateLayoutAndMetadata(t *testing.T) {
 	}
 	assertPrivateMode(t, paths.LockFile, 0o600)
 	assertPrivateMode(t, paths.MetadataFile, 0o600)
+}
+
+func TestServiceClientDescriptorIsPrivateAndSeparateFromOwnerMetadata(t *testing.T) {
+	paths := testPaths(t)
+	owner, err := Acquire(paths, OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	defer func() { _ = owner.Close() }()
+	const token = "private-command-token"
+	want := ServiceClient{Origin: "http://127.0.0.1:4567", Token: token}
+	if err := owner.PublishClient(want); err != nil {
+		t.Fatalf("PublishClient() error = %v", err)
+	}
+	got, err := DiscoverServiceClient(paths, OwnerOptions{})
+	if err != nil || got != want {
+		t.Fatalf("DiscoverServiceClient() = %#v, %v; want %#v", got, err, want)
+	}
+	info, err := os.Stat(paths.ClientFile)
+	if err != nil {
+		t.Fatalf("Stat(client descriptor) error = %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("client descriptor mode = %o, want 600", info.Mode().Perm())
+	}
+	metadata, err := os.ReadFile(paths.MetadataFile)
+	if err != nil {
+		t.Fatalf("ReadFile(owner metadata) error = %v", err)
+	}
+	if strings.Contains(string(metadata), token) || strings.Contains(string(metadata), want.Origin) {
+		t.Fatalf("owner metadata exposes private service connection: %q", metadata)
+	}
 }
 
 func TestAcquireRejectsSecondWriterAndDiscoverReportsHealthyOwner(t *testing.T) {

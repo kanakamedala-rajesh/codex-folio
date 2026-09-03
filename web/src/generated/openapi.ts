@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "6acdae74bac2879ed7da786020e849919224748d58e3127f08a5a1972c8a6d85" as const;
+  "53b0dbb4504dc50c4894aaf217838e13317e7bcbae5d7c907110a87a91ece15a" as const;
 
 export interface BootstrapRequest {
   bootstrap_token: string;
@@ -17,6 +17,17 @@ export interface MetadataResponse {
   api_version: string;
   contract_version: string;
   product: string;
+}
+
+export interface SelectionRequest {
+  alias: string;
+}
+
+export interface SelectionResponse {
+  profile_id: string;
+  alias: string;
+  display_name: string;
+  warning: string;
 }
 
 export interface ApiPaths {
@@ -45,11 +56,24 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/selection": {
+    get: {
+      operationId: "getSelection";
+      responses: { 200: { content: { "application/json": SelectionResponse } } };
+    };
+    put: {
+      operationId: "setSelection";
+      requestBody: SelectionRequest;
+      responses: { 200: { content: { "application/json": SelectionResponse } } };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
+  getSelection(init?: RequestInit): Promise<SelectionResponse>;
+  setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
 }
 
 export function createCodexFolioApiClient(
@@ -86,6 +110,36 @@ export function createCodexFolioApiClient(
         throw new Error("GET /api/v1/meta failed with HTTP " + response.status);
       }
       return (await response.json()) as MetadataResponse;
+    },
+    async getSelection(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/selection", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET /api/v1/selection failed with HTTP " + response.status);
+      }
+      return (await response.json()) as SelectionResponse;
+    },
+    async setSelection(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/selection", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        throw new Error("PUT /api/v1/selection failed with HTTP " + response.status);
+      }
+      return (await response.json()) as SelectionResponse;
     },
   };
 }

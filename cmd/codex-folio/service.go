@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
+	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
 )
 
@@ -287,7 +290,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink})
+	selector, err := profile.NewSelector(stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	commandToken, err := newCommandToken()
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -299,12 +314,26 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
+		_ = server.Close()
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
 
 	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func newCommandToken() (string, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return "", apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
+	}
+	return base64.RawURLEncoding.EncodeToString(token), nil
 }
 
 func runServiceRecovery(paths platform.Paths, action string, options serviceOptions, stdout, stderr io.Writer) (resultCode int) {
@@ -557,6 +586,7 @@ func serviceDiagnosticState(code string) string {
 	case apperrors.CLIUsage,
 		apperrors.LaunchLeaseInvalid,
 		apperrors.LaunchProfileNotFound,
+		apperrors.ProfileNotSelectable,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -616,6 +646,8 @@ func serviceRemediation(code string) string {
 		return "the Identity Home could not be resolved or validated safely"
 	case apperrors.ProfileValidationFailed:
 		return "Codex did not validate the Identity Home"
+	case apperrors.ProfileNotSelectable:
+		return "the Identity Profile is not eligible for selection"
 	case apperrors.LaunchProfileNotFound:
 		return "the requested Identity Profile was not found"
 	case apperrors.LaunchProfileUnavailable:

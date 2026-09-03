@@ -19,6 +19,7 @@ const (
 	ProfileSetupInvalid             = "CF_PROFILE_SETUP_INVALID"
 	ProfileAliasInvalid             = "CF_PROFILE_ALIAS_INVALID"
 	ProfileAliasTaken               = "CF_PROFILE_ALIAS_TAKEN"
+	ProfileNotSelectable            = "CF_PROFILE_NOT_SELECTABLE"
 	ProfileSetupChoiceRequired      = "CF_PROFILE_SETUP_CHOICE_REQUIRED"
 	ProfileAuthenticationFailed     = "CF_PROFILE_AUTHENTICATION_FAILED"
 	ProfileAuthenticationCancelled  = "CF_PROFILE_AUTHENTICATION_CANCELLED"
@@ -112,6 +113,7 @@ func IsRegistered(code string) bool {
 		ProfileSetupInvalid,
 		ProfileAliasInvalid,
 		ProfileAliasTaken,
+		ProfileNotSelectable,
 		ProfileSetupChoiceRequired,
 		ProfileAuthenticationFailed,
 		ProfileAuthenticationCancelled,

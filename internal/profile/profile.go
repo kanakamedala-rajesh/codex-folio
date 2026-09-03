@@ -113,6 +113,13 @@ type SetupResult struct {
 	Warnings             []string        `json:"warnings,omitempty"`
 }
 
+type SelectionResult struct {
+	Profile  IdentityProfile `json:"profile"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+const RunningLaunchSelectionWarning = "A running Managed Launch keeps its original Launch Profile; this selection applies to the dashboard and next interactive launch."
+
 const ReferencedHomeDuplicateWarning = "Codex-reported Login Identity or Workspace may already be registered; this local profile remains distinct."
 
 var (
@@ -127,6 +134,7 @@ var (
 	ErrDocumentedMetadataUnavailable = errors.New("Codex documented identity metadata is unavailable")
 	ErrHomeInvalid                   = errors.New("managed Identity Home is invalid")
 	ErrValidationFailed              = errors.New("Identity Home validation failed")
+	ErrNotSelectable                 = errors.New("profile is not eligible for selection")
 )
 
 type Discoverer interface {
@@ -175,6 +183,22 @@ type Repository interface {
 	ResetAuthentication(context.Context, string) error
 	PromotePendingProfile(context.Context, string) (IdentityProfile, error)
 	CompleteInitialSelection(context.Context, string) (IdentityProfile, error)
+}
+
+type SelectionRepository interface {
+	ListEligibleProfiles(context.Context) ([]IdentityProfile, error)
+	SelectProfile(context.Context, string) (SelectionResult, error)
+}
+
+type Selector struct {
+	repository SelectionRepository
+}
+
+func NewSelector(repository SelectionRepository) (*Selector, error) {
+	if repository == nil {
+		return nil, apperrors.New(apperrors.ProfileNotSelectable, ErrNotSelectable)
+	}
+	return &Selector{repository: repository}, nil
 }
 
 type WorkflowOptions struct {
@@ -366,6 +390,23 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 		result.Warnings = []string{ReferencedHomeDuplicateWarning}
 	}
 	return result, nil
+}
+
+func (selector *Selector) Eligible(ctx context.Context) ([]IdentityProfile, error) {
+	if selector == nil || selector.repository == nil {
+		return nil, apperrors.New(apperrors.ProfileNotSelectable, ErrNotSelectable)
+	}
+	return selector.repository.ListEligibleProfiles(contextOrBackground(ctx))
+}
+
+func (selector *Selector) Select(ctx context.Context, alias string) (SelectionResult, error) {
+	if selector == nil || selector.repository == nil {
+		return SelectionResult{}, apperrors.New(apperrors.ProfileNotSelectable, ErrNotSelectable)
+	}
+	if err := ValidateAlias(alias); err != nil {
+		return SelectionResult{}, err
+	}
+	return selector.repository.SelectProfile(contextOrBackground(ctx), alias)
 }
 
 func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request SetupRequest, preferred AuthMethod, pending PendingProfile, discovery Discovery) (AuthMethod, error) {

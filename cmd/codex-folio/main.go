@@ -31,8 +31,9 @@ func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadat
 
 func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
 	if len(args) == 0 {
-		writeUsage(stdout, metadata)
-		return exitSuccess
+		return runInteractiveSelectionWithDependencies(os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, func(alias string) int {
+			return runLaunch([]string{alias, "--"}, stdout, stderr, resolvePaths, resolver)
+		}, newServiceDiagnosticSink())
 	}
 
 	command := args[0]
@@ -47,6 +48,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runProfile(args[1:], stdout, stderr, resolvePaths, resolver)
 	case "launch":
 		return runLaunch(args[1:], stdout, stderr, resolvePaths, resolver)
+	case "select":
+		return runSelect(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "help", "--help", "-h":
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -92,5 +95,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
+	fmt.Fprintln(stdout, "  codex-folio select ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

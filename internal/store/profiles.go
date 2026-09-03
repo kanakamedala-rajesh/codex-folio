@@ -504,6 +504,105 @@ func (store *Store) CompleteInitialSelection(ctx context.Context, profileID stri
 	return result, nil
 }
 
+func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.IdentityProfile, error) {
+	if store == nil || store.db == nil {
+		return nil, coded(apperrors.StoreReadFailed, ErrProfileState)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.status,
+		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.created_at, ip.updated_at,
+		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
+		FROM identity_profiles ip
+		JOIN cli_aliases a ON a.profile_id = ip.profile_id
+		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
+		LEFT JOIN selected_profile s ON s.profile_id = ip.profile_id
+		WHERE ip.status = 'ready'
+		ORDER BY CASE WHEN s.profile_id = ip.profile_id THEN 0 ELSE 1 END, a.alias COLLATE NOCASE`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	defer func() { _ = rows.Close() }()
+	profiles := make([]profile.IdentityProfile, 0)
+	for rows.Next() {
+		var item profile.IdentityProfile
+		var status, ownership, createdAt, updatedAt string
+		var selected int
+		if err := rows.Scan(&item.ID, &item.Alias, &item.DisplayName, &status, &item.IdentityHomeID, &ownership, &createdAt, &updatedAt, &selected); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		item.Status = profile.Status(status)
+		item.IdentityHomeOwnership = profile.HomeOwnership(ownership)
+		item.Selected = selected != 0
+		item.CreatedAt, err = parseStoredTime(createdAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		item.UpdatedAt, err = parseStoredTime(updatedAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		profiles = append(profiles, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	return profiles, nil
+}
+
+func (store *Store) SelectProfile(ctx context.Context, alias string) (profile.SelectionResult, error) {
+	if store == nil || store.db == nil {
+		return profile.SelectionResult{}, coded(apperrors.StoreWriteFailed, ErrProfileState)
+	}
+	if err := profile.ValidateAlias(alias); err != nil {
+		return profile.SelectionResult{}, err
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return profile.SelectionResult{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	rollback := func() { _ = tx.Rollback() }
+	var profileID, status string
+	if err := tx.QueryRowContext(ctx, `SELECT ip.profile_id, ip.status FROM identity_profiles ip JOIN cli_aliases a ON a.profile_id = ip.profile_id WHERE a.alias = ? COLLATE NOCASE`, alias).Scan(&profileID, &status); err != nil {
+		rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return profile.SelectionResult{}, apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+		}
+		return profile.SelectionResult{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	if status != string(profile.StatusReady) {
+		rollback()
+		return profile.SelectionResult{}, apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO selected_profile (selection_id, profile_id, updated_at) VALUES (1, ?, ?)
+		ON CONFLICT(selection_id) DO UPDATE SET profile_id = excluded.profile_id, updated_at = excluded.updated_at`, profileID, formatStoredTime(store.clock.Now().UTC())); err != nil {
+		rollback()
+		return profile.SelectionResult{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	var differingRunning int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_launches WHERE state = 'running' AND profile_id <> ?`, profileID).Scan(&differingRunning); err != nil {
+		rollback()
+		return profile.SelectionResult{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return profile.SelectionResult{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	selected, err := store.getIdentityProfile(ctx, profileID)
+	if err != nil {
+		return profile.SelectionResult{}, err
+	}
+	result := profile.SelectionResult{Profile: selected}
+	if differingRunning > 0 {
+		result.Warnings = []string{profile.RunningLaunchSelectionWarning}
+	}
+	return result, nil
+}
+
 func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (profile.IdentityProfile, error) {
 	var result profile.IdentityProfile
 	var status, alias, homeID, ownership string

@@ -22,6 +22,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 const (
@@ -30,9 +31,12 @@ const (
 
 	SessionCookieName    = "codexfolio_session"
 	CSRFHeaderName       = "X-CodexFolio-CSRF"
+	CommandTokenHeader   = "X-CodexFolio-Command-Token"
+	CommandSelectionPath = "/api/v1/command/selection"
 	BootstrapPathName    = "/bootstrap"
 	BootstrapQueryName   = "bootstrap"
 	maxBootstrapBodySize = 4096
+	maxSelectionBodySize = 4096
 	randomTokenSize      = 32
 )
 
@@ -60,6 +64,8 @@ type Options struct {
 	Random       io.Reader
 	Clock        Clock
 	Diagnostics  diagnostics.Sink
+	Selection    *profile.Selector
+	CommandToken string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -78,6 +84,8 @@ type Server struct {
 	randomMu     sync.Mutex
 	clock        Clock
 	diagnostics  diagnostics.Sink
+	selection    *profile.Selector
+	commandToken [sha256.Size]byte
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -135,6 +143,7 @@ func NewServer(options Options) (*Server, error) {
 	}
 	encodedToken := base64.RawURLEncoding.EncodeToString(token)
 	now := clock.Now().UTC()
+	commandToken := sha256.Sum256([]byte(options.CommandToken))
 	return &Server{
 		product:            product,
 		bootstrapTTL:       bootstrapTTL,
@@ -142,6 +151,8 @@ func NewServer(options Options) (*Server, error) {
 		random:             randomReader,
 		clock:              clock,
 		diagnostics:        options.Diagnostics,
+		selection:          options.Selection,
+		commandToken:       commandToken,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt: now.Add(bootstrapTTL),
@@ -329,6 +340,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandSelectionPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandSelection(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
@@ -366,6 +382,23 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.writeMetadata(response, request)
+	case SelectionPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method == http.MethodGet {
+			server.getSelection(response, request)
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		if request.Method != http.MethodPut {
+			server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+			return
+		}
+		server.setSelection(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {
@@ -378,6 +411,89 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		}
 		server.writeAPIError(response, http.StatusNotFound, apperrors.HTTPAPIRouteNotFound)
 	}
+}
+
+func (server *Server) authorizeCommand(response http.ResponseWriter, request *http.Request) bool {
+	values := request.Header.Values(CommandTokenHeader)
+	if len(values) != 1 || values[0] == "" || server.commandToken == sha256.Sum256(nil) {
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
+		return false
+	}
+	digest := sha256.Sum256([]byte(values[0]))
+	if subtle.ConstantTimeCompare(digest[:], server.commandToken[:]) != 1 {
+		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
+		return false
+	}
+	return true
+}
+
+type CommandSelectionProfile struct {
+	ID          string `json:"profile_id"`
+	Alias       string `json:"alias"`
+	DisplayName string `json:"display_name"`
+	Selected    bool   `json:"selected"`
+}
+
+type CommandSelectionResponse struct {
+	Profiles []CommandSelectionProfile `json:"profiles,omitempty"`
+	Selected *CommandSelectionProfile  `json:"selected,omitempty"`
+	Warning  string                    `json:"warning,omitempty"`
+}
+
+func (server *Server) commandSelection(response http.ResponseWriter, request *http.Request) {
+	if server.selection == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method == http.MethodGet {
+		profiles, err := server.selection.Eligible(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
+			return
+		}
+		result := CommandSelectionResponse{Profiles: make([]CommandSelectionProfile, 0, len(profiles))}
+		for _, candidate := range profiles {
+			result.Profiles = append(result.Profiles, commandSelectionProfile(candidate))
+		}
+		writeJSON(response, http.StatusOK, result)
+		return
+	}
+	if request.Method != http.MethodPut {
+		server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	var input SelectionRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Alias) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	result, err := server.selection.Select(request.Context(), input.Alias)
+	if err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
+		return
+	}
+	selected := commandSelectionProfile(result.Profile)
+	warning := ""
+	if len(result.Warnings) > 0 {
+		warning = result.Warnings[0]
+	}
+	writeJSON(response, http.StatusOK, CommandSelectionResponse{Selected: &selected, Warning: warning})
+}
+
+func commandSelectionProfile(candidate profile.IdentityProfile) CommandSelectionProfile {
+	return CommandSelectionProfile{ID: candidate.ID, Alias: candidate.Alias, DisplayName: candidate.DisplayName, Selected: candidate.Selected}
 }
 
 func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *http.Request) {
@@ -524,6 +640,63 @@ func (server *Server) writeMetadata(response http.ResponseWriter, request *http.
 		ContractVersion: ContractVersion,
 		Product:         server.product,
 	})
+}
+
+func (server *Server) getSelection(response http.ResponseWriter, request *http.Request) {
+	if server.selection == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	profiles, err := server.selection.Eligible(request.Context())
+	if err != nil {
+		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
+		return
+	}
+	for _, candidate := range profiles {
+		if candidate.Selected {
+			writeJSON(response, http.StatusOK, selectionResponse(candidate, ""))
+			return
+		}
+	}
+	server.writeAPIError(response, http.StatusConflict, apperrors.ProfileNotSelectable)
+}
+
+func (server *Server) setSelection(response http.ResponseWriter, request *http.Request) {
+	if server.selection == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	var input SelectionRequest
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Alias) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileNotSelectable)
+		return
+	}
+	result, err := server.selection.Select(request.Context(), input.Alias)
+	if err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
+		return
+	}
+	warning := ""
+	if len(result.Warnings) > 0 {
+		warning = result.Warnings[0]
+	}
+	writeJSON(response, http.StatusOK, selectionResponse(result.Profile, warning))
+}
+
+func selectionResponse(selected profile.IdentityProfile, warning string) SelectionResponse {
+	return SelectionResponse{ProfileId: selected.ID, Alias: selected.Alias, DisplayName: selected.DisplayName, Warning: warning}
 }
 
 func (server *Server) writeAPIError(response http.ResponseWriter, status int, code string) {

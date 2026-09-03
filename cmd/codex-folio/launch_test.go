@@ -63,6 +63,17 @@ func (process *launchTestProcess) ExitStatus() int { return process.exitStatus }
 func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
+	seedSecondReadyProfile(t, paths, secureVault)
+	selectionStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("open selection store error = %v", err)
+	}
+	if _, err := selectionStore.SelectProfile(context.Background(), "Personal"); err != nil {
+		t.Fatalf("SelectProfile() error = %v", err)
+	}
+	if err := selectionStore.Close(); err != nil {
+		t.Fatalf("selection store Close() error = %v", err)
+	}
 	var gotPlan launch.Plan
 	process := &launchTestProcess{pid: 7777, exitStatus: 17}
 	var stdout, stderr bytes.Buffer
@@ -106,6 +117,10 @@ func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	}
 	if record.State != launch.StateExited || record.ProcessID != 7777 || record.ExitStatus == nil || *record.ExitStatus != 17 {
 		t.Fatalf("record = %#v, want exited child lifecycle", record)
+	}
+	profiles, err := stateStore.ListEligibleProfiles(context.Background())
+	if err != nil || len(profiles) != 2 || profiles[0].Alias != "Personal" || !profiles[0].Selected {
+		t.Fatalf("selection after deterministic launch = %#v/%v, want Personal unchanged", profiles, err)
 	}
 }
 
