@@ -205,6 +205,66 @@ func TestAuthorizedSelectionAPIReadsAndUpdatesSelectedProfile(t *testing.T) {
 	}
 }
 
+func TestCommandProfileAPIRequiresAuthorizationAndReturnsSafeProjection(t *testing.T) {
+	repository := &registryRepository{profiles: []profile.IdentityProfile{{
+		ID: "profile-1", Alias: "Work", DisplayName: "Work", Email: "user@example.com", Workspace: "Example",
+		Status: profile.StatusReady, IdentityHomeID: "home-1", IdentityHomePath: "/secret/home",
+		IdentityHomeOwnership: profile.HomeOwnershipManaged, AuthenticationMethod: profile.AuthMethodBrowser, Selected: true,
+	}}}
+	registry, err := profile.NewRegistry(repository)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	server, _, _ := startTestServer(t, Options{Profiles: registry, CommandToken: "command-token"})
+	if _, err := NewCommandClient(server.Origin(), "wrong-token", nil).ListProfiles(context.Background()); apperrors.Code(err) != apperrors.HTTPAPISessionInvalid {
+		t.Fatalf("unauthorized ListProfiles() error = %v", err)
+	}
+	client := NewCommandClient(server.Origin(), "command-token", nil)
+	result, err := client.ListProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("ListProfiles() error = %v", err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if len(result.Profiles) != 1 || result.Profiles[0].Alias != "Work" || strings.Contains(string(encoded), "secret/home") || strings.Contains(string(encoded), "home-1") {
+		t.Fatalf("safe profile projection = %s", encoded)
+	}
+
+	newAlias := "Personal"
+	result, err = client.EditProfile(context.Background(), "Work", profile.ProfileEdits{Alias: &newAlias})
+	if err != nil {
+		t.Fatalf("EditProfile() error = %v", err)
+	}
+	encoded, err = json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if result.Updated == nil || result.Updated.ID != "profile-1" || result.Updated.Alias != newAlias || result.Updated.IdentityHomeOwnership != profile.HomeOwnershipManaged || strings.Contains(string(encoded), "secret/home") || strings.Contains(string(encoded), "home-1") {
+		t.Fatalf("safe edited profile projection = %s", encoded)
+	}
+}
+
+type registryRepository struct{ profiles []profile.IdentityProfile }
+
+func (repository *registryRepository) ListProfiles(context.Context) ([]profile.IdentityProfile, error) {
+	return append([]profile.IdentityProfile(nil), repository.profiles...), nil
+}
+
+func (repository *registryRepository) EditProfile(_ context.Context, alias string, edits profile.ProfileEdits) (profile.IdentityProfile, error) {
+	for index := range repository.profiles {
+		if !strings.EqualFold(repository.profiles[index].Alias, alias) {
+			continue
+		}
+		if edits.Alias != nil {
+			repository.profiles[index].Alias = *edits.Alias
+		}
+		return repository.profiles[index], nil
+	}
+	return profile.IdentityProfile{}, profile.ErrNotFound
+}
+
 type selectionRepository struct {
 	profiles []profile.IdentityProfile
 }

@@ -130,6 +130,66 @@ func TestProfileStateRejectsAliasCollisionAndIncompletePromotion(t *testing.T) {
 	}
 }
 
+func TestProfileInventoryAndEditsPersistWithoutChangingIdentity(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	ctx := context.Background()
+	home := addReadyProfile(t, stateStore, "profile-1", "Work")
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-2", Alias: "Pending", DisplayName: "Pending"}); err != nil {
+		t.Fatalf("CreatePendingProfile() error = %v", err)
+	}
+	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: home})
+	if err != nil {
+		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+	newAlias, displayName, email, workspace := "Client", "Client work", "user@example.com", "Example"
+	updated, err := stateStore.EditProfile(ctx, "work", profile.ProfileEdits{
+		Alias: &newAlias, DisplayName: &displayName, Email: &email, Workspace: &workspace,
+	})
+	if err != nil {
+		t.Fatalf("EditProfile() error = %v", err)
+	}
+	if updated.ID != "profile-1" || updated.IdentityHomeID != "profile-1" || updated.IdentityHomePath != home || updated.Alias != newAlias {
+		t.Fatalf("updated profile = %#v, want stable identity/home and new alias", updated)
+	}
+	if _, err := stateStore.GetProfile(ctx, "work"); !errors.Is(err, profile.ErrNotFound) {
+		t.Fatalf("old alias lookup error = %v, want not found", err)
+	}
+	launchRecord, err := stateStore.GetManagedLaunch(ctx, plan.LeaseID)
+	if err != nil || launchRecord.ProfileID != "profile-1" {
+		t.Fatalf("launch after alias edit = %#v/%v, want immutable profile-1 reference", launchRecord, err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	stateStore, err = OpenWithOptions(Options{Path: stateStore.Path(), Clock: profileStoreClock{now: time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)}, Vault: stateStore.vault})
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	profiles, err := stateStore.ListProfiles(ctx)
+	if err != nil {
+		t.Fatalf("ListProfiles() error = %v", err)
+	}
+	if len(profiles) != 2 || profiles[0].ID != "profile-1" || profiles[0].Email != email || profiles[0].Workspace != workspace || profiles[1].Status != profile.StatusPending {
+		t.Fatalf("profiles = %#v, want persisted ready and pending inventory", profiles)
+	}
+	collision := "pending"
+	if _, err := stateStore.EditProfile(ctx, "client", profile.ProfileEdits{Alias: &collision}); apperrors.Code(err) != apperrors.ProfileAliasTaken {
+		t.Fatalf("case-insensitive edit collision error = %v, want alias taken", err)
+	}
+	pendingAlias := "Setup"
+	if _, err := stateStore.EditProfile(ctx, "pending", profile.ProfileEdits{Alias: &pendingAlias, Email: &email, Workspace: &workspace}); err != nil {
+		t.Fatalf("pending metadata edit with duplicate display labels error = %v", err)
+	}
+	pending, err := stateStore.FindPendingProfile(ctx, "setup")
+	if err != nil || pending.ID != "profile-2" {
+		t.Fatalf("pending lookup after alias edit = %#v/%v, want stable profile-2", pending, err)
+	}
+}
+
 func TestSelectProfilePersistsAndWarnsWithoutChangingRunningLaunches(t *testing.T) {
 	stateStore, err := openProfileTestStore(t)
 	if err != nil {

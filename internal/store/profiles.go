@@ -141,6 +141,114 @@ func (store *Store) GetProfile(ctx context.Context, alias string) (profile.Ident
 	return item, nil
 }
 
+func (store *Store) ListProfiles(ctx context.Context) ([]profile.IdentityProfile, error) {
+	if store == nil || store.db == nil {
+		return nil, coded(apperrors.StoreReadFailed, ErrProfileState)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.email, ip.workspace, ip.status,
+		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.authentication_method, ip.created_at, ip.updated_at,
+		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
+		FROM identity_profiles ip
+		JOIN cli_aliases a ON a.profile_id = ip.profile_id
+		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
+		LEFT JOIN selected_profile s ON s.profile_id = ip.profile_id
+		ORDER BY a.alias COLLATE NOCASE`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]profile.IdentityProfile, 0)
+	for rows.Next() {
+		item, err := scanIdentityProfile(rows)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	return items, nil
+}
+
+func (store *Store) EditProfile(ctx context.Context, alias string, edits profile.ProfileEdits) (profile.IdentityProfile, error) {
+	if store == nil || store.db == nil {
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, ErrProfileState)
+	}
+	if err := profile.ValidateAlias(alias); err != nil {
+		return profile.IdentityProfile{}, err
+	}
+	if edits.Alias != nil {
+		if err := profile.ValidateAlias(*edits.Alias); err != nil {
+			return profile.IdentityProfile{}, err
+		}
+	}
+	if edits.DisplayName != nil && strings.TrimSpace(*edits.DisplayName) == "" {
+		return profile.IdentityProfile{}, apperrors.New(apperrors.ProfileSetupInvalid, profile.ErrProfileStateInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	now := store.clock.Now().UTC()
+	if now.IsZero() {
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, errors.New("profile clock returned zero")))
+	}
+	encodedNow := formatStoredTime(now)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	rollback := func() { _ = tx.Rollback() }
+	var profileID string
+	if err := tx.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias = ? COLLATE NOCASE`, alias).Scan(&profileID); err != nil {
+		rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return profile.IdentityProfile{}, profile.ErrNotFound
+		}
+		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	if edits.Alias != nil {
+		var conflictingID string
+		err := tx.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias = ? COLLATE NOCASE AND profile_id <> ?`, *edits.Alias, profileID).Scan(&conflictingID)
+		if err == nil {
+			rollback()
+			return profile.IdentityProfile{}, apperrors.New(apperrors.ProfileAliasTaken, profile.ErrAliasTaken)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			rollback()
+			return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE cli_aliases SET alias = ? WHERE profile_id = ?`, *edits.Alias, profileID); err != nil {
+			rollback()
+			return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE identity_profiles SET
+		display_name = COALESCE(?, display_name), email = COALESCE(?, email), workspace = COALESCE(?, workspace), updated_at = ?
+		WHERE profile_id = ?`, editValue(edits.DisplayName), editValue(edits.Email), editValue(edits.Workspace), encodedNow, profileID); err != nil {
+		rollback()
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE pending_profiles SET
+		display_name = COALESCE(?, display_name), requested_alias = COALESCE(?, requested_alias), updated_at = ?
+		WHERE pending_profile_id = ?`, editValue(edits.DisplayName), editValue(edits.Alias), encodedNow, profileID); err != nil {
+		rollback()
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+	}
+	item, err := store.getIdentityProfile(ctx, profileID)
+	if err == nil {
+		err = store.populateIdentityHomePath(ctx, &item)
+	}
+	return item, err
+}
+
 func (store *Store) CreatePendingProfile(ctx context.Context, pending profile.PendingProfile) error {
 	if store == nil || store.db == nil {
 		return coded(apperrors.StoreWriteFailed, ErrProfileState)
@@ -583,7 +691,7 @@ func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.Identit
 	ctx = contextOrBackground(ctx)
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
-	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.status,
+	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.email, ip.workspace, ip.status,
 		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.authentication_method, ip.created_at, ip.updated_at,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
 		FROM identity_profiles ip
@@ -598,21 +706,7 @@ func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.Identit
 	defer func() { _ = rows.Close() }()
 	profiles := make([]profile.IdentityProfile, 0)
 	for rows.Next() {
-		var item profile.IdentityProfile
-		var status, ownership, authenticationMethod, createdAt, updatedAt string
-		var selected int
-		if err := rows.Scan(&item.ID, &item.Alias, &item.DisplayName, &status, &item.IdentityHomeID, &ownership, &authenticationMethod, &createdAt, &updatedAt, &selected); err != nil {
-			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
-		}
-		item.Status = profile.Status(status)
-		item.IdentityHomeOwnership = profile.HomeOwnership(ownership)
-		item.AuthenticationMethod = storedAuthMethod(authenticationMethod)
-		item.Selected = selected != 0
-		item.CreatedAt, err = parseStoredTime(createdAt)
-		if err != nil {
-			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
-		}
-		item.UpdatedAt, err = parseStoredTime(updatedAt)
+		item, err := scanIdentityProfile(rows)
 		if err != nil {
 			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 		}
@@ -682,7 +776,7 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 	var authenticationMethod string
 	var selected int
 	var createdAt, updatedAt string
-	err := store.db.QueryRowContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.status,
+	err := store.db.QueryRowContext(ctx, `SELECT ip.profile_id, a.alias, ip.display_name, ip.email, ip.workspace, ip.status,
 		COALESCE(ip.identity_home_id, ''), COALESCE(h.ownership, ''), ip.authentication_method,
 		ip.created_at, ip.updated_at,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END
@@ -694,6 +788,8 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 		&result.ID,
 		&alias,
 		&result.DisplayName,
+		&result.Email,
+		&result.Workspace,
 		&status,
 		&homeID,
 		&ownership,
@@ -723,6 +819,36 @@ func (store *Store) getIdentityProfile(ctx context.Context, profileID string) (p
 		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
 	return result, nil
+}
+
+type profileScanner interface {
+	Scan(...any) error
+}
+
+func scanIdentityProfile(scanner profileScanner) (profile.IdentityProfile, error) {
+	var item profile.IdentityProfile
+	var status, ownership, authenticationMethod, createdAt, updatedAt string
+	var selected int
+	if err := scanner.Scan(&item.ID, &item.Alias, &item.DisplayName, &item.Email, &item.Workspace, &status, &item.IdentityHomeID, &ownership, &authenticationMethod, &createdAt, &updatedAt, &selected); err != nil {
+		return item, err
+	}
+	item.Status = profile.Status(status)
+	item.IdentityHomeOwnership = profile.HomeOwnership(ownership)
+	item.AuthenticationMethod = storedAuthMethod(authenticationMethod)
+	item.Selected = selected != 0
+	var err error
+	item.CreatedAt, err = parseStoredTime(createdAt)
+	if err == nil {
+		item.UpdatedAt, err = parseStoredTime(updatedAt)
+	}
+	return item, err
+}
+
+func editValue(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func (store *Store) populateIdentityHomePath(ctx context.Context, item *profile.IdentityProfile) error {

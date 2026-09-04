@@ -332,6 +332,76 @@ func TestValidateAliasUsesPortableCaseInsensitiveRules(t *testing.T) {
 	}
 }
 
+func TestRegistryEditsProfileMetadataThroughStableIdentity(t *testing.T) {
+	repository := &registryRepositoryStub{profiles: []IdentityProfile{{
+		ID: "profile-1", Alias: "Work", DisplayName: "Work", Status: StatusReady,
+		IdentityHomeID: "home-1", IdentityHomeOwnership: HomeOwnershipManaged,
+	}}}
+	registry, err := NewRegistry(repository)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	newAlias, displayName, email, workspace := "client", "Client work", "user@example.com", "Example"
+	updated, err := registry.Edit(context.Background(), "WORK", ProfileEdits{
+		Alias: &newAlias, DisplayName: &displayName, Email: &email, Workspace: &workspace,
+	})
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if updated.ID != "profile-1" || updated.IdentityHomeID != "home-1" || updated.IdentityHomeOwnership != HomeOwnershipManaged {
+		t.Fatalf("updated identity = %#v, want stable profile and home identity", updated)
+	}
+	if updated.Alias != "client" || updated.DisplayName != "Client work" || updated.Email != email || updated.Workspace != workspace {
+		t.Fatalf("updated metadata = %#v", updated)
+	}
+	if repository.editedAlias != "WORK" {
+		t.Fatalf("repository edit alias = %q, want original command alias", repository.editedAlias)
+	}
+}
+
+func TestRegistryRejectsInvalidAliasBeforeEditing(t *testing.T) {
+	repository := &registryRepositoryStub{}
+	registry, err := NewRegistry(repository)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	invalid := "../work"
+	if _, err := registry.Edit(context.Background(), "work", ProfileEdits{Alias: &invalid}); !errors.Is(err, ErrAliasInvalid) {
+		t.Fatalf("Edit() error = %v, want invalid alias", err)
+	}
+	if repository.editedAlias != "" {
+		t.Fatal("invalid edit reached repository")
+	}
+}
+
+type registryRepositoryStub struct {
+	profiles    []IdentityProfile
+	editedAlias string
+}
+
+func (repository *registryRepositoryStub) ListProfiles(context.Context) ([]IdentityProfile, error) {
+	return append([]IdentityProfile(nil), repository.profiles...), nil
+}
+
+func (repository *registryRepositoryStub) EditProfile(_ context.Context, alias string, edits ProfileEdits) (IdentityProfile, error) {
+	repository.editedAlias = alias
+	item := repository.profiles[0]
+	if edits.Alias != nil {
+		item.Alias = *edits.Alias
+	}
+	if edits.DisplayName != nil {
+		item.DisplayName = *edits.DisplayName
+	}
+	if edits.Email != nil {
+		item.Email = *edits.Email
+	}
+	if edits.Workspace != nil {
+		item.Workspace = *edits.Workspace
+	}
+	repository.profiles[0] = item
+	return item, nil
+}
+
 type recordingDiscoverer struct{}
 
 func (recordingDiscoverer) Discover(string) (Discovery, error) {

@@ -73,6 +73,8 @@ type IdentityProfile struct {
 	ID                    string        `json:"id"`
 	Alias                 string        `json:"alias"`
 	DisplayName           string        `json:"display_name"`
+	Email                 string        `json:"email,omitempty"`
+	Workspace             string        `json:"workspace,omitempty"`
 	Status                Status        `json:"status"`
 	IdentityHomeID        string        `json:"identity_home_id"`
 	IdentityHomeOwnership HomeOwnership `json:"identity_home_ownership"`
@@ -137,6 +139,17 @@ type SelectionResult struct {
 	Warnings []string        `json:"warnings,omitempty"`
 }
 
+type ProfileEdits struct {
+	Alias       *string `json:"alias,omitempty"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Email       *string `json:"email,omitempty"`
+	Workspace   *string `json:"workspace,omitempty"`
+}
+
+type InventoryResult struct {
+	Profiles []IdentityProfile `json:"profiles"`
+}
+
 const RunningLaunchSelectionWarning = "A running Managed Launch keeps its original Launch Profile; this selection applies to the dashboard and next interactive launch."
 
 const ReferencedHomeDuplicateWarning = "Codex-reported Login Identity or Workspace may already be registered; this local profile remains distinct."
@@ -156,6 +169,7 @@ var (
 	ErrHomeInvalid                   = errors.New("managed Identity Home is invalid")
 	ErrValidationFailed              = errors.New("Identity Home validation failed")
 	ErrNotSelectable                 = errors.New("profile is not eligible for selection")
+	ErrProfileStateInvalid           = errors.New("profile state is invalid")
 )
 
 type Discoverer interface {
@@ -222,6 +236,60 @@ type Repository interface {
 type SelectionRepository interface {
 	ListEligibleProfiles(context.Context) ([]IdentityProfile, error)
 	SelectProfile(context.Context, string) (SelectionResult, error)
+}
+
+type RegistryRepository interface {
+	ListProfiles(context.Context) ([]IdentityProfile, error)
+	EditProfile(context.Context, string, ProfileEdits) (IdentityProfile, error)
+}
+
+type Registry struct {
+	repository RegistryRepository
+}
+
+func NewRegistry(repository RegistryRepository) (*Registry, error) {
+	if repository == nil {
+		return nil, apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileStateInvalid)
+	}
+	return &Registry{repository: repository}, nil
+}
+
+func (registry *Registry) Inventory(ctx context.Context) (InventoryResult, error) {
+	if registry == nil || registry.repository == nil {
+		return InventoryResult{}, apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileStateInvalid)
+	}
+	profiles, err := registry.repository.ListProfiles(contextOrBackground(ctx))
+	return InventoryResult{Profiles: profiles}, err
+}
+
+func (registry *Registry) Edit(ctx context.Context, alias string, edits ProfileEdits) (IdentityProfile, error) {
+	if registry == nil || registry.repository == nil {
+		return IdentityProfile{}, apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileStateInvalid)
+	}
+	if err := ValidateAlias(alias); err != nil {
+		return IdentityProfile{}, err
+	}
+	if edits.Alias == nil && edits.DisplayName == nil && edits.Email == nil && edits.Workspace == nil {
+		return IdentityProfile{}, apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileStateInvalid)
+	}
+	if edits.Alias != nil {
+		if err := ValidateAlias(*edits.Alias); err != nil {
+			return IdentityProfile{}, err
+		}
+	}
+	if edits.DisplayName != nil {
+		value := strings.TrimSpace(*edits.DisplayName)
+		if value == "" {
+			return IdentityProfile{}, apperrors.New(apperrors.ProfileSetupInvalid, ErrProfileStateInvalid)
+		}
+		edits.DisplayName = &value
+	}
+	for _, field := range []*string{edits.Email, edits.Workspace} {
+		if field != nil {
+			*field = strings.TrimSpace(*field)
+		}
+	}
+	return registry.repository.EditProfile(contextOrBackground(ctx), alias, edits)
 }
 
 type Selector struct {

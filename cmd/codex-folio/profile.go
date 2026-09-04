@@ -11,6 +11,7 @@ import (
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	profilefeature "venkatasudha.com/codex-folio/internal/profile"
@@ -23,6 +24,9 @@ type profileOptions struct {
 	identityHome   string
 	authMethod     profilefeature.AuthMethod
 	displayName    string
+	newAlias       string
+	email          *string
+	workspace      *string
 	nonInteractive bool
 	yes            bool
 }
@@ -44,23 +48,39 @@ func runProfileWithInputAndDependencies(args []string, input io.Reader, stdout, 
 }
 
 func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newHome profileHomeFactory, newAuthenticator profileAuthenticatorFactory, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
-	if len(args) < 1 || (args[0] != "add" && args[0] != "reauthenticate") {
-		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add or reauthenticate is required", diagnosticSink)
+	if len(args) < 1 || (args[0] != "add" && args[0] != "reauthenticate" && args[0] != "list" && args[0] != "edit") {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add, reauthenticate, list, or edit is required", diagnosticSink)
+	}
+	command := args[0]
+	if command == "list" {
+		options, err := parseProfileOptions(args[1:])
+		if err != nil || hasProfileMutationOptions(options) {
+			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile list arguments", diagnosticSink)
+		}
+		return runProfileRegistryCommand(command, "", options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink)
 	}
 	if len(args) < 2 || strings.HasPrefix(args[1], "--") {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile command requires an alias", diagnosticSink)
 	}
-	command := args[0]
 	alias := args[1]
 	options, err := parseProfileOptions(args[2:])
 	if err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile arguments", diagnosticSink)
 	}
-	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.yes) {
+	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes) {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid reauthentication arguments", diagnosticSink)
+	}
+	if command == "add" && (options.newAlias != "" || options.email != nil || options.workspace != nil) {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile add arguments", diagnosticSink)
 	}
 	if err := profilefeature.ValidateAlias(alias); err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
+	}
+	if command == "edit" {
+		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.nonInteractive || options.yes || (options.newAlias == "" && options.displayName == "" && options.email == nil && options.workspace == nil) {
+			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile edit arguments", diagnosticSink)
+		}
+		return runProfileRegistryCommand(command, alias, options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink)
 	}
 
 	paths, err := resolvePaths(options.stateRoot)
@@ -215,6 +235,36 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 			if options.displayName == "" {
 				return profileOptions{}, errors.New("--display-name requires one value")
 			}
+		case arg == "--alias":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.newAlias != "" {
+				return profileOptions{}, errors.New("--alias requires one value")
+			}
+			index++
+			options.newAlias = args[index]
+		case strings.HasPrefix(arg, "--alias="):
+			if options.newAlias != "" {
+				return profileOptions{}, errors.New("--alias may be supplied only once")
+			}
+			options.newAlias = strings.TrimPrefix(arg, "--alias=")
+			if options.newAlias == "" {
+				return profileOptions{}, errors.New("--alias requires one value")
+			}
+		case arg == "--email" || arg == "--workspace":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return profileOptions{}, errors.New(arg + " requires one value")
+			}
+			index++
+			if err := setProfileDisplayMetadata(&options, arg, args[index]); err != nil {
+				return profileOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--email="):
+			if err := setProfileDisplayMetadata(&options, "--email", strings.TrimPrefix(arg, "--email=")); err != nil {
+				return profileOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--workspace="):
+			if err := setProfileDisplayMetadata(&options, "--workspace", strings.TrimPrefix(arg, "--workspace=")); err != nil {
+				return profileOptions{}, err
+			}
 		case arg == "--codex-bin":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.codexBin != "" {
 				return profileOptions{}, errors.New("--codex-bin requires one value")
@@ -280,6 +330,86 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 	return options, nil
 }
 
+func setProfileDisplayMetadata(options *profileOptions, flag, value string) error {
+	target := &options.email
+	if flag == "--workspace" {
+		target = &options.workspace
+	}
+	if *target != nil {
+		return errors.New(flag + " may be supplied only once")
+	}
+	value = strings.TrimSpace(value)
+	*target = &value
+	return nil
+}
+
+func hasProfileMutationOptions(options profileOptions) bool {
+	return options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.nonInteractive || options.yes
+}
+
+func runProfileRegistryCommand(command, alias string, options profileOptions, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink) int {
+	return withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{serviceOptions: options.serviceOptions}, func(client *httpapi.CommandClient) error {
+		if command == "list" {
+			response, err := client.ListProfiles(context.Background())
+			if err != nil {
+				return err
+			}
+			result := profilefeature.InventoryResult{Profiles: make([]profilefeature.IdentityProfile, 0, len(response.Profiles))}
+			for _, item := range response.Profiles {
+				result.Profiles = append(result.Profiles, commandProfileIdentity(item))
+			}
+			if options.json {
+				return writeServiceJSON(stdout, result)
+			}
+			for _, item := range result.Profiles {
+				_, _ = fmt.Fprintf(stdout, "%s (%s) %s %s auth=%s selected=%t", item.DisplayName, item.Alias, item.Status, item.IdentityHomeOwnership, item.AuthenticationMethod, item.Selected)
+				if item.Email != "" {
+					_, _ = fmt.Fprintf(stdout, " email=%s", item.Email)
+				}
+				if item.Workspace != "" {
+					_, _ = fmt.Fprintf(stdout, " workspace=%s", item.Workspace)
+				}
+				_, _ = fmt.Fprintln(stdout)
+			}
+			return nil
+		}
+		edits := profilefeature.ProfileEdits{Email: options.email, Workspace: options.workspace}
+		if options.newAlias != "" {
+			edits.Alias = &options.newAlias
+		}
+		if options.displayName != "" {
+			edits.DisplayName = &options.displayName
+		}
+		response, err := client.EditProfile(context.Background(), alias, edits)
+		if err != nil {
+			return err
+		}
+		if response.Updated == nil {
+			return apperrors.New(apperrors.ProfileSetupInvalid, profilefeature.ErrProfileStateInvalid)
+		}
+		updated := commandProfileIdentity(*response.Updated)
+		if options.json {
+			return writeServiceJSON(stdout, updated)
+		}
+		_, _ = fmt.Fprintf(stdout, "Profile: %s (%s)\n", updated.DisplayName, updated.Alias)
+		if updated.Email != "" {
+			_, _ = fmt.Fprintf(stdout, "Email: %s\n", updated.Email)
+		}
+		if updated.Workspace != "" {
+			_, _ = fmt.Fprintf(stdout, "Workspace: %s\n", updated.Workspace)
+		}
+		return nil
+	})
+}
+
+func commandProfileIdentity(item httpapi.CommandProfile) profilefeature.IdentityProfile {
+	return profilefeature.IdentityProfile{
+		ID: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, Email: item.Email, Workspace: item.Workspace,
+		Status: item.Status, IdentityHomeOwnership: item.IdentityHomeOwnership,
+		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected,
+	}
+}
+
 type profileDiscoverer struct {
 	resolver launch.ExecutableResolver
 }
@@ -330,4 +460,6 @@ func writeProfileUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile list [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile edit ALIAS [--alias ALIAS] [--display-name NAME] [--email LABEL] [--workspace LABEL] [--state-root PATH] [--vault-mode MODE] [--json]")
 }

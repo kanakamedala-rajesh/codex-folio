@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 // CommandClient is the authenticated loopback transport used by CLI commands.
@@ -28,6 +29,54 @@ func (client *CommandClient) GetSelection(ctx context.Context) (CommandSelection
 
 func (client *CommandClient) SetSelection(ctx context.Context, alias string) (CommandSelectionResponse, error) {
 	return client.selection(ctx, http.MethodPut, alias)
+}
+
+func (client *CommandClient) ListProfiles(ctx context.Context) (CommandProfilesResponse, error) {
+	return client.profiles(ctx, http.MethodGet, "", profile.ProfileEdits{})
+}
+
+func (client *CommandClient) EditProfile(ctx context.Context, alias string, edits profile.ProfileEdits) (CommandProfilesResponse, error) {
+	return client.profiles(ctx, http.MethodPut, alias, edits)
+}
+
+func (client *CommandClient) profiles(ctx context.Context, method, alias string, edits profile.ProfileEdits) (CommandProfilesResponse, error) {
+	var result CommandProfilesResponse
+	body := bytes.NewReader(nil)
+	if method == http.MethodPut {
+		encoded, err := json.Marshal(commandProfileEditRequest{Alias: alias, Edits: edits})
+		if err != nil {
+			return result, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, client.origin+CommandProfilesPath, body)
+	if err != nil {
+		return result, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	if method == http.MethodPut {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure struct {
+			Code string `json:"code"`
+		}
+		if json.NewDecoder(response.Body).Decode(&failure) == nil && failure.Code != "" {
+			return result, apperrors.New(failure.Code, fmt.Errorf("%s %s returned HTTP %d", method, CommandProfilesPath, response.StatusCode))
+		}
+		return result, fmt.Errorf("%s %s returned HTTP %d", method, CommandProfilesPath, response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (client *CommandClient) selection(ctx context.Context, method, alias string) (CommandSelectionResponse, error) {
@@ -52,11 +101,7 @@ func (client *CommandClient) selection(ctx context.Context, method, alias string
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	doer := client.doer
-	if doer == nil {
-		doer = http.DefaultClient
-	}
-	response, err := doer.Do(request)
+	response, err := client.httpDoer().Do(request)
 	if err != nil {
 		return result, err
 	}
@@ -74,4 +119,11 @@ func (client *CommandClient) selection(ctx context.Context, method, alias string
 		return result, err
 	}
 	return result, nil
+}
+
+func (client *CommandClient) httpDoer() HTTPDoer {
+	if client.doer != nil {
+		return client.doer
+	}
+	return http.DefaultClient
 }

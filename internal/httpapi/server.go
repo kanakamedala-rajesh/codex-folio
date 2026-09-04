@@ -33,6 +33,7 @@ const (
 	CSRFHeaderName       = "X-CodexFolio-CSRF"
 	CommandTokenHeader   = "X-CodexFolio-Command-Token"
 	CommandSelectionPath = "/api/v1/command/selection"
+	CommandProfilesPath  = "/api/v1/command/profiles"
 	BootstrapPathName    = "/bootstrap"
 	BootstrapQueryName   = "bootstrap"
 	maxBootstrapBodySize = 4096
@@ -65,6 +66,7 @@ type Options struct {
 	Clock        Clock
 	Diagnostics  diagnostics.Sink
 	Selection    *profile.Selector
+	Profiles     *profile.Registry
 	CommandToken string
 }
 
@@ -85,6 +87,7 @@ type Server struct {
 	clock        Clock
 	diagnostics  diagnostics.Sink
 	selection    *profile.Selector
+	profiles     *profile.Registry
 	commandToken [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -152,6 +155,7 @@ func NewServer(options Options) (*Server, error) {
 		clock:              clock,
 		diagnostics:        options.Diagnostics,
 		selection:          options.Selection,
+		profiles:           options.Profiles,
 		commandToken:       commandToken,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
@@ -340,6 +344,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandProfilesPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandProfiles(response, request)
 	case CommandSelectionPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -432,6 +441,84 @@ type CommandSelectionProfile struct {
 	Alias       string `json:"alias"`
 	DisplayName string `json:"display_name"`
 	Selected    bool   `json:"selected"`
+}
+
+type CommandProfile struct {
+	ID                    string                `json:"profile_id"`
+	Alias                 string                `json:"alias"`
+	DisplayName           string                `json:"display_name"`
+	Email                 string                `json:"email,omitempty"`
+	Workspace             string                `json:"workspace,omitempty"`
+	Status                profile.Status        `json:"status"`
+	IdentityHomeOwnership profile.HomeOwnership `json:"identity_home_ownership,omitempty"`
+	AuthenticationMethod  profile.AuthMethod    `json:"authentication_method,omitempty"`
+	Selected              bool                  `json:"selected"`
+}
+
+type CommandProfilesResponse struct {
+	Profiles []CommandProfile `json:"profiles,omitempty"`
+	Updated  *CommandProfile  `json:"updated,omitempty"`
+}
+
+type commandProfileEditRequest struct {
+	Alias string               `json:"alias"`
+	Edits profile.ProfileEdits `json:"edits"`
+}
+
+func (server *Server) commandProfiles(response http.ResponseWriter, request *http.Request) {
+	if server.profiles == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method == http.MethodGet {
+		result, err := server.profiles.Inventory(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+			return
+		}
+		output := CommandProfilesResponse{Profiles: make([]CommandProfile, 0, len(result.Profiles))}
+		for _, item := range result.Profiles {
+			output.Profiles = append(output.Profiles, commandProfile(item))
+		}
+		writeJSON(response, http.StatusOK, output)
+		return
+	}
+	if request.Method != http.MethodPut {
+		server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var input commandProfileEditRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Alias) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	updated, err := server.profiles.Edit(request.Context(), input.Alias, input.Edits)
+	if err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileSetupInvalid))
+		return
+	}
+	projected := commandProfile(updated)
+	writeJSON(response, http.StatusOK, CommandProfilesResponse{Updated: &projected})
+}
+
+func commandProfile(item profile.IdentityProfile) CommandProfile {
+	return CommandProfile{
+		ID: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, Email: item.Email, Workspace: item.Workspace,
+		Status: item.Status, IdentityHomeOwnership: item.IdentityHomeOwnership,
+		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected,
+	}
 }
 
 type CommandSelectionResponse struct {

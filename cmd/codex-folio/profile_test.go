@@ -88,6 +88,48 @@ func TestProfileAddCLIRejectsInvalidAliasAsUsageError(t *testing.T) {
 	}
 }
 
+func TestProfileEditAndListCLIExposeOnlySafeMetadata(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	openStore := func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+		return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProfileWithInputAndDependencies(
+		[]string{"edit", "work", "--alias", "client", "--display-name", "Client work", "--email", "user@example.com", "--workspace", "Example", "--json"},
+		strings.NewReader(""), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil, openStore, nil, nil, nil,
+	)
+	if code != exitSuccess || stderr.Len() != 0 {
+		t.Fatalf("edit exit/stderr = %d/%q, want success", code, stderr.String())
+	}
+	var edited profilefeature.IdentityProfile
+	if err := json.Unmarshal(stdout.Bytes(), &edited); err != nil {
+		t.Fatalf("edit JSON error = %v; output = %q", err, stdout.String())
+	}
+	if edited.ID != "profile-1" || edited.Alias != "client" || edited.DisplayName != "Client work" || edited.Email != "user@example.com" || edited.Workspace != "Example" {
+		t.Fatalf("edited profile = %#v", edited)
+	}
+	if strings.Contains(stdout.String(), paths.ManagedHomes) || strings.Contains(stdout.String(), "identity_home_path") {
+		t.Fatalf("edit output exposes Identity Home path: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	code = runProfileWithInputAndDependencies(
+		[]string{"list", "--json"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil }, nil, openStore, nil, nil, nil,
+	)
+	if code != exitSuccess || stderr.Len() != 0 {
+		t.Fatalf("list exit/stderr = %d/%q, want success", code, stderr.String())
+	}
+	var inventory profilefeature.InventoryResult
+	if err := json.Unmarshal(stdout.Bytes(), &inventory); err != nil {
+		t.Fatalf("inventory JSON error = %v; output = %q", err, stdout.String())
+	}
+	if len(inventory.Profiles) != 1 || inventory.Profiles[0].Alias != "client" || strings.Contains(stdout.String(), paths.ManagedHomes) {
+		t.Fatalf("inventory/output = %#v/%q, want edited safe projection", inventory, stdout.String())
+	}
+}
+
 func TestProfileAddCLIRegistersReferencedHomeWithoutPrintingItsPath(t *testing.T) {
 	stateRoot := filepath.Join(testServiceTempDir(t), "state")
 	externalHome := filepath.Join(testServiceTempDir(t), "existing-codex-home")

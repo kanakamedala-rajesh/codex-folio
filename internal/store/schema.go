@@ -63,6 +63,18 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 6,
+			name:    "profile-display-metadata",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, column := range []string{"email", "workspace"} {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE identity_profiles ADD COLUMN "+column+" TEXT NOT NULL DEFAULT ''"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -314,7 +326,7 @@ var expectedTables = map[string][]string{
 	"diagnostic_aggregates":     {"diagnostic_aggregate_id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"},
 	"experimental_transactions": {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":            {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
-	"identity_profiles":         {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "created_at", "updated_at"},
+	"identity_profiles":         {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
 	"managed_launches":          {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
 	"metric_availability":       {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
 	"metric_provenance":         {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
