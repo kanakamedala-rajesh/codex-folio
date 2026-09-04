@@ -409,6 +409,131 @@ func TestAuthenticationStatePersistsPreferenceAndStatusWithoutExposingHome(t *te
 	}
 }
 
+func TestProfileRemovalHonorsOwnershipSelectionAndRunningLaunches(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	managedHome := addReadyProfile(t, stateStore, "profile-1", "Work")
+	_ = addReadyProfile(t, stateStore, "profile-2", "Personal")
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1"); err != nil {
+		t.Fatalf("CompleteInitialSelection() error = %v", err)
+	}
+
+	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(managedHome, "codex"), WorkingDirectory: managedHome})
+	if err != nil {
+		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(ctx, plan.LeaseID, 42); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted() error = %v", err)
+	}
+	if _, err := stateStore.BeginProfileRemoval(ctx, "Work", "Personal"); !errors.Is(err, profile.ErrRunningLaunch) {
+		t.Fatalf("BeginProfileRemoval() running error = %v, want ErrRunningLaunch", err)
+	}
+	if err := stateStore.MarkManagedLaunchExited(ctx, plan.LeaseID, 0); err != nil {
+		t.Fatalf("MarkManagedLaunchExited() error = %v", err)
+	}
+
+	record, err := stateStore.BeginProfileRemoval(ctx, "Work", "Personal")
+	if err != nil {
+		t.Fatalf("BeginProfileRemoval() error = %v", err)
+	}
+	if record.Profile.ID != "profile-1" || record.Profile.IdentityHomePath != managedHome || record.PurgeAfter.Sub(record.QuarantinedAt) != 7*24*time.Hour {
+		t.Fatalf("removal record = %#v", record)
+	}
+	if _, err := stateStore.GetProfile(ctx, "Work"); !errors.Is(err, profile.ErrNotFound) {
+		t.Fatalf("GetProfile(quarantined) error = %v, want not found", err)
+	}
+	personal, err := stateStore.GetProfile(ctx, "Personal")
+	if err != nil || !personal.Selected {
+		t.Fatalf("replacement = %#v, error = %v, want selected", personal, err)
+	}
+	if err := stateStore.CancelProfileRemoval(ctx, record.Profile.ID); err != nil {
+		t.Fatalf("CancelProfileRemoval() error = %v", err)
+	}
+	work, err := stateStore.GetProfile(ctx, "Work")
+	if err != nil || !work.Selected {
+		t.Fatalf("cancelled removal profile = %#v, error = %v, want selected", work, err)
+	}
+	record, err = stateStore.BeginProfileRemoval(ctx, "Work", "Personal")
+	if err != nil {
+		t.Fatalf("second BeginProfileRemoval() error = %v", err)
+	}
+	if err := stateStore.CompleteProfileQuarantine(ctx, record.Profile.ID); err != nil {
+		t.Fatalf("CompleteProfileQuarantine() error = %v", err)
+	}
+	if err := stateStore.RestoreProfile(ctx, record.Profile.ID); err != nil {
+		t.Fatalf("RestoreProfile() error = %v", err)
+	}
+	restored, err := stateStore.GetProfile(ctx, "Work")
+	if err != nil || restored.ID != "profile-1" || restored.IdentityHomeOwnership != profile.HomeOwnershipManaged {
+		t.Fatalf("restored = %#v, error = %v", restored, err)
+	}
+}
+
+func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	externalHome := t.TempDir()
+	marker := filepath.Join(externalHome, "external-state")
+	if err := os.WriteFile(marker, []byte("owned by Codex"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-external", Alias: "External", DisplayName: "External"}); err != nil {
+		t.Fatalf("CreatePendingProfile() error = %v", err)
+	}
+	if err := stateStore.SetReferencedHome(ctx, "profile-external", "home-external", externalHome); err != nil {
+		t.Fatalf("SetReferencedHome() error = %v", err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-external", stage); err != nil {
+			t.Fatalf("SaveSetupStage(%q) error = %v", stage, err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, "profile-external"); err != nil {
+		t.Fatalf("PromotePendingProfile() error = %v", err)
+	}
+	record, err := stateStore.BeginProfileRemoval(ctx, "External", "")
+	if err != nil || record.Action != profile.RemovalDeregistered {
+		t.Fatalf("BeginProfileRemoval() = %#v, %v", record, err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "owned by Codex" {
+		t.Fatalf("external marker = %q, error = %v", data, err)
+	}
+	if _, err := stateStore.GetProfile(ctx, "External"); !errors.Is(err, profile.ErrNotFound) {
+		t.Fatalf("GetProfile() error = %v, want not found", err)
+	}
+}
+
+func TestExpiredProfileQuarantineCannotBeRestored(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatalf("openProfileTestStore() error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	_ = addReadyProfile(t, stateStore, "profile-1", "Work")
+	record, err := stateStore.BeginProfileRemoval(ctx, "Work", "")
+	if err != nil {
+		t.Fatalf("BeginProfileRemoval() error = %v", err)
+	}
+	if err := stateStore.CompleteProfileQuarantine(ctx, record.Profile.ID); err != nil {
+		t.Fatalf("CompleteProfileQuarantine() error = %v", err)
+	}
+	if _, err := stateStore.db.ExecContext(ctx, `UPDATE profile_quarantine SET purge_after = ? WHERE profile_id = ?`, "2026-09-01T00:00:00Z", record.Profile.ID); err != nil {
+		t.Fatalf("expire quarantine: %v", err)
+	}
+	if err := stateStore.RestoreProfile(ctx, record.Profile.ID); !errors.Is(err, profile.ErrQuarantineExpired) {
+		t.Fatalf("RestoreProfile() error = %v, want ErrQuarantineExpired", err)
+	}
+}
+
 type profileStoreClock struct{ now time.Time }
 
 func (clock profileStoreClock) Now() time.Time { return clock.now }

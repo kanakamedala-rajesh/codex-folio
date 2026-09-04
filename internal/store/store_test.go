@@ -43,6 +43,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"metric_provenance",
 		"observed_sessions",
 		"pending_profiles",
+		"profile_quarantine",
 		"profile_setup_stages",
 		"project_identities",
 		"retention_state",

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	profilefeature "venkatasudha.com/codex-folio/internal/profile"
@@ -409,6 +413,344 @@ func TestProfileReauthenticateCLIUsesExistingHomeAndReturnsSafeResult(t *testing
 		t.Fatalf("auth/output = %#v/%q, want one device-code auth and no home path", authenticator, stdout.String())
 	}
 }
+
+func TestProfileLifecycleCLIQuarantinesRestoresAndPurgesManagedHome(t *testing.T) {
+	paths := launchTestPaths(t)
+	paths.ProfileQuarantine = filepath.Join(paths.Root, "profile-quarantine")
+	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x72}, 32), "profile-lifecycle")
+	if err != nil {
+		t.Fatalf("NewInMemoryVault() error = %v", err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("OpenWithOptions() error = %v", err)
+	}
+	ctx := context.Background()
+	for index, item := range []struct{ id, alias string }{{"profile-1", "Work"}, {"profile-2", "Personal"}} {
+		home := filepath.Join(paths.ManagedHomes, item.id)
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", item.alias, err)
+		}
+		if err := stateStore.CreatePendingProfile(ctx, profilefeature.PendingProfile{ID: item.id, Alias: item.alias, DisplayName: item.alias}); err != nil {
+			t.Fatalf("CreatePendingProfile(%q) error = %v", item.alias, err)
+		}
+		if err := stateStore.SetManagedHome(ctx, item.id, "home-"+item.id, home); err != nil {
+			t.Fatalf("SetManagedHome(%q) error = %v", item.alias, err)
+		}
+		for _, stage := range []profilefeature.SetupStage{profilefeature.StageDiscovery, profilefeature.StageHome, profilefeature.StageAuthentication, profilefeature.StageValidation} {
+			if err := stateStore.SaveSetupStage(ctx, item.id, stage); err != nil {
+				t.Fatalf("SaveSetupStage(%q) error = %v", item.alias, err)
+			}
+		}
+		if _, err := stateStore.PromotePendingProfile(ctx, item.id); err != nil {
+			t.Fatalf("PromotePendingProfile(%q) error = %v", item.alias, err)
+		}
+		if index == 0 {
+			if _, err := stateStore.CompleteInitialSelection(ctx, item.id); err != nil {
+				t.Fatalf("CompleteInitialSelection() error = %v", err)
+			}
+		}
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	marker := filepath.Join(paths.ManagedHomes, "profile-1", "marker")
+	if err := os.WriteFile(marker, []byte("owned"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	openStore := func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+		return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	}
+	stateStore, err = openStore(paths, "", "")
+	if err != nil {
+		t.Fatalf("reopen before interruption error = %v", err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("close interruption fixture error = %v", err)
+	}
+	runLifecycle := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := runProfileWithInputAndDependencies(args, strings.NewReader(""), &stdout, &stderr,
+			func(*string) (platform.Paths, error) { return paths, nil }, nil, openStore, nil, nil, nil)
+		return code, stdout.String(), stderr.String()
+	}
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() running service error = %v", err)
+	}
+	runningStore, err := openStore(paths, "", "")
+	if err != nil {
+		t.Fatalf("open running service store error = %v", err)
+	}
+	lifecycle, err := newProfileLifecycle(paths, runningStore)
+	if err != nil {
+		t.Fatalf("newProfileLifecycle() error = %v", err)
+	}
+	const token = "profile-lifecycle-command-token"
+	server, err := httpapi.NewServer(httpapi.Options{ProfileLifecycle: lifecycle, CommandToken: token})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: token}); err != nil {
+		t.Fatalf("PublishClient() error = %v", err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	plan, err := runningStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root})
+	if err != nil {
+		t.Fatalf("PrepareLaunch() running refusal fixture error = %v", err)
+	}
+	if err := runningStore.MarkManagedLaunchStarted(ctx, plan.LeaseID, 4242); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted() error = %v", err)
+	}
+	if _, err := httpapi.NewCommandClient(server.Origin(), token, nil).ApplyProfileLifecycle(ctx, "remove", "Work", "Personal", "Work"); apperrors.Code(err) != apperrors.ProfileRemovalBlocked {
+		t.Fatalf("running removal error = %v, want %s", err, apperrors.ProfileRemovalBlocked)
+	}
+	if err := runningStore.MarkManagedLaunchExited(ctx, plan.LeaseID, 0); err != nil {
+		t.Fatalf("MarkManagedLaunchExited() error = %v", err)
+	}
+	if _, err := runningStore.BeginProfileRemoval(ctx, "Work", "Personal"); err != nil {
+		t.Fatalf("BeginProfileRemoval() interruption fixture error = %v", err)
+	}
+	if _, err := httpapi.NewCommandClient(server.Origin(), token, nil).ApplyProfileLifecycle(ctx, "remove", "work", "Personal", ""); apperrors.Code(err) != apperrors.ProfileConfirmationInvalid {
+		t.Fatalf("unconfirmed service apply error = %v, want %s", err, apperrors.ProfileConfirmationInvalid)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProfileWithInputAndDependencies([]string{"remove", "work", "--replacement", "Personal", "--confirm", "work", "--non-interactive", "--json"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil }, nil,
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			return nil, errors.New("running-service lifecycle must not open the store")
+		}, nil, nil, nil)
+	diagnostic := stderr.String()
+	if code != exitFailure || !strings.Contains(diagnostic, apperrors.ProfileConfirmationInvalid) {
+		t.Fatalf("mismatched confirmation = %d/%q", code, diagnostic)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("mismatched confirmation changed managed home: %v", err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("close running service error = %v", err)
+	}
+	if err := runningStore.Close(); err != nil {
+		t.Fatalf("close running service store error = %v", err)
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatalf("close running service owner error = %v", err)
+	}
+
+	code, output, diagnostic := runLifecycle("remove", "work", "--replacement", "Personal", "--confirm", "Work", "--non-interactive", "--json")
+	if code != exitSuccess || diagnostic != "" || !strings.Contains(output, `"remote_identity_affected":false`) {
+		t.Fatalf("remove = %d/%q/%q", code, output, diagnostic)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("managed marker after remove error = %v, want not exist", err)
+	}
+	code, output, diagnostic = runLifecycle("restore", "Work", "--json")
+	if code != exitSuccess || diagnostic != "" || !strings.Contains(output, `"action":"restored"`) {
+		t.Fatalf("restore = %d/%q/%q", code, output, diagnostic)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "owned" {
+		t.Fatalf("restored marker = %q, error = %v", data, err)
+	}
+	code, _, diagnostic = runLifecycle("remove", "Work", "--confirm", "Work", "--non-interactive", "--json")
+	if code != exitSuccess || diagnostic != "" {
+		t.Fatalf("second remove = %d/%q", code, diagnostic)
+	}
+	code, output, diagnostic = runLifecycle("purge", "Work", "--confirm", "Work", "--non-interactive", "--json")
+	if code != exitSuccess || diagnostic != "" || !strings.Contains(output, `"action":"purged"`) {
+		t.Fatalf("purge = %d/%q/%q", code, output, diagnostic)
+	}
+	externalHome := filepath.Join(paths.Root, "external-codex-home")
+	externalMarker := filepath.Join(externalHome, "marker")
+	if err := os.MkdirAll(externalHome, 0o700); err != nil {
+		t.Fatalf("MkdirAll(external) error = %v", err)
+	}
+	if err := os.WriteFile(externalMarker, []byte("external"), 0o600); err != nil {
+		t.Fatalf("WriteFile(external) error = %v", err)
+	}
+	stateStore, err = openStore(paths, "", "")
+	if err != nil {
+		t.Fatalf("reopen for referenced profile error = %v", err)
+	}
+	if err := stateStore.CreatePendingProfile(ctx, profilefeature.PendingProfile{ID: "profile-3", Alias: "External", DisplayName: "External"}); err != nil {
+		t.Fatalf("CreatePendingProfile(External) error = %v", err)
+	}
+	if err := stateStore.SetReferencedHome(ctx, "profile-3", "home-profile-3", externalHome); err != nil {
+		t.Fatalf("SetReferencedHome(External) error = %v", err)
+	}
+	for _, stage := range []profilefeature.SetupStage{profilefeature.StageDiscovery, profilefeature.StageHome, profilefeature.StageAuthentication, profilefeature.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-3", stage); err != nil {
+			t.Fatalf("SaveSetupStage(External) error = %v", err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, "profile-3"); err != nil {
+		t.Fatalf("PromotePendingProfile(External) error = %v", err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("close referenced fixture error = %v", err)
+	}
+	code, output, diagnostic = runLifecycle("remove", "External", "--confirm", "External", "--non-interactive", "--json")
+	if code != exitSuccess || diagnostic != "" || !strings.Contains(output, `"action":"deregistered"`) {
+		t.Fatalf("referenced remove = %d/%q/%q", code, output, diagnostic)
+	}
+	if data, err := os.ReadFile(externalMarker); err != nil || string(data) != "external" {
+		t.Fatalf("external marker = %q, error = %v", data, err)
+	}
+	stateStore, err = openStore(paths, "", "")
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	if _, err := stateStore.GetQuarantinedProfile(ctx, "Work"); !errors.Is(err, profilefeature.ErrNotFound) {
+		t.Fatalf("GetQuarantinedProfile() error = %v, want not found", err)
+	}
+	if _, err := stateStore.GetProfile(ctx, "External"); !errors.Is(err, profilefeature.ErrNotFound) {
+		t.Fatalf("GetProfile(External) error = %v, want not found", err)
+	}
+	personal, err := stateStore.GetProfile(ctx, "Personal")
+	if err != nil || !personal.Selected {
+		t.Fatalf("replacement = %#v, error = %v", personal, err)
+	}
+}
+
+func TestProfileLifecycleCLIRejectsExpiredRestore(t *testing.T) {
+	paths := launchTestPaths(t)
+	paths.ProfileQuarantine = filepath.Join(paths.Root, "profile-quarantine")
+	vaultKey, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x73}, 32), "profile-expiry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: vaultKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	home := filepath.Join(paths.ManagedHomes, "profile-1")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.CreatePendingProfile(ctx, profilefeature.PendingProfile{ID: "profile-1", Alias: "Work", DisplayName: "Work"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.SetManagedHome(ctx, "profile-1", "home-profile-1", home); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []profilefeature.SetupStage{profilefeature.StageDiscovery, profilefeature.StageHome, profilefeature.StageAuthentication, profilefeature.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-1", stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, "profile-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", paths.DatabaseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE profile_quarantine SET purge_after = '2000-01-01T00:00:00Z'`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	openStore := func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+		return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: vaultKey})
+	}
+	var stdout, stderr bytes.Buffer
+	code := runProfileWithInputAndDependencies([]string{"remove", "Work", "--confirm", "Work", "--non-interactive", "--json"}, strings.NewReader(""), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil, openStore, nil, nil, nil)
+	if code != exitSuccess {
+		t.Fatalf("remove = %d/%q", code, stderr.String())
+	}
+	db, err = sql.Open("sqlite", paths.DatabaseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE profile_quarantine SET purge_after = '2000-01-01T00:00:00Z'`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	stdout.Reset()
+	stderr.Reset()
+	code = runProfileWithInputAndDependencies([]string{"restore", "Work", "--json"}, strings.NewReader(""), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil, openStore, nil, nil, nil)
+	if code != exitFailure || !strings.Contains(stderr.String(), apperrors.ProfileQuarantineExpired) {
+		t.Fatalf("restore = %d/%q, want expiry failure", code, stderr.String())
+	}
+}
+
+func TestProfileLifecycleServiceCancelsFailedQuarantine(t *testing.T) {
+	paths := launchTestPaths(t)
+	paths.ProfileQuarantine = filepath.Join(paths.Root, "profile-quarantine")
+	secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x74}, 32), "profile-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	home := filepath.Join(paths.ManagedHomes, "profile-1")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.CreatePendingProfile(ctx, profilefeature.PendingProfile{ID: "profile-1", Alias: "Work", DisplayName: "Work"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.SetManagedHome(ctx, "profile-1", "home-profile-1", home); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []profilefeature.SetupStage{profilefeature.StageDiscovery, profilefeature.StageHome, profilefeature.StageAuthentication, profilefeature.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-1", stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, "profile-1"); err != nil {
+		t.Fatal(err)
+	}
+	failingHomes, err := platform.NewProfileHomeLifecycleWithFileSystem(paths.ManagedHomes, paths.ProfileQuarantine, failingProfileHomeFileSystem{renameErr: errors.New("injected quarantine failure")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := profilefeature.NewLifecycle(stateStore, failingHomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{ProfileLifecycle: lifecycle, CommandToken: "profile-failure-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	_, err = httpapi.NewCommandClient(server.Origin(), "profile-failure-token", nil).ApplyProfileLifecycle(ctx, "remove", "Work", "", "Work")
+	if err == nil {
+		t.Fatal("failed quarantine removal succeeded")
+	}
+	if _, err := stateStore.GetProfile(ctx, "Work"); err != nil {
+		t.Fatalf("profile after failed removal = %v", err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = stateStore.Close()
+}
+
+type failingProfileHomeFileSystem struct{ renameErr error }
+
+func (failingProfileHomeFileSystem) Stat(path string) (os.FileInfo, error) { return os.Stat(path) }
+func (failingProfileHomeFileSystem) MkdirAll(path string, mode os.FileMode) error {
+	return os.MkdirAll(path, mode)
+}
+func (f failingProfileHomeFileSystem) Rename(string, string) error { return f.renameErr }
+func (failingProfileHomeFileSystem) RemoveAll(path string) error   { return os.RemoveAll(path) }
 
 func assertProfileStages(t *testing.T, paths platform.Paths, secureVault vault.Vault, clock profileTestClock, want profilefeature.SetupStages) {
 	t.Helper()

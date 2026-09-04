@@ -27,6 +27,11 @@ const (
 	ProfileAuthenticationUnavailable = "CF_PROFILE_AUTHENTICATION_UNAVAILABLE"
 	ProfileHomeInvalid               = "CF_PROFILE_HOME_INVALID"
 	ProfileValidationFailed          = "CF_PROFILE_VALIDATION_FAILED"
+	ProfileRemovalBlocked            = "CF_PROFILE_REMOVAL_BLOCKED"
+	ProfileReplacementRequired       = "CF_PROFILE_REPLACEMENT_REQUIRED"
+	ProfileConfirmationInvalid       = "CF_PROFILE_CONFIRMATION_INVALID"
+	ProfileQuarantineInvalid         = "CF_PROFILE_QUARANTINE_INVALID"
+	ProfileQuarantineExpired         = "CF_PROFILE_QUARANTINE_EXPIRED"
 	DiagnosticsConfigurationInvalid  = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid          = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid         = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -123,6 +128,11 @@ func IsRegistered(code string) bool {
 		ProfileAuthenticationUnavailable,
 		ProfileHomeInvalid,
 		ProfileValidationFailed,
+		ProfileRemovalBlocked,
+		ProfileReplacementRequired,
+		ProfileConfirmationInvalid,
+		ProfileQuarantineInvalid,
+		ProfileQuarantineExpired,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

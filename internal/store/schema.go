@@ -75,6 +75,22 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 7,
+			name:    "profile-quarantine",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE profile_quarantine (
+					profile_id TEXT PRIMARY KEY NOT NULL,
+					state TEXT NOT NULL CHECK (state IN ('prepared', 'quarantined')),
+					was_selected INTEGER NOT NULL CHECK (was_selected IN (0, 1)),
+					quarantined_at TEXT NOT NULL,
+					purge_after TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+				)`)
+				return err
+			},
+		},
 	}
 }
 
@@ -333,6 +349,7 @@ var expectedTables = map[string][]string{
 	"observed_sessions":         {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
 	"pending_profiles":          {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":      {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
+	"profile_quarantine":        {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
 	"project_identities":        {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
 	"retention_state":           {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
 	"schema_migrations":         {"version", "name", "applied_at"},

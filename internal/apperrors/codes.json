@@ -140,6 +140,36 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_PROFILE_REMOVAL_BLOCKED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_REPLACEMENT_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_CONFIRMATION_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_QUARANTINE_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_QUARANTINE_EXPIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

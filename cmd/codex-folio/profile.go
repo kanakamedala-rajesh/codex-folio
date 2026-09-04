@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -29,6 +31,8 @@ type profileOptions struct {
 	workspace      *string
 	nonInteractive bool
 	yes            bool
+	replacement    string
+	confirmation   string
 }
 
 type profileStoreOpener func(platform.Paths, platform.VaultMode, string) (*store.Store, error)
@@ -48,8 +52,8 @@ func runProfileWithInputAndDependencies(args []string, input io.Reader, stdout, 
 }
 
 func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newHome profileHomeFactory, newAuthenticator profileAuthenticatorFactory, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
-	if len(args) < 1 || (args[0] != "add" && args[0] != "reauthenticate" && args[0] != "list" && args[0] != "edit") {
-		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "profile add, reauthenticate, list, or edit is required", diagnosticSink)
+	if len(args) < 1 || (args[0] != "add" && args[0] != "reauthenticate" && args[0] != "list" && args[0] != "edit" && args[0] != "remove" && args[0] != "restore" && args[0] != "purge") {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "a profile command is required", diagnosticSink)
 	}
 	command := args[0]
 	if command == "list" {
@@ -67,20 +71,26 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 	if err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile arguments", diagnosticSink)
 	}
-	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes) {
+	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || options.replacement != "" || options.confirmation != "") {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid reauthentication arguments", diagnosticSink)
 	}
-	if command == "add" && (options.newAlias != "" || options.email != nil || options.workspace != nil) {
+	if command == "add" && (options.newAlias != "" || options.email != nil || options.workspace != nil || options.replacement != "" || options.confirmation != "") {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile add arguments", diagnosticSink)
 	}
 	if err := profilefeature.ValidateAlias(alias); err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
 	}
 	if command == "edit" {
-		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.nonInteractive || options.yes || (options.newAlias == "" && options.displayName == "" && options.email == nil && options.workspace == nil) {
+		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != "" || (options.newAlias == "" && options.displayName == "" && options.email == nil && options.workspace == nil) {
 			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile edit arguments", diagnosticSink)
 		}
 		return runProfileRegistryCommand(command, alias, options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink)
+	}
+	if command == "remove" || command == "restore" || command == "purge" {
+		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || (command != "remove" && options.replacement != "") || (command == "restore" && options.confirmation != "") {
+			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile lifecycle arguments", diagnosticSink)
+		}
+		return runProfileLifecycleCommand(command, alias, options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink, ownerOptions)
 	}
 
 	paths, err := resolvePaths(options.stateRoot)
@@ -211,6 +221,34 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 				return profileOptions{}, errors.New("--yes may be supplied only once")
 			}
 			options.yes = true
+		case arg == "--replacement":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.replacement != "" {
+				return profileOptions{}, errors.New("--replacement requires one value")
+			}
+			index++
+			options.replacement = args[index]
+		case strings.HasPrefix(arg, "--replacement="):
+			if options.replacement != "" {
+				return profileOptions{}, errors.New("--replacement may be supplied only once")
+			}
+			options.replacement = strings.TrimPrefix(arg, "--replacement=")
+			if options.replacement == "" {
+				return profileOptions{}, errors.New("--replacement requires one value")
+			}
+		case arg == "--confirm":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.confirmation != "" {
+				return profileOptions{}, errors.New("--confirm requires one value")
+			}
+			index++
+			options.confirmation = args[index]
+		case strings.HasPrefix(arg, "--confirm="):
+			if options.confirmation != "" {
+				return profileOptions{}, errors.New("--confirm may be supplied only once")
+			}
+			options.confirmation = strings.TrimPrefix(arg, "--confirm=")
+			if options.confirmation == "" {
+				return profileOptions{}, errors.New("--confirm requires one value")
+			}
 		case arg == "--browser":
 			if options.authMethod != "" {
 				return profileOptions{}, errors.New("only one authentication method may be selected")
@@ -344,11 +382,67 @@ func setProfileDisplayMetadata(options *profileOptions, flag, value string) erro
 }
 
 func hasProfileMutationOptions(options profileOptions) bool {
-	return options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.nonInteractive || options.yes
+	return options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != ""
+}
+
+func runProfileLifecycleCommand(command, alias string, options profileOptions, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
+	if input == nil {
+		input = strings.NewReader("")
+	}
+	bufferedInput := bufio.NewReader(input)
+	return withSelectionService(bufferedInput, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{serviceOptions: options.serviceOptions}, ownerOptions, true, func(client *httpapi.CommandClient) error {
+		preview, err := client.PreviewProfileLifecycle(context.Background(), command, alias)
+		if err != nil {
+			return err
+		}
+		if command != "restore" {
+			if err := confirmProfileLifecycle(bufferedInput, stderr, preview.Profile.Alias, command, preview.Profile.IdentityHomeOwnership, options.confirmation, options.nonInteractive); err != nil {
+				return err
+			}
+		}
+		confirmation := ""
+		if command != "restore" {
+			confirmation = preview.Profile.Alias
+		}
+		result, err := client.ApplyProfileLifecycle(context.Background(), command, alias, options.replacement, confirmation)
+		if err != nil {
+			return err
+		}
+		if options.json {
+			return writeServiceJSON(stdout, result)
+		}
+		_, _ = fmt.Fprintf(stdout, "Profile: %s\nAction: %s\nRemote OpenAI identity affected: false\n", result.Profile.Alias, result.Action)
+		if !result.PurgeAfter.IsZero() && result.Action == profilefeature.RemovalQuarantined {
+			_, _ = fmt.Fprintf(stdout, "Recoverable until: %s\n", result.PurgeAfter.Format(time.RFC3339))
+		}
+		return nil
+	})
+}
+
+func confirmProfileLifecycle(input *bufio.Reader, stderr io.Writer, alias, action string, ownership profilefeature.HomeOwnership, provided string, nonInteractive bool) error {
+	if provided != "" {
+		if provided == alias {
+			return nil
+		}
+		return apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("profile confirmation did not match the exact CLI Alias"))
+	}
+	if nonInteractive {
+		return apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("--non-interactive requires --confirm with the exact CLI Alias"))
+	}
+	_, _ = fmt.Fprintf(stderr, "%s local profile %s (%s Identity Home). Remote OpenAI identity is unaffected. Type %s to confirm: ", strings.ToUpper(action[:1])+action[1:], alias, ownership, alias)
+	confirmation, err := input.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return apperrors.New(apperrors.ProfileConfirmationInvalid, err)
+	}
+	confirmation = strings.TrimSuffix(strings.TrimSuffix(confirmation, "\n"), "\r")
+	if confirmation != alias {
+		return apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("profile confirmation did not match the exact CLI Alias"))
+	}
+	return nil
 }
 
 func runProfileRegistryCommand(command, alias string, options profileOptions, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink) int {
-	return withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{serviceOptions: options.serviceOptions}, func(client *httpapi.CommandClient) error {
+	return withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{serviceOptions: options.serviceOptions}, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		if command == "list" {
 			response, err := client.ListProfiles(context.Background())
 			if err != nil {
@@ -462,4 +556,7 @@ func writeProfileUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile list [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile edit ALIAS [--alias ALIAS] [--display-name NAME] [--email LABEL] [--workspace LABEL] [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile remove ALIAS [--replacement ALIAS] [--confirm ALIAS] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile restore ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile purge ALIAS [--confirm ALIAS] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 }

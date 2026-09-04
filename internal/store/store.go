@@ -29,7 +29,7 @@ const (
 
 	// CurrentSchemaVersion is independent of the product and browser API
 	// versions. Every durable shape change must add an ordered migration.
-	CurrentSchemaVersion = 6
+	CurrentSchemaVersion = 7
 )
 
 var (

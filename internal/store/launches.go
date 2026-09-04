@@ -43,7 +43,7 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 		FROM identity_profiles ip
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
 		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
-		WHERE a.alias = ? COLLATE NOCASE`, request.Alias).Scan(&profileID, &status, &homeID, &ownership, &ciphertext)
+		WHERE a.alias = ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)`, request.Alias).Scan(&profileID, &status, &homeID, &ownership, &ciphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		rollback()
 		return launch.Plan{}, apperrors.New(apperrors.LaunchProfileNotFound, launch.ErrProfileNotFound)

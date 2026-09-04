@@ -34,7 +34,7 @@ func runSelectWithDependencies(args []string, input io.Reader, stdout, stderr io
 	if err != nil {
 		return writeSelectionUsageDiagnostic(stderr, "invalid select arguments", diagnosticSink)
 	}
-	return withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, options, func(client *httpapi.CommandClient) error {
+	return withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, options, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		response, err := client.SetSelection(context.Background(), alias)
 		if err != nil {
 			return err
@@ -59,7 +59,7 @@ func runSelectWithDependencies(args []string, input io.Reader, stdout, stderr io
 
 func runInteractiveSelectionWithDependencies(input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, launchSelected func(string) int, diagnosticSink diagnostics.Sink) int {
 	chosen := ""
-	code := withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{}, func(client *httpapi.CommandClient) error {
+	code := withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{}, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		response, err := client.GetSelection(context.Background())
 		if err != nil {
 			return err
@@ -111,17 +111,17 @@ func runInteractiveSelectionWithDependencies(input io.Reader, stdout, stderr io.
 	return launchSelected(chosen)
 }
 
-func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, options selectionOptions, action func(*httpapi.CommandClient) error) (resultCode int) {
+func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, options selectionOptions, ownerOptions platform.OwnerOptions, includeLifecycle bool, action func(*httpapi.CommandClient) error) (resultCode int) {
 	paths, err := resolvePaths(options.stateRoot)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	status, err := platform.Discover(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
-		connection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+		connection, err := platform.DiscoverServiceClient(paths, ownerOptions)
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
@@ -130,7 +130,7 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 		}
 		return exitSuccess
 	}
-	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	owner, err := platform.Acquire(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -164,11 +164,18 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	var lifecycle *profile.Lifecycle
+	if includeLifecycle {
+		lifecycle, err = newProfileLifecycle(paths, stateStore)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

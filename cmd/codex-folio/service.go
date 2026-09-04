@@ -302,13 +302,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	lifecycle, err := newProfileLifecycle(paths, stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -332,6 +338,14 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	}()
 
 	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profile.Lifecycle, error) {
+	homes, err := platform.NewProfileHomeLifecycle(paths.ManagedHomes, paths.ProfileQuarantine)
+	if err != nil {
+		return nil, err
+	}
+	return profile.NewLifecycle(stateStore, homes)
 }
 
 func newCommandToken() (string, error) {
@@ -660,6 +674,16 @@ func serviceRemediation(code string) string {
 		return "Codex did not validate the Identity Home"
 	case apperrors.ProfileNotSelectable:
 		return "the Identity Profile is not eligible for selection"
+	case apperrors.ProfileRemovalBlocked:
+		return "the Identity Profile is the Launch Profile of a running Managed Launch"
+	case apperrors.ProfileReplacementRequired:
+		return "removing the Selected Profile requires an eligible --replacement"
+	case apperrors.ProfileConfirmationInvalid:
+		return "type the exact CLI Alias or provide it with --confirm"
+	case apperrors.ProfileQuarantineInvalid:
+		return "the Profile Quarantine operation could not be completed safely"
+	case apperrors.ProfileQuarantineExpired:
+		return "the Profile Quarantine recovery period has expired"
 	case apperrors.LaunchProfileNotFound:
 		return "the requested Identity Profile was not found"
 	case apperrors.LaunchProfileUnavailable:
@@ -744,7 +768,11 @@ func readServiceVaultPassphrase(input io.Reader) (string, error) {
 	if input == nil {
 		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault requires an explicit passphrase input"))
 	}
-	line, err := bufio.NewReader(input).ReadString('\n')
+	reader, ok := input.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(input)
+	}
+	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault passphrase input is unavailable"))
 	}

@@ -124,7 +124,8 @@ func (store *Store) GetProfile(ctx context.Context, alias string) (profile.Ident
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	var profileID string
-	err := store.db.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias = ? COLLATE NOCASE`, alias).Scan(&profileID)
+	err := store.db.QueryRowContext(ctx, `SELECT a.profile_id FROM cli_aliases a WHERE a.alias = ? COLLATE NOCASE
+		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = a.profile_id)`, alias).Scan(&profileID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return profile.IdentityProfile{}, profile.ErrNotFound
 	}
@@ -155,6 +156,7 @@ func (store *Store) ListProfiles(ctx context.Context) ([]profile.IdentityProfile
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
 		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
 		LEFT JOIN selected_profile s ON s.profile_id = ip.profile_id
+		WHERE NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)
 		ORDER BY a.alias COLLATE NOCASE`)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
@@ -203,7 +205,8 @@ func (store *Store) EditProfile(ctx context.Context, alias string, edits profile
 	}
 	rollback := func() { _ = tx.Rollback() }
 	var profileID string
-	if err := tx.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias = ? COLLATE NOCASE`, alias).Scan(&profileID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT a.profile_id FROM cli_aliases a WHERE a.alias = ? COLLATE NOCASE
+		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = a.profile_id)`, alias).Scan(&profileID); err != nil {
 		rollback()
 		if errors.Is(err, sql.ErrNoRows) {
 			return profile.IdentityProfile{}, profile.ErrNotFound
@@ -698,7 +701,7 @@ func (store *Store) ListEligibleProfiles(ctx context.Context) ([]profile.Identit
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
 		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
 		LEFT JOIN selected_profile s ON s.profile_id = ip.profile_id
-		WHERE ip.status = 'ready'
+		WHERE ip.status = 'ready' AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)
 		ORDER BY CASE WHEN s.profile_id = ip.profile_id THEN 0 ELSE 1 END, a.alias COLLATE NOCASE`)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
@@ -734,7 +737,8 @@ func (store *Store) SelectProfile(ctx context.Context, alias string) (profile.Se
 	}
 	rollback := func() { _ = tx.Rollback() }
 	var profileID, status string
-	if err := tx.QueryRowContext(ctx, `SELECT ip.profile_id, ip.status FROM identity_profiles ip JOIN cli_aliases a ON a.profile_id = ip.profile_id WHERE a.alias = ? COLLATE NOCASE`, alias).Scan(&profileID, &status); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT ip.profile_id, ip.status FROM identity_profiles ip JOIN cli_aliases a ON a.profile_id = ip.profile_id
+		WHERE a.alias = ? COLLATE NOCASE AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)`, alias).Scan(&profileID, &status); err != nil {
 		rollback()
 		if errors.Is(err, sql.ErrNoRows) {
 			return profile.SelectionResult{}, apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)

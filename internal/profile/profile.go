@@ -170,7 +170,36 @@ var (
 	ErrValidationFailed              = errors.New("Identity Home validation failed")
 	ErrNotSelectable                 = errors.New("profile is not eligible for selection")
 	ErrProfileStateInvalid           = errors.New("profile state is invalid")
+	ErrRunningLaunch                 = errors.New("profile has a running Managed Launch")
+	ErrReplacementRequired           = errors.New("selected profile requires an eligible replacement")
+	ErrQuarantineInvalid             = errors.New("profile quarantine state is invalid")
+	ErrQuarantineExpired             = errors.New("profile quarantine has expired")
 )
+
+type QuarantineState string
+
+const (
+	QuarantinePrepared QuarantineState = "prepared"
+	QuarantineReady    QuarantineState = "quarantined"
+)
+
+type RemovalAction string
+
+const (
+	RemovalQuarantined  RemovalAction = "quarantined"
+	RemovalDeregistered RemovalAction = "deregistered"
+	RemovalRestored     RemovalAction = "restored"
+	RemovalPurged       RemovalAction = "purged"
+)
+
+type RemovalRecord struct {
+	Profile                IdentityProfile `json:"profile"`
+	Action                 RemovalAction   `json:"action"`
+	State                  QuarantineState `json:"state,omitempty"`
+	QuarantinedAt          time.Time       `json:"quarantined_at,omitempty"`
+	PurgeAfter             time.Time       `json:"purge_after,omitempty"`
+	RemoteIdentityAffected bool            `json:"remote_identity_affected"`
+}
 
 type Discoverer interface {
 	Discover(override string) (Discovery, error)

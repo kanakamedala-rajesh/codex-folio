@@ -29,16 +29,17 @@ const (
 	DefaultBootstrapTTL = 5 * time.Minute
 	DefaultSessionTTL   = 15 * time.Minute
 
-	SessionCookieName    = "codexfolio_session"
-	CSRFHeaderName       = "X-CodexFolio-CSRF"
-	CommandTokenHeader   = "X-CodexFolio-Command-Token"
-	CommandSelectionPath = "/api/v1/command/selection"
-	CommandProfilesPath  = "/api/v1/command/profiles"
-	BootstrapPathName    = "/bootstrap"
-	BootstrapQueryName   = "bootstrap"
-	maxBootstrapBodySize = 4096
-	maxSelectionBodySize = 4096
-	randomTokenSize      = 32
+	SessionCookieName           = "codexfolio_session"
+	CSRFHeaderName              = "X-CodexFolio-CSRF"
+	CommandTokenHeader          = "X-CodexFolio-Command-Token"
+	CommandSelectionPath        = "/api/v1/command/selection"
+	CommandProfilesPath         = "/api/v1/command/profiles"
+	CommandProfileLifecyclePath = "/api/v1/command/profile-lifecycle"
+	BootstrapPathName           = "/bootstrap"
+	BootstrapQueryName          = "bootstrap"
+	maxBootstrapBodySize        = 4096
+	maxSelectionBodySize        = 4096
+	randomTokenSize             = 32
 )
 
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
@@ -59,15 +60,16 @@ type Clock interface {
 // in-memory bootstrap, session, and CSRF material; none of those values are
 // persisted by this package.
 type Options struct {
-	Product      string
-	BootstrapTTL time.Duration
-	SessionTTL   time.Duration
-	Random       io.Reader
-	Clock        Clock
-	Diagnostics  diagnostics.Sink
-	Selection    *profile.Selector
-	Profiles     *profile.Registry
-	CommandToken string
+	Product          string
+	BootstrapTTL     time.Duration
+	SessionTTL       time.Duration
+	Random           io.Reader
+	Clock            Clock
+	Diagnostics      diagnostics.Sink
+	Selection        *profile.Selector
+	Profiles         *profile.Registry
+	ProfileLifecycle *profile.Lifecycle
+	CommandToken     string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -79,16 +81,17 @@ type ServerOptions = Options
 type Server struct {
 	mu sync.Mutex
 
-	product      string
-	bootstrapTTL time.Duration
-	sessionTTL   time.Duration
-	random       io.Reader
-	randomMu     sync.Mutex
-	clock        Clock
-	diagnostics  diagnostics.Sink
-	selection    *profile.Selector
-	profiles     *profile.Registry
-	commandToken [sha256.Size]byte
+	product          string
+	bootstrapTTL     time.Duration
+	sessionTTL       time.Duration
+	random           io.Reader
+	randomMu         sync.Mutex
+	clock            Clock
+	diagnostics      diagnostics.Sink
+	selection        *profile.Selector
+	profiles         *profile.Registry
+	profileLifecycle *profile.Lifecycle
+	commandToken     [sha256.Size]byte
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -156,6 +159,7 @@ func NewServer(options Options) (*Server, error) {
 		diagnostics:        options.Diagnostics,
 		selection:          options.Selection,
 		profiles:           options.Profiles,
+		profileLifecycle:   options.ProfileLifecycle,
 		commandToken:       commandToken,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
@@ -354,6 +358,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandSelection(response, request)
+	case CommandProfileLifecyclePath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandProfileLifecycle(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
@@ -463,6 +472,78 @@ type CommandProfilesResponse struct {
 type commandProfileEditRequest struct {
 	Alias string               `json:"alias"`
 	Edits profile.ProfileEdits `json:"edits"`
+}
+
+type commandProfileLifecycleRequest struct {
+	Action       string `json:"action"`
+	Alias        string `json:"alias"`
+	Replacement  string `json:"replacement,omitempty"`
+	Confirmation string `json:"confirmation,omitempty"`
+	Apply        bool   `json:"apply"`
+}
+
+func (server *Server) commandProfileLifecycle(response http.ResponseWriter, request *http.Request) {
+	if server.profileLifecycle == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodPost)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var input commandProfileLifecycleRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Alias) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var result profile.RemovalRecord
+	if input.Apply {
+		if input.Action == "remove" {
+			result, err = server.profileLifecycle.PreviewRemoval(request.Context(), input.Alias)
+		} else if input.Action == "purge" {
+			result, err = server.profileLifecycle.PreviewQuarantined(request.Context(), input.Alias)
+		}
+		if err == nil && input.Action != "restore" && input.Confirmation != result.Profile.Alias {
+			err = apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("profile confirmation did not match the exact CLI Alias"))
+		}
+		if err != nil {
+			server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileQuarantineInvalid))
+			return
+		}
+		switch input.Action {
+		case "remove":
+			result, err = server.profileLifecycle.Remove(request.Context(), input.Alias, input.Replacement)
+		case "restore":
+			result, err = server.profileLifecycle.Restore(request.Context(), input.Alias)
+		case "purge":
+			result, err = server.profileLifecycle.Purge(request.Context(), input.Alias)
+		default:
+			err = profile.ErrProfileStateInvalid
+		}
+	} else if input.Action == "remove" {
+		result, err = server.profileLifecycle.PreviewRemoval(request.Context(), input.Alias)
+	} else if input.Action == "restore" || input.Action == "purge" {
+		result, err = server.profileLifecycle.PreviewQuarantined(request.Context(), input.Alias)
+	} else {
+		err = profile.ErrProfileStateInvalid
+	}
+	if err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileQuarantineInvalid))
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (server *Server) commandProfiles(response http.ResponseWriter, request *http.Request) {
