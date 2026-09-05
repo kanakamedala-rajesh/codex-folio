@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -165,10 +166,14 @@ func seedSecondReadyProfile(t *testing.T, paths platform.Paths, secureVault vaul
 	}
 	defer func() { _ = stateStore.Close() }()
 	ctx := context.Background()
+	home := filepath.Join(paths.Root, "personal-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(home) error = %v", err)
+	}
 	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-2", Alias: "Personal", DisplayName: "Personal"}); err != nil {
 		t.Fatalf("CreatePendingProfile() error = %v", err)
 	}
-	if err := stateStore.SetManagedHome(ctx, "profile-2", "profile-2", filepath.Join(paths.Root, "personal-home")); err != nil {
+	if err := stateStore.SetManagedHome(ctx, "profile-2", "profile-2", home); err != nil {
 		t.Fatalf("SetManagedHome() error = %v", err)
 	}
 	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {

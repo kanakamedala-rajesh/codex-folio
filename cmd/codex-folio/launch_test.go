@@ -336,30 +336,42 @@ func TestLaunchCLINeedsReauthenticationBeforeStartingCodex(t *testing.T) {
 	}
 }
 
-func TestLaunchCLIRecoversWithFakeCodexAndRepeatsForegroundLaunch(t *testing.T) {
+func TestLaunchCLIRecoversAndRepeatedlyLaunchesTwoAuthenticatedProfiles(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
+	seedSecondReadyProfile(t, paths, secureVault)
 	executable := filepath.Join(paths.Root, "codex")
-	authenticated := false
-	var codexCalls []string
+	workHome := filepath.Join(paths.Root, "managed-home")
+	personalHome := filepath.Join(paths.Root, "personal-home")
+	authenticated := map[string]bool{personalHome: true}
+	checks := map[string]int{}
+	loginCalls := 0
 	authenticator := codexadapter.NewAuthenticatorWithCommandRunner(func(_ context.Context, gotExecutable string, args, environment []string, _ io.Reader, stdout, _ io.Writer) error {
 		if gotExecutable != executable {
 			t.Fatalf("executable does not match discovered Codex")
 		}
-		if !slices.Contains(environment, "CODEX_HOME="+filepath.Join(paths.Root, "managed-home")) {
-			t.Fatal("fake Codex did not receive the existing Identity Home")
+		identityHome := ""
+		for _, candidate := range []string{workHome, personalHome} {
+			if slices.Contains(environment, "CODEX_HOME="+candidate) {
+				identityHome = candidate
+				break
+			}
 		}
-		codexCalls = append(codexCalls, strings.Join(args, " "))
+		if identityHome == "" {
+			t.Fatal("fake Codex did not receive a registered Identity Home")
+		}
 		switch strings.Join(args, " ") {
 		case "app-server --stdio":
+			checks[identityHome]++
 			account := `{"id":2,"result":{"account":null}}`
-			if authenticated {
+			if authenticated[identityHome] {
 				account = `{"id":2,"result":{"account":{"type":"chatgpt"}}}`
 			}
 			_, err := io.WriteString(stdout, account+"\n")
 			return err
 		case "login --device-auth":
-			authenticated = true
+			loginCalls++
+			authenticated[identityHome] = true
 			return nil
 		default:
 			return io.ErrUnexpectedEOF
@@ -374,8 +386,10 @@ func TestLaunchCLIRecoversWithFakeCodexAndRepeatsForegroundLaunch(t *testing.T) 
 
 	var expiredStdout, expiredStderr bytes.Buffer
 	started := 0
-	newProcess := func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+	var launchedHomes []string
+	newProcess := func(plan launch.Plan, _ io.Reader, _ io.Writer, _ io.Writer) (foregroundProcess, error) {
 		started++
+		launchedHomes = append(launchedHomes, plan.Environment["CODEX_HOME"])
 		return &launchTestProcess{pid: 7000 + started}, nil
 	}
 	if code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
@@ -397,20 +411,22 @@ func TestLaunchCLIRecoversWithFakeCodexAndRepeatsForegroundLaunch(t *testing.T) 
 		t.Fatalf("recovery = code:%d stdout:%q stderr:%q, want safe success", code, recoveryStdout.String(), recoveryStderr.String())
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
-		var stdout, stderr bytes.Buffer
-		if code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
-			[]string{"work", "--"}, strings.NewReader(""), &stdout, &stderr,
-			resolvePaths, resolver, openStore, newProcess, nil, newAuthenticator, platform.OwnerOptions{},
-		); code != exitSuccess || stdout.Len() != 0 || stderr.Len() != 0 {
-			t.Fatalf("repeated launch %d = code:%d stdout:%q stderr:%q", attempt+1, code, stdout.String(), stderr.String())
+	for _, alias := range []string{"work", "personal"} {
+		for attempt := 0; attempt < 2; attempt++ {
+			var stdout, stderr bytes.Buffer
+			if code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+				[]string{alias, "--"}, strings.NewReader(""), &stdout, &stderr,
+				resolvePaths, resolver, openStore, newProcess, nil, newAuthenticator, platform.OwnerOptions{},
+			); code != exitSuccess || stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("%s launch %d = code:%d stdout:%q stderr:%q", alias, attempt+1, code, stdout.String(), stderr.String())
+			}
 		}
 	}
-	if started != 2 {
-		t.Fatalf("foreground starts = %d, want two launches after recovery", started)
+	if want := []string{workHome, workHome, personalHome, personalHome}; !slices.Equal(launchedHomes, want) {
+		t.Fatalf("foreground Identity Homes = %v, want %v", launchedHomes, want)
 	}
-	if strings.Join(codexCalls, ",") != "app-server --stdio,app-server --stdio,login --device-auth,app-server --stdio,app-server --stdio,app-server --stdio" {
-		t.Fatalf("fake Codex calls = %v, want expiry, recovery, and reusable authentication", codexCalls)
+	if started != 4 || loginCalls != 1 || checks[workHome] != 5 || checks[personalHome] != 2 {
+		t.Fatalf("foreground starts/login/checks = %d/%d/%v, want four launches, one recovery, and reusable authentication", started, loginCalls, checks)
 	}
 }
 
