@@ -405,10 +405,9 @@ func TestLaunchCLINeedsReauthenticationBeforeStartingCodex(t *testing.T) {
 func TestLaunchCLIRecoversAndRepeatedlyLaunchesTwoAuthenticatedProfiles(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
-	seedSecondReadyProfile(t, paths, secureVault)
+	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
 	executable := filepath.Join(paths.Root, "codex")
 	workHome := filepath.Join(paths.Root, "managed-home")
-	personalHome := filepath.Join(paths.Root, "personal-home")
 	authenticated := map[string]bool{personalHome: true}
 	checks := map[string]int{}
 	loginCalls := 0
@@ -493,6 +492,20 @@ func TestLaunchCLIRecoversAndRepeatedlyLaunchesTwoAuthenticatedProfiles(t *testi
 	}
 	if started != 4 || loginCalls != 1 || checks[workHome] != 5 || checks[personalHome] != 2 {
 		t.Fatalf("foreground starts/login/checks = %d/%d/%v, want four launches, one recovery, and reusable authentication", started, loginCalls, checks)
+	}
+	marker := filepath.Join(personalHome, "external-state")
+	if err := os.WriteFile(marker, []byte("owned by user"), 0o600); err != nil {
+		t.Fatalf("WriteFile(referenced marker) error = %v", err)
+	}
+	var removeStdout, removeStderr bytes.Buffer
+	if code := runProfileWithInputAndDependenciesAndOwnerOptions(
+		[]string{"remove", "personal", "--confirm", "Personal", "--non-interactive"}, strings.NewReader(""), &removeStdout, &removeStderr,
+		resolvePaths, resolver, openStore, nil, nil, nil, platform.OwnerOptions{},
+	); code != exitSuccess || removeStderr.Len() != 0 {
+		t.Fatalf("referenced removal = code:%d stdout:%q stderr:%q", code, removeStdout.String(), removeStderr.String())
+	}
+	if content, err := os.ReadFile(marker); err != nil || string(content) != "owned by user" {
+		t.Fatalf("referenced content after removal = %q/%v, want untouched external state", content, err)
 	}
 }
 
@@ -579,13 +592,14 @@ func launchTestPaths(t *testing.T) platform.Paths {
 		t.Fatalf("MkdirAll(state) error = %v", err)
 	}
 	return platform.Paths{
-		Root:         root,
-		Runtime:      filepath.Join(root, "runtime"),
-		LockFile:     filepath.Join(root, "runtime", "service.owner.lock"),
-		MetadataFile: filepath.Join(root, "runtime", "service.owner.json"),
-		DatabaseFile: filepath.Join(root, "codex-folio.sqlite3"),
-		VaultFile:    filepath.Join(root, "codex-folio.vault"),
-		ManagedHomes: filepath.Join(root, "managed-homes"),
+		Root:              root,
+		Runtime:           filepath.Join(root, "runtime"),
+		LockFile:          filepath.Join(root, "runtime", "service.owner.lock"),
+		MetadataFile:      filepath.Join(root, "runtime", "service.owner.json"),
+		DatabaseFile:      filepath.Join(root, "codex-folio.sqlite3"),
+		VaultFile:         filepath.Join(root, "codex-folio.vault"),
+		ManagedHomes:      filepath.Join(root, "managed-homes"),
+		ProfileQuarantine: filepath.Join(root, "profile-quarantine"),
 	}
 }
 
@@ -630,4 +644,33 @@ func seedReadyLaunchProfile(t *testing.T, paths platform.Paths) vault.Vault {
 		t.Fatalf("Close() error = %v", err)
 	}
 	return secureVault
+}
+
+func seedReferencedReadyProfile(t *testing.T, paths platform.Paths, secureVault vault.Vault) string {
+	t.Helper()
+	home := filepath.Join(filepath.Dir(paths.Root), "referenced-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll(referenced home) error = %v", err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("open store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-2", Alias: "Personal", DisplayName: "Personal"}); err != nil {
+		t.Fatalf("CreatePendingProfile() error = %v", err)
+	}
+	if err := stateStore.SetReferencedHome(ctx, "profile-2", "profile-2", home); err != nil {
+		t.Fatalf("SetReferencedHome() error = %v", err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-2", stage); err != nil {
+			t.Fatalf("SaveSetupStage(%s) error = %v", stage, err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, "profile-2"); err != nil {
+		t.Fatalf("PromotePendingProfile() error = %v", err)
+	}
+	return home
 }
