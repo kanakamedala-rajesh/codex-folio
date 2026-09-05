@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -308,13 +309,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	configurationPacks, err := newConfigurationPackService(stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -346,6 +353,10 @@ func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profil
 		return nil, err
 	}
 	return profile.NewLifecycle(stateStore, homes)
+}
+
+func newConfigurationPackService(stateStore *store.Store) (*configpack.Service, error) {
+	return configpack.NewService(stateStore, configpack.NewProjector(nil))
 }
 
 func newCommandToken() (string, error) {
@@ -608,6 +619,11 @@ func serviceDiagnosticState(code string) string {
 		apperrors.LaunchProfileNotFound,
 		apperrors.ProfileNotSelectable,
 		apperrors.ProfileReauthenticationRequired,
+		apperrors.ConfigurationPackInvalid,
+		apperrors.ConfigurationPackNotFound,
+		apperrors.ConfigurationPackNotApproved,
+		apperrors.ConfigurationPackAssignmentInvalid,
+		apperrors.ConfigurationPackPromotionReviewRequired,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -633,6 +649,8 @@ func serviceDiagnosticState(code string) string {
 		apperrors.VaultKeyGenerationMismatch,
 		apperrors.VaultEncryptionFailed:
 		return diagnostics.StateInvalid
+	case apperrors.ConfigurationPackProjectionFailed:
+		return diagnostics.StateFailed
 	case apperrors.PlatformServiceAlreadyRunning:
 		return diagnostics.StateContention
 	case apperrors.VaultLocked:
@@ -684,6 +702,18 @@ func serviceRemediation(code string) string {
 		return "the Profile Quarantine operation could not be completed safely"
 	case apperrors.ProfileQuarantineExpired:
 		return "the Profile Quarantine recovery period has expired"
+	case apperrors.ConfigurationPackInvalid:
+		return "the configuration pack or its reviewed files are invalid"
+	case apperrors.ConfigurationPackNotFound:
+		return "the configuration pack version was not found"
+	case apperrors.ConfigurationPackNotApproved:
+		return "only an approved configuration pack version can be assigned or projected"
+	case apperrors.ConfigurationPackAssignmentInvalid:
+		return "configuration packs require a ready Managed Identity Profile"
+	case apperrors.ConfigurationPackProjectionFailed:
+		return "the configuration pack projection failed; the prior Identity Home remains recoverable"
+	case apperrors.ConfigurationPackPromotionReviewRequired:
+		return "promotion requires explicit reviewed confirmation"
 	case apperrors.LaunchProfileNotFound:
 		return "the requested Identity Profile was not found"
 	case apperrors.LaunchProfileUnavailable:

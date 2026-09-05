@@ -50,6 +50,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runLaunch(args[1:], stdout, stderr, resolvePaths, resolver)
 	case "select":
 		return runSelect(args[1:], os.Stdin, stdout, stderr, resolvePaths)
+	case "configuration-pack":
+		return runConfigurationPack(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "help", "--help", "-h":
 		writeUsage(stdout, metadata)
 		return exitSuccess
@@ -102,5 +104,6 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio profile purge ALIAS [--confirm ALIAS] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
 	fmt.Fprintln(stdout, "  codex-folio select ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio configuration-pack {create|approve|assign|override|preview|project|promotion-preview|promote} ...")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

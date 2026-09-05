@@ -21,6 +21,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
 )
@@ -29,17 +30,19 @@ const (
 	DefaultBootstrapTTL = 5 * time.Minute
 	DefaultSessionTTL   = 15 * time.Minute
 
-	SessionCookieName           = "codexfolio_session"
-	CSRFHeaderName              = "X-CodexFolio-CSRF"
-	CommandTokenHeader          = "X-CodexFolio-Command-Token"
-	CommandSelectionPath        = "/api/v1/command/selection"
-	CommandProfilesPath         = "/api/v1/command/profiles"
-	CommandProfileLifecyclePath = "/api/v1/command/profile-lifecycle"
-	BootstrapPathName           = "/bootstrap"
-	BootstrapQueryName          = "bootstrap"
-	maxBootstrapBodySize        = 4096
-	maxSelectionBodySize        = 4096
-	randomTokenSize             = 32
+	SessionCookieName            = "codexfolio_session"
+	CSRFHeaderName               = "X-CodexFolio-CSRF"
+	CommandTokenHeader           = "X-CodexFolio-Command-Token"
+	CommandSelectionPath         = "/api/v1/command/selection"
+	CommandProfilesPath          = "/api/v1/command/profiles"
+	CommandProfileLifecyclePath  = "/api/v1/command/profile-lifecycle"
+	CommandConfigurationPackPath = "/api/v1/command/configuration-pack"
+	BootstrapPathName            = "/bootstrap"
+	BootstrapQueryName           = "bootstrap"
+	maxBootstrapBodySize         = 4096
+	maxSelectionBodySize         = 4096
+	maxConfigPackBodySize        = 9 * 1024 * 1024
+	randomTokenSize              = 32
 )
 
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
@@ -60,16 +63,17 @@ type Clock interface {
 // in-memory bootstrap, session, and CSRF material; none of those values are
 // persisted by this package.
 type Options struct {
-	Product          string
-	BootstrapTTL     time.Duration
-	SessionTTL       time.Duration
-	Random           io.Reader
-	Clock            Clock
-	Diagnostics      diagnostics.Sink
-	Selection        *profile.Selector
-	Profiles         *profile.Registry
-	ProfileLifecycle *profile.Lifecycle
-	CommandToken     string
+	Product            string
+	BootstrapTTL       time.Duration
+	SessionTTL         time.Duration
+	Random             io.Reader
+	Clock              Clock
+	Diagnostics        diagnostics.Sink
+	Selection          *profile.Selector
+	Profiles           *profile.Registry
+	ProfileLifecycle   *profile.Lifecycle
+	ConfigurationPacks *configpack.Service
+	CommandToken       string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -81,17 +85,18 @@ type ServerOptions = Options
 type Server struct {
 	mu sync.Mutex
 
-	product          string
-	bootstrapTTL     time.Duration
-	sessionTTL       time.Duration
-	random           io.Reader
-	randomMu         sync.Mutex
-	clock            Clock
-	diagnostics      diagnostics.Sink
-	selection        *profile.Selector
-	profiles         *profile.Registry
-	profileLifecycle *profile.Lifecycle
-	commandToken     [sha256.Size]byte
+	product            string
+	bootstrapTTL       time.Duration
+	sessionTTL         time.Duration
+	random             io.Reader
+	randomMu           sync.Mutex
+	clock              Clock
+	diagnostics        diagnostics.Sink
+	selection          *profile.Selector
+	profiles           *profile.Registry
+	profileLifecycle   *profile.Lifecycle
+	configurationPacks *configpack.Service
+	commandToken       [sha256.Size]byte
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -160,6 +165,7 @@ func NewServer(options Options) (*Server, error) {
 		selection:          options.Selection,
 		profiles:           options.Profiles,
 		profileLifecycle:   options.ProfileLifecycle,
+		configurationPacks: options.ConfigurationPacks,
 		commandToken:       commandToken,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
@@ -363,6 +369,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandProfileLifecycle(response, request)
+	case CommandConfigurationPackPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandConfigurationPack(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)

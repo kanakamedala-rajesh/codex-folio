@@ -170,6 +170,42 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_CONFIGPACK_INVALID",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_NOT_FOUND",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_NOT_APPROVED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_ASSIGNMENT_INVALID",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_PROJECTION_FAILED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

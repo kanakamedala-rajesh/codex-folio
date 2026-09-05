@@ -13,6 +13,7 @@ import (
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -153,6 +154,19 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 	}
 	if err := workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	configurationPacks, err := newConfigurationPackService(stateStore)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	item, profileErr := stateStore.GetProfile(context.Background(), alias)
+	if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
+		return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
+	}
+	if profileErr == nil && item.Status == profile.StatusReady && item.IdentityHomeOwnership == profile.HomeOwnershipManaged {
+		if _, err := configurationPacks.Project(context.Background(), alias); err != nil && !errors.Is(err, configpack.ErrNoAssignment) {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
 	}
 	plan, err := workflow.Prepare(context.Background(), launch.PrepareRequest{
 		Alias:            alias,

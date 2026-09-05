@@ -33,6 +33,8 @@ type profileOptions struct {
 	yes            bool
 	replacement    string
 	confirmation   string
+	configPackID   string
+	configVersion  string
 }
 
 type profileStoreOpener func(platform.Paths, platform.VaultMode, string) (*store.Store, error)
@@ -71,7 +73,7 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 	if err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile arguments", diagnosticSink)
 	}
-	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || options.replacement != "" || options.confirmation != "") {
+	if command == "reauthenticate" && (options.displayName != "" || options.identityHome != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || options.replacement != "" || options.confirmation != "" || options.configPackID != "") {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid reauthentication arguments", diagnosticSink)
 	}
 	if command == "add" && (options.newAlias != "" || options.email != nil || options.workspace != nil || options.replacement != "" || options.confirmation != "") {
@@ -81,13 +83,13 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		return writeProfileUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
 	}
 	if command == "edit" {
-		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != "" || (options.newAlias == "" && options.displayName == "" && options.email == nil && options.workspace == nil) {
+		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != "" || options.configPackID != "" || (options.newAlias == "" && options.displayName == "" && options.email == nil && options.workspace == nil) {
 			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile edit arguments", diagnosticSink)
 		}
 		return runProfileRegistryCommand(command, alias, options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink)
 	}
 	if command == "remove" || command == "restore" || command == "purge" {
-		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || (command != "remove" && options.replacement != "") || (command == "restore" && options.confirmation != "") {
+		if options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.yes || options.configPackID != "" || (command != "remove" && options.replacement != "") || (command == "restore" && options.confirmation != "") {
 			return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile lifecycle arguments", diagnosticSink)
 		}
 		return runProfileLifecycleCommand(command, alias, options, input, stdout, stderr, resolvePaths, openStore, diagnosticSink, ownerOptions)
@@ -191,6 +193,15 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if options.configPackID != "" {
+		configurationPacks, err := newConfigurationPackService(stateStore)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if _, err := configurationPacks.Assign(context.Background(), result.Profile.Alias, options.configPackID, options.configVersion); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 	if options.json {
 		if err := writeServiceJSON(stdout, result); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.CLIInternal, err), diagnosticSink)
@@ -221,6 +232,21 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 				return profileOptions{}, errors.New("--yes may be supplied only once")
 			}
 			options.yes = true
+		case arg == "--configuration-pack":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.configPackID != "" {
+				return profileOptions{}, errors.New("--configuration-pack requires PACK_ID@VERSION")
+			}
+			index++
+			if err := setProfileConfigurationPack(&options, args[index]); err != nil {
+				return profileOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--configuration-pack="):
+			if options.configPackID != "" {
+				return profileOptions{}, errors.New("--configuration-pack may be supplied only once")
+			}
+			if err := setProfileConfigurationPack(&options, strings.TrimPrefix(arg, "--configuration-pack=")); err != nil {
+				return profileOptions{}, err
+			}
 		case arg == "--replacement":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || options.replacement != "" {
 				return profileOptions{}, errors.New("--replacement requires one value")
@@ -368,6 +394,15 @@ func parseProfileOptions(args []string) (profileOptions, error) {
 	return options, nil
 }
 
+func setProfileConfigurationPack(options *profileOptions, value string) error {
+	id, version, ok := strings.Cut(strings.TrimSpace(value), "@")
+	if !ok || id == "" || version == "" || strings.Contains(version, "@") {
+		return errors.New("--configuration-pack requires PACK_ID@VERSION")
+	}
+	options.configPackID, options.configVersion = id, version
+	return nil
+}
+
 func setProfileDisplayMetadata(options *profileOptions, flag, value string) error {
 	target := &options.email
 	if flag == "--workspace" {
@@ -382,7 +417,7 @@ func setProfileDisplayMetadata(options *profileOptions, flag, value string) erro
 }
 
 func hasProfileMutationOptions(options profileOptions) bool {
-	return options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != ""
+	return options.codexBin != "" || options.identityHome != "" || options.authMethod != "" || options.displayName != "" || options.newAlias != "" || options.email != nil || options.workspace != nil || options.nonInteractive || options.yes || options.replacement != "" || options.confirmation != "" || options.configPackID != ""
 }
 
 func runProfileLifecycleCommand(command, alias string, options profileOptions, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, ownerOptions platform.OwnerOptions) (resultCode int) {
@@ -552,7 +587,7 @@ func writeProfileUsageDiagnostic(stderr io.Writer, code, message string, diagnos
 
 func writeProfileUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio profile add ALIAS [--identity-home PATH] [--configuration-pack PACK_ID@VERSION] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--yes] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile list [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio profile edit ALIAS [--alias ALIAS] [--display-name NAME] [--email LABEL] [--workspace LABEL] [--state-root PATH] [--vault-mode MODE] [--json]")

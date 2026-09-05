@@ -247,6 +247,8 @@ func (store *Store) updateQuarantineState(ctx context.Context, profileID string,
 func deleteProfileRows(ctx context.Context, tx *sql.Tx, profileID string) error {
 	statements := []string{
 		`DELETE FROM correlation_evidence WHERE managed_launch_id IN (SELECT managed_launch_id FROM managed_launches WHERE profile_id = ?)`,
+		`DELETE FROM configuration_pack_overrides WHERE profile_id = ?`,
+		`DELETE FROM configuration_pack_assignments WHERE profile_id = ?`,
 		`DELETE FROM usage_observations WHERE profile_id = ?`,
 		`DELETE FROM metric_availability WHERE profile_id = ?`,
 		`DELETE FROM alerts WHERE profile_id = ?`,

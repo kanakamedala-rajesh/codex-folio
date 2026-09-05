@@ -23,6 +23,7 @@ const (
 	ComponentCLI         = "cli"
 	ComponentLaunch      = "launch"
 	ComponentProfile     = "profile"
+	ComponentConfigPack  = "configpack"
 	ComponentDiagnostics = "diagnostics"
 	ComponentHTTPAPI     = "httpapi"
 	ComponentPlatform    = "platform"
@@ -34,6 +35,7 @@ const (
 	OperationDiscoverOwner     = "discover_owner"
 	OperationDiscoverCodex     = "discover_codex"
 	OperationProfileSetup      = "profile_setup"
+	OperationConfigurationPack = "configuration_pack"
 	OperationAcquireOwner      = "acquire_owner"
 	OperationOpenStore         = "open_store"
 	OperationIntegrityCheck    = "integrity_check"
@@ -192,7 +194,7 @@ func validSeverity(value Severity) bool {
 
 func validComponent(value string) bool {
 	switch value {
-	case ComponentCLI, ComponentLaunch, ComponentProfile, ComponentDiagnostics, ComponentHTTPAPI, ComponentPlatform, ComponentStore, ComponentVault:
+	case ComponentCLI, ComponentLaunch, ComponentProfile, ComponentConfigPack, ComponentDiagnostics, ComponentHTTPAPI, ComponentPlatform, ComponentStore, ComponentVault:
 		return true
 	default:
 		return false
@@ -201,7 +203,7 @@ func validComponent(value string) bool {
 
 func validOperation(value string) bool {
 	switch value {
-	case OperationCommand, OperationResolvePaths, OperationDiscoverOwner, OperationDiscoverCodex, OperationProfileSetup, OperationAcquireOwner, OperationOpenStore, OperationIntegrityCheck, OperationMigration, OperationBackup, OperationRecoveryVerify, OperationRecoveryList, OperationRecoveryRestore, OperationVault, OperationHTTPBootstrap, OperationHTTPAuthorization, OperationHTTPSession, OperationHTTPAsset, OperationHTTPListen, OperationShutdown:
+	case OperationCommand, OperationResolvePaths, OperationDiscoverOwner, OperationDiscoverCodex, OperationProfileSetup, OperationConfigurationPack, OperationAcquireOwner, OperationOpenStore, OperationIntegrityCheck, OperationMigration, OperationBackup, OperationRecoveryVerify, OperationRecoveryList, OperationRecoveryRestore, OperationVault, OperationHTTPBootstrap, OperationHTTPAuthorization, OperationHTTPSession, OperationHTTPAsset, OperationHTTPListen, OperationShutdown:
 		return true
 	default:
 		return false
@@ -257,6 +259,8 @@ func ComponentForCode(code string) string {
 		return ComponentLaunch
 	case strings.HasPrefix(code, "CF_PROFILE_"):
 		return ComponentProfile
+	case strings.HasPrefix(code, "CF_CONFIGPACK_"):
+		return ComponentConfigPack
 	case strings.HasPrefix(code, "CF_HTTPAPI_"):
 		return ComponentHTTPAPI
 	case strings.HasPrefix(code, "CF_PLATFORM_"):

@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -38,10 +39,30 @@ func TestProfileAddCLIComposesStoreHomeAndCodexWithoutPrintingHomePath(t *testin
 	if err != nil {
 		t.Fatalf("NewInMemoryVault() error = %v", err)
 	}
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatalf("MkdirAll(state root) error = %v", err)
+	}
 	authenticator := &cliProfileAuthenticator{}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("OpenWithOptions() error = %v", err)
+	}
+	pack, err := configpack.NewDraft("shared", "1", map[string]string{"config/base.toml": "model = \"gpt-5\"\n"})
+	if err != nil {
+		t.Fatalf("NewDraft() error = %v", err)
+	}
+	if err := stateStore.CreateConfigurationPack(context.Background(), pack); err != nil {
+		t.Fatalf("CreateConfigurationPack() error = %v", err)
+	}
+	if _, err := stateStore.ApproveConfigurationPack(context.Background(), pack.ID, pack.Version); err != nil {
+		t.Fatalf("ApproveConfigurationPack() error = %v", err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	var stdout, stderr bytes.Buffer
 	resultCode := runProfileWithInputAndDependencies(
-		[]string{"add", "work", "--device-code", "--non-interactive", "--json"},
+		[]string{"add", "work", "--configuration-pack", "shared@1", "--device-code", "--non-interactive", "--json"},
 		strings.NewReader(""), &stdout, &stderr,
 		func(*string) (platform.Paths, error) { return paths, nil },
 		cliProfileResolver{},
@@ -72,6 +93,15 @@ func TestProfileAddCLIComposesStoreHomeAndCodexWithoutPrintingHomePath(t *testin
 	}
 	if authenticator.method != profilefeature.AuthMethodDeviceCode || authenticator.identityHome == "" {
 		t.Fatalf("authenticator request = %#v, want device-code and target home", authenticator)
+	}
+	stateStore, err = store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	assignment, err := stateStore.GetConfigurationPackAssignment(context.Background(), "work")
+	if err != nil || assignment.PackID != "shared" || assignment.Version != "1" {
+		t.Fatalf("setup assignment = %#v/%v, want approved shared@1", assignment, err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
@@ -123,6 +124,114 @@ func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	profiles, err := stateStore.ListEligibleProfiles(context.Background())
 	if err != nil || len(profiles) != 2 || profiles[0].Alias != "Personal" || !profiles[0].Selected {
 		t.Fatalf("selection after deterministic launch = %#v/%v, want Personal unchanged", profiles, err)
+	}
+}
+
+func TestLaunchCLIProjectsAssignedConfigurationPackBeforeStartingCodex(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	home := filepath.Join(paths.Root, "managed-home")
+	localPath := filepath.Join(home, "state", "threads.sqlite3")
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(local state) error = %v", err)
+	}
+	if err := os.WriteFile(localPath, []byte("profile-owned"), 0o600); err != nil {
+		t.Fatalf("WriteFile(local state) error = %v", err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("open store error = %v", err)
+	}
+	pack, err := configpack.NewDraft("shared", "1", map[string]string{"config/base.toml": "model = \"gpt-5\"\n"})
+	if err != nil {
+		t.Fatalf("NewDraft() error = %v", err)
+	}
+	if err := stateStore.CreateConfigurationPack(context.Background(), pack); err != nil {
+		t.Fatalf("CreateConfigurationPack() error = %v", err)
+	}
+	if _, err := stateStore.ApproveConfigurationPack(context.Background(), pack.ID, pack.Version); err != nil {
+		t.Fatalf("ApproveConfigurationPack() error = %v", err)
+	}
+	if _, err := stateStore.AssignConfigurationPack(context.Background(), "Work", pack.ID, pack.Version); err != nil {
+		t.Fatalf("AssignConfigurationPack() error = %v", err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatalf("setup store Close() error = %v", err)
+	}
+
+	started := false
+	process := &launchTestProcess{pid: 7788, exitStatus: 0}
+	var stderr bytes.Buffer
+	resultCode := runLaunchWithInputAndDependenciesAndOwnerOptions(
+		[]string{"work", "--"}, strings.NewReader(""), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(plan launch.Plan, _ io.Reader, _ io.Writer, _ io.Writer) (foregroundProcess, error) {
+			started = true
+			content, readErr := os.ReadFile(filepath.Join(home, "config", "base.toml"))
+			if readErr != nil || string(content) != "model = \"gpt-5\"\n" {
+				t.Fatalf("projected config before process = %q, error = %v", content, readErr)
+			}
+			return process, nil
+		},
+		nil,
+		platform.OwnerOptions{},
+	)
+	if resultCode != exitSuccess || !started || stderr.Len() != 0 {
+		t.Fatalf("launch result = code:%d started:%t stderr:%q, want projected successful launch", resultCode, started, stderr.String())
+	}
+	if content, err := os.ReadFile(localPath); err != nil || string(content) != "profile-owned" {
+		t.Fatalf("profile-owned state = %q, error = %v, want unchanged", content, err)
+	}
+}
+
+func TestLaunchCLIDoesNotStartCodexAfterProjectionFailure(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	home := filepath.Join(paths.Root, "managed-home")
+	if err := os.MkdirAll(filepath.Join(home, "config", "base.toml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack, err := configpack.NewDraft("shared", "1", map[string]string{"config/base.toml": "model = \"gpt-5\"\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.CreateConfigurationPack(context.Background(), pack); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.ApproveConfigurationPack(context.Background(), pack.ID, pack.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.AssignConfigurationPack(context.Background(), "work", pack.ID, pack.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	started := false
+	var stderr bytes.Buffer
+	code := runLaunchWithInputAndDependenciesAndOwnerOptions(
+		[]string{"work", "--"}, strings.NewReader(""), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+			started = true
+			return nil, errors.New("must not start")
+		}, nil, platform.OwnerOptions{},
+	)
+	if code != exitFailure || started || !strings.Contains(stderr.String(), apperrors.ConfigurationPackProjectionFailed) || strings.Contains(stderr.String(), home) {
+		t.Fatalf("launch = code:%d started:%t stderr:%q, want redacted projection failure before process start", code, started, stderr.String())
 	}
 }
 
