@@ -14,6 +14,7 @@ import (
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
@@ -124,6 +125,71 @@ func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	profiles, err := stateStore.ListEligibleProfiles(context.Background())
 	if err != nil || len(profiles) != 2 || profiles[0].Alias != "Personal" || !profiles[0].Selected {
 		t.Fatalf("selection after deterministic launch = %#v/%v, want Personal unchanged", profiles, err)
+	}
+}
+
+func TestLaunchCLIUsesRunningServiceForLaunchLifecycle(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	defer func() { _ = owner.Close() }()
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("open service store error = %v", err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	configurationPacks, err := newConfigurationPackService(stateStore)
+	if err != nil {
+		t.Fatalf("newConfigurationPackService() error = %v", err)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, &cliProfileAuthenticator{})
+	if err != nil {
+		t.Fatalf("newLaunchCommandService() error = %v", err)
+	}
+	const token = "running-launch-token"
+	server, err := httpapi.NewServer(httpapi.Options{Launches: launches, CommandToken: token})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer func() { _ = server.Close() }()
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: token}); err != nil {
+		t.Fatalf("PublishClient() error = %v", err)
+	}
+	go func() { _ = server.Serve(listener) }()
+
+	openedStore := false
+	process := &launchTestProcess{pid: 7890, exitStatus: 23}
+	var gotPlan launch.Plan
+	var stderr bytes.Buffer
+	code := runLaunchWithInputAndDependenciesAndOwnerOptions(
+		[]string{"work", "--", "--model", "gpt-5"}, strings.NewReader("terminal input"), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			openedStore = true
+			return nil, errors.New("foreground CLI must not open service-owned state")
+		},
+		func(plan launch.Plan, _ io.Reader, _ io.Writer, _ io.Writer) (foregroundProcess, error) {
+			gotPlan = plan
+			return process, nil
+		}, nil, platform.OwnerOptions{},
+	)
+	if code != 23 || openedStore || !process.started || stderr.Len() != 0 {
+		t.Fatalf("launch = code:%d opened-store:%t started:%t stderr:%q", code, openedStore, process.started, stderr.String())
+	}
+	record, err := stateStore.GetManagedLaunch(context.Background(), gotPlan.LeaseID)
+	if err != nil {
+		t.Fatalf("GetManagedLaunch() error = %v", err)
+	}
+	if record.State != launch.StateExited || record.ProcessID != 7890 || record.ExitStatus == nil || *record.ExitStatus != 23 {
+		t.Fatalf("record = %#v, want service-owned exited lifecycle", record)
 	}
 }
 

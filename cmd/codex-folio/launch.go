@@ -13,8 +13,8 @@ import (
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
-	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
@@ -52,7 +52,6 @@ func runLaunchWithInputAndDependenciesAndOwnerOptions(args []string, input io.Re
 }
 
 func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions) (resultCode int) {
-	childStatusKnown := false
 	alias, options, err := parseLaunchArguments(args)
 	if err != nil {
 		return writeLaunchUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid launch arguments", diagnosticSink)
@@ -74,22 +73,84 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 		}
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	report, err := launch.Discover(resolver, options.codexBin)
+	return withLaunchCommandService(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
+		if err != nil {
+			if _, stateErr := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "unavailable", Alias: alias}); stateErr != nil {
+				return writeServiceErrorWithDiagnostics(stderr, stateErr, diagnosticSink)
+			}
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		prepared, prepareErr := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
+			Action: "prepare", Alias: alias, Executable: report.Executable, Version: report.Version,
+			WorkingDirectory: workingDirectory, Arguments: options.codexArgs,
+		})
+		if prepareErr != nil {
+			return writeServiceErrorWithDiagnostics(stderr, prepareErr, diagnosticSink)
+		}
+		if prepared.Plan == nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
+		}
+		plan := *prepared.Plan
+		abandon := func() {
+			_, _ = client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "abandoned", LeaseID: plan.LeaseID})
+		}
+		if newProcess == nil {
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+		}
+		process, err := newProcess(plan, childInput, stdout, stderr)
+		if err != nil || process == nil {
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+		}
+		if err := process.Start(); err != nil {
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+		}
+		processID := process.PID()
+		if processID <= 0 {
+			_ = process.Kill()
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+		}
+		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "started", LeaseID: plan.LeaseID, ProcessID: processID}); err != nil {
+			_ = process.Kill()
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		stopForwarding := forwardForegroundSignals(process)
+		_ = process.Wait()
+		stopForwarding()
+		exitStatus := process.ExitStatus()
+		if !launch.ValidProcessStatus(exitStatus) {
+			abandon()
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
+		}
+		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus}); err != nil {
+			_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		return exitStatus
+	})
+}
+
+func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.Paths, options launchOptions, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions, action func(*httpapi.CommandClient, io.Reader) int) int {
 	status, err := platform.Discover(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("launch requires exclusive local state access")), diagnosticSink)
+		connection, err := platform.DiscoverServiceClient(paths, ownerOptions)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		return action(httpapi.NewCommandClient(connection.Origin, connection.Token, nil), input)
 	}
 	owner, err := platform.Acquire(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	defer func() {
-		if closeErr := owner.Close(); closeErr != nil && !childStatusKnown && resultCode == exitSuccess {
-			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
-		}
-	}()
+	defer func() { _ = owner.Close() }()
 	childInput := input
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {
@@ -108,113 +169,41 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	defer func() {
-		if closeErr := stateStore.Close(); closeErr != nil && !childStatusKnown && resultCode == exitSuccess {
-			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
-		}
-	}()
+	defer func() { _ = stateStore.Close() }()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
-	report, err := launch.Discover(resolver, options.codexBin)
-	if err != nil {
-		item, profileErr := stateStore.GetProfile(context.Background(), alias)
-		if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
-			return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
-		}
-		if profileErr == nil && item.Status != profile.StatusPending {
-			if stateErr := stateStore.SetAuthenticationState(context.Background(), item.ID, profile.StatusUnavailable, ""); stateErr != nil {
-				return writeServiceErrorWithDiagnostics(stderr, stateErr, diagnosticSink)
-			}
-		}
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	if newAuthenticator != nil {
-		item, profileErr := stateStore.GetProfile(context.Background(), alias)
-		if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
-			return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
-		}
-		if profileErr == nil && (item.Status == profile.StatusReady || item.Status == profile.StatusNeedsReauthentication || item.Status == profile.StatusUnavailable) {
-			authenticator := newAuthenticator()
-			if authenticator == nil {
-				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
-			}
-			if _, authErr := profile.VerifyAuthentication(context.Background(), stateStore, authenticator, profile.AuthenticationCheckRequest{
-				Alias:     alias,
-				Discovery: profile.Discovery{Executable: report.Executable, Version: report.Version},
-				Stdin:     childInput,
-				Stdout:    stderr,
-				Stderr:    stderr,
-			}); authErr != nil {
-				return writeServiceErrorWithDiagnostics(stderr, authErr, diagnosticSink)
-			}
-		}
-	}
-	workflow, err := launch.NewWorkflow(launch.WorkflowOptions{Repository: stateStore})
-	if err != nil {
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	if err := workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
 	configurationPacks, err := newConfigurationPackService(stateStore)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	item, profileErr := stateStore.GetProfile(context.Background(), alias)
-	if profileErr != nil && !errors.Is(profileErr, profile.ErrNotFound) {
-		return writeServiceErrorWithDiagnostics(stderr, profileErr, diagnosticSink)
-	}
-	if profileErr == nil && item.Status == profile.StatusReady && item.IdentityHomeOwnership == profile.HomeOwnershipManaged {
-		if _, err := configurationPacks.Project(context.Background(), alias); err != nil && !errors.Is(err, configpack.ErrNoAssignment) {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	var authenticator profile.Authenticator
+	if newAuthenticator != nil {
+		authenticator = newAuthenticator()
+		if authenticator == nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
 		}
 	}
-	plan, err := workflow.Prepare(context.Background(), launch.PrepareRequest{
-		Alias:            alias,
-		Executable:       report.Executable,
-		WorkingDirectory: workingDirectory,
-		Arguments:        options.codexArgs,
-	})
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	if newProcess == nil {
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
-	}
-	process, err := newProcess(plan, childInput, stdout, stderr)
-	if err != nil || process == nil {
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
-	}
-	if err := process.Start(); err != nil {
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
-	}
-	processID := process.PID()
-	if processID <= 0 {
-		_ = process.Kill()
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
-	}
-	if err := workflow.MarkStarted(context.Background(), plan.LeaseID, processID); err != nil {
-		_ = process.Kill()
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
+	commandToken, err := newCommandToken()
+	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	stopForwarding := forwardForegroundSignals(process)
-	_ = process.Wait()
-	stopForwarding()
-	exitStatus := process.ExitStatus()
-	if !launch.ValidProcessStatus(exitStatus) {
-		_ = workflow.MarkAbandoned(context.Background(), plan.LeaseID)
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, CommandToken: commandToken})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	resultCode = exitStatus
-	childStatusKnown = true
-	if err := workflow.MarkExited(context.Background(), plan.LeaseID, exitStatus); err != nil {
-		_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	listener, err := server.Listen()
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	return resultCode
+	defer func() { _ = server.Close() }()
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	go func() { _ = server.Serve(listener) }()
+	return action(httpapi.NewCommandClient(server.Origin(), commandToken, nil), childInput)
 }
 
 func parseLaunchArguments(args []string) (string, launchOptions, error) {

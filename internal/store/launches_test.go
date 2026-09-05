@@ -105,6 +105,33 @@ func TestReconcileManagedLaunchesMarksUnknownExitAsAbandoned(t *testing.T) {
 	}
 }
 
+func TestReconcileManagedLaunchesKeepsPendingLeaseStartable(t *testing.T) {
+	stateStore, _, _, home := readyLaunchStore(t)
+	defer func() { _ = stateStore.Close() }()
+
+	plan, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias:            "Work",
+		Executable:       filepath.Join(home, "codex"),
+		WorkingDirectory: home,
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+	if err := stateStore.ReconcileManagedLaunches(context.Background(), launchInspector{err: errors.New("pending lease inspected")}); err != nil {
+		t.Fatalf("ReconcileManagedLaunches() error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), plan.LeaseID, 9002); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted() error = %v", err)
+	}
+	record, err := stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
+	if err != nil {
+		t.Fatalf("GetManagedLaunch() error = %v", err)
+	}
+	if record.State != launch.StateRunning || record.ProcessID != 9002 {
+		t.Fatalf("record = %#v, want running lease with process 9002", record)
+	}
+}
+
 func TestPrepareLaunchRejectsNonReadyProfilesAndInvalidLeases(t *testing.T) {
 	testRoot := t.TempDir()
 	databasePath := filepath.Join(testRoot, "codex-folio.sqlite3")

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
@@ -315,13 +316,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator())
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Launches: launches, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()

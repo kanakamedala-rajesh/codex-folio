@@ -200,7 +200,6 @@ func (store *Store) ReconcileManagedLaunches(ctx context.Context, inspector laun
 			return coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, err))
 		}
 		if state == string(launch.StatePending) || !processID.Valid || processID.Int64 <= 0 || inspector == nil {
-			abandoned = append(abandoned, leaseID)
 			continue
 		}
 		running, err := inspector.IsRunning(int(processID.Int64))

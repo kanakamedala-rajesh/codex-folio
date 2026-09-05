@@ -37,6 +37,7 @@ const (
 	CommandProfilesPath          = "/api/v1/command/profiles"
 	CommandProfileLifecyclePath  = "/api/v1/command/profile-lifecycle"
 	CommandConfigurationPackPath = "/api/v1/command/configuration-pack"
+	CommandLaunchPath            = "/api/v1/command/launch"
 	BootstrapPathName            = "/bootstrap"
 	BootstrapQueryName           = "bootstrap"
 	maxBootstrapBodySize         = 4096
@@ -73,6 +74,7 @@ type Options struct {
 	Profiles           *profile.Registry
 	ProfileLifecycle   *profile.Lifecycle
 	ConfigurationPacks *configpack.Service
+	Launches           CommandLaunchService
 	CommandToken       string
 }
 
@@ -96,6 +98,7 @@ type Server struct {
 	profiles           *profile.Registry
 	profileLifecycle   *profile.Lifecycle
 	configurationPacks *configpack.Service
+	launches           CommandLaunchService
 	commandToken       [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -166,6 +169,7 @@ func NewServer(options Options) (*Server, error) {
 		profiles:           options.Profiles,
 		profileLifecycle:   options.ProfileLifecycle,
 		configurationPacks: options.ConfigurationPacks,
+		launches:           options.Launches,
 		commandToken:       commandToken,
 		bootstrapToken:     token,
 		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
@@ -374,6 +378,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandConfigurationPack(response, request)
+	case CommandLaunchPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandLaunch(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
