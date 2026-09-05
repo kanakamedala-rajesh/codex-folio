@@ -615,6 +615,7 @@ func recordServiceDiagnostic(diagnosticSink diagnostics.Sink, code string, sever
 func serviceDiagnosticState(code string) string {
 	switch code {
 	case apperrors.CLIUsage,
+		apperrors.CLIShellIntegrationInvalid,
 		apperrors.LaunchLeaseInvalid,
 		apperrors.LaunchProfileNotFound,
 		apperrors.ProfileNotSelectable,
@@ -672,6 +673,10 @@ func serviceRemediation(code string) string {
 	switch code {
 	case apperrors.ProfileSetupInvalid:
 		return "profile setup state or arguments are invalid"
+	case apperrors.CLIShellIntegrationInvalid:
+		return "generated shell integration is changed or incompatible; remove it manually before retrying"
+	case apperrors.CLIShellIntegrationFailed:
+		return "the shell integration file could not be read or written"
 	case apperrors.ProfileAliasInvalid:
 		return "alias must start with a letter or number and contain only portable ASCII letters, numbers, '.', '_' or '-'; maximum 64 characters"
 	case apperrors.ProfileAliasTaken:

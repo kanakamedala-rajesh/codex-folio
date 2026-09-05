@@ -6,6 +6,8 @@ import "errors"
 const (
 	CLIUsage                                 = "CF_CLI_USAGE"
 	CLIInternal                              = "CF_CLI_INTERNAL"
+	CLIShellIntegrationInvalid               = "CF_CLI_SHELL_INTEGRATION_INVALID"
+	CLIShellIntegrationFailed                = "CF_CLI_SHELL_INTEGRATION_FAILED"
 	LaunchCodexNotFound                      = "CF_LAUNCH_CODEX_NOT_FOUND"
 	LaunchCodexAmbiguous                     = "CF_LAUNCH_CODEX_AMBIGUOUS"
 	LaunchCodexPathInvalid                   = "CF_LAUNCH_CODEX_PATH_INVALID"
@@ -113,6 +115,8 @@ func IsRegistered(code string) bool {
 	switch code {
 	case CLIUsage,
 		CLIInternal,
+		CLIShellIntegrationInvalid,
+		CLIShellIntegrationFailed,
 		LaunchCodexNotFound,
 		LaunchCodexAmbiguous,
 		LaunchCodexPathInvalid,

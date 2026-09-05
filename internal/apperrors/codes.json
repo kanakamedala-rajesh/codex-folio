@@ -14,6 +14,18 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_CLI_SHELL_INTEGRATION_INVALID",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CLI_SHELL_INTEGRATION_FAILED",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_LAUNCH_CODEX_NOT_FOUND",
       "owner": "launch",
       "lifecycle": "active",

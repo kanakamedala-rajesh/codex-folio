@@ -30,6 +30,7 @@ const (
 	vaultFileName         = "codex-folio.vault"
 	managedHomesName      = "managed-homes"
 	profileQuarantineName = "profile-quarantine"
+	shellIntegrationName  = "shell-integration"
 )
 
 // Platform identifies the operating-system path convention to use. It is
@@ -64,6 +65,7 @@ type Paths struct {
 	VaultFile         string
 	ManagedHomes      string
 	ProfileQuarantine string
+	ShellIntegration  string
 }
 
 // ResolvePaths resolves the platform default or an explicit absolute state
@@ -117,6 +119,7 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 		VaultFile:         filepath.Join(root, vaultFileName),
 		ManagedHomes:      filepath.Join(root, managedHomesName),
 		ProfileQuarantine: filepath.Join(root, profileQuarantineName),
+		ShellIntegration:  filepath.Join(root, shellIntegrationName),
 	}, nil
 }
 
