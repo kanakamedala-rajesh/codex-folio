@@ -221,6 +221,21 @@ Commit only after:
 
 Do not include unrelated changes in the ticket commit.
 
+### Post-commit delivery
+
+When an executable-ticket implementation is committed and the user explicitly asks to push it and verify the hosted pipeline, spawn the `codexfolio_delivery` custom agent exactly once.
+
+Give the delivery agent:
+
+* the executable ticket number and parent specification number;
+* the exact commit SHA, current branch, remote, and intended base branch;
+* the ticket-review result and canonical local-verification evidence;
+* confirmation of the user's push and pipeline-verification authorization.
+
+The delivery agent owns only the authorized push, any pull request required to trigger repository checks, exact-commit pipeline observation, and successful GitHub ticket bookkeeping. It must not change files, create or amend commits, repair failures, merge a pull request, or mark a milestone complete.
+
+If the pipeline fails or does not produce exact-commit evidence, leave the executable ticket open and report the failure to the primary agent. Do not begin corrective implementation without a separate user request.
+
 ### Milestone completion review
 
 Do not declare a parent milestone specification complete solely because all child tickets are closed.
