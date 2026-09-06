@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -30,10 +31,21 @@ func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadat
 }
 
 func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
-	if len(args) == 0 {
-		return runInteractiveSelectionWithDependencies(os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, func(alias string) int {
-			return runLaunch([]string{alias, "--"}, stdout, stderr, resolvePaths, resolver)
-		}, newServiceDiagnosticSink())
+	if len(args) == 0 || strings.HasPrefix(args[0], "--state-root") || strings.HasPrefix(args[0], "--vault-mode") {
+		options, err := parseSelectionOptions(args)
+		if err != nil || options.json {
+			return writeSelectionUsageDiagnostic(stderr, "invalid interactive selection arguments", newServiceDiagnosticSink())
+		}
+		return runInteractiveSelectionWithOptions(os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, func(alias string) int {
+			launchArgs := []string{alias}
+			if options.stateRoot != nil {
+				launchArgs = append(launchArgs, "--state-root", *options.stateRoot)
+			}
+			if options.vaultMode != "" {
+				launchArgs = append(launchArgs, "--vault-mode", string(options.vaultMode))
+			}
+			return runLaunch(append(launchArgs, "--"), stdout, stderr, resolvePaths, resolver)
+		}, newServiceDiagnosticSink(), options)
 	}
 
 	command := args[0]

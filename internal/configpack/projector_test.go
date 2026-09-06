@@ -2,6 +2,7 @@ package configpack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -75,25 +76,43 @@ func TestProjectorRemovesOnlyFilesFromThePriorProjection(t *testing.T) {
 	}
 }
 
+func TestProjectorPreservesCodexChangesToPreviouslyProjectedFile(t *testing.T) {
+	home := t.TempDir()
+	projector := NewProjector(nil)
+	path := filepath.Join(home, "config", "base.toml")
+	if _, err := projector.Project(context.Background(), home, map[string]string{"config/base.toml": "model = \"reviewed\"\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("model = \"codex-local\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projector.Project(context.Background(), home, map[string]string{"config/base.toml": "model = \"next\"\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != "model = \"codex-local\"\n" {
+		t.Fatalf("local content = %q/%v", content, err)
+	}
+}
+
 func TestProjectorLeavesPriorFilesWhenStagingFails(t *testing.T) {
 	home := t.TempDir()
 	priorPath := filepath.Join(home, "config", "base.toml")
 	if err := os.MkdirAll(filepath.Dir(priorPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(priorPath, []byte("prior\n"), 0o600); err != nil {
+	if err := os.WriteFile(priorPath, []byte("model = \"prior\"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	fs := &failingFileSystem{FileSystem: osFileSystem{}, failWrite: true}
 	_, err := NewProjector(fs).Project(context.Background(), home, map[string]string{
-		"config/base.toml":   "next\n",
+		"config/base.toml":   "model = \"next\"\n",
 		"guidance/AGENTS.md": "guidance\n",
 	})
 	if err == nil || !errors.Is(err, ErrProjectionFailed) {
 		t.Fatalf("Project() error = %v, want projection failure", err)
 	}
 	content, readErr := os.ReadFile(priorPath)
-	if readErr != nil || string(content) != "prior\n" {
+	if readErr != nil || string(content) != "model = \"prior\"\n" {
 		t.Fatalf("prior config = %q, error = %v, want unchanged", content, readErr)
 	}
 }
@@ -105,10 +124,12 @@ type failingFileSystem struct {
 
 func TestProjectorRetainsRecoverableBackupWhenApplicationAndRollbackFail(t *testing.T) {
 	home := t.TempDir()
-	for path, content := range map[string]string{
-		"config/base.toml":   "prior config\n",
+	prior := map[string]string{
+		"config/base.toml":   "model = \"prior\"\n",
 		"guidance/AGENTS.md": "prior guidance\n",
-	} {
+	}
+	manifest := make(map[string]string, len(prior))
+	for path, content := range prior {
 		target := filepath.Join(home, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			t.Fatal(err)
@@ -116,21 +137,29 @@ func TestProjectorRetainsRecoverableBackupWhenApplicationAndRollbackFail(t *test
 		if err := os.WriteFile(target, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		manifest[path] = contentDigest(content)
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, projectionManifest), encoded, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	fs := &renameFailingFileSystem{FileSystem: osFileSystem{}, fail: map[int]bool{5: true, 6: true}}
-	_, err := NewProjector(fs).Project(context.Background(), home, map[string]string{
-		"config/base.toml":   "next config\n",
+	_, err = NewProjector(fs).Project(context.Background(), home, map[string]string{
+		"config/base.toml":   "model = \"next\"\n",
 		"guidance/AGENTS.md": "next guidance\n",
 	})
 	if err == nil || !errors.Is(err, ErrProjectionFailed) || strings.Contains(err.Error(), home) {
 		t.Fatalf("Project() error = %v, want redacted projection failure", err)
 	}
-	backups, globErr := filepath.Glob(filepath.Join(home, ".codex-folio-projection-*", "prior", "guidance", "AGENTS.md"))
+	backups, globErr := filepath.Glob(filepath.Join(home, ".codex-folio-projection-*", "prior", "config", "base.toml"))
 	if globErr != nil || len(backups) != 1 {
-		t.Fatalf("recoverable backups = %#v/%v, want retained prior guidance", backups, globErr)
+		t.Fatalf("recoverable backups = %#v/%v, want retained prior config", backups, globErr)
 	}
-	if content, readErr := os.ReadFile(backups[0]); readErr != nil || string(content) != "prior guidance\n" {
-		t.Fatalf("recoverable prior guidance = %q/%v", content, readErr)
+	if content, readErr := os.ReadFile(backups[0]); readErr != nil || string(content) != "model = \"prior\"\n" {
+		t.Fatalf("recoverable prior config = %q/%v", content, readErr)
 	}
 }
 

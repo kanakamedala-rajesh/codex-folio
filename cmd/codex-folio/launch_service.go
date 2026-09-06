@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
@@ -26,30 +27,42 @@ func newLaunchCommandService(stateStore *store.Store, configurationPacks *config
 	return &launchCommandService{store: stateStore, workflow: workflow, configurationPacks: configurationPacks, authenticator: authenticator}, nil
 }
 
-func (service *launchCommandService) Prepare(ctx context.Context, request launch.PrepareRequest, version string) (launch.Plan, error) {
+func (service *launchCommandService) Prepare(ctx context.Context, request launch.PrepareRequest, version string) (launch.Plan, string, error) {
 	item, err := service.store.GetProfile(ctx, request.Alias)
 	if err != nil {
-		return launch.Plan{}, err
+		return launch.Plan{}, "", err
 	}
+	authWarning := false
 	if service.authenticator != nil && (item.Status == profile.StatusReady || item.Status == profile.StatusNeedsReauthentication || item.Status == profile.StatusUnavailable) {
-		item, err = profile.VerifyAuthentication(ctx, service.store, service.authenticator, profile.AuthenticationCheckRequest{
+		verified, verifyErr := profile.VerifyAuthentication(ctx, service.store, service.authenticator, profile.AuthenticationCheckRequest{
 			Alias:     request.Alias,
 			Discovery: profile.Discovery{Executable: request.Executable, Version: version},
 			Stdout:    io.Discard, Stderr: io.Discard,
 		})
-		if err != nil {
-			return launch.Plan{}, err
+		if verifyErr == nil {
+			item = verified
+		} else if apperrors.Code(verifyErr) == apperrors.ProfileAuthenticationUnavailable && item.Status == profile.StatusReady {
+			authWarning = true
+		} else {
+			return launch.Plan{}, "", verifyErr
 		}
 	}
 	if item.Status == profile.StatusReady && item.IdentityHomeOwnership == profile.HomeOwnershipManaged && service.configurationPacks != nil {
 		if _, err := service.configurationPacks.Project(ctx, request.Alias); err != nil && !errors.Is(err, configpack.ErrNoAssignment) {
-			return launch.Plan{}, err
+			return launch.Plan{}, "", err
 		}
 	}
 	if err := service.workflow.Reconcile(ctx, foregroundProcessInspector{}); err != nil {
-		return launch.Plan{}, err
+		return launch.Plan{}, "", err
 	}
-	return service.workflow.Prepare(ctx, request)
+	plan, err := service.workflow.Prepare(ctx, request)
+	if err != nil {
+		return launch.Plan{}, "", err
+	}
+	if authWarning {
+		return plan, "Codex authentication metadata is unavailable; continuing with basic launch.", nil
+	}
+	return plan, "", nil
 }
 
 func (service *launchCommandService) MarkStarted(ctx context.Context, leaseID string, processID int) error {
@@ -62,15 +75,4 @@ func (service *launchCommandService) MarkExited(ctx context.Context, leaseID str
 
 func (service *launchCommandService) MarkAbandoned(ctx context.Context, leaseID string) error {
 	return service.workflow.MarkAbandoned(ctx, leaseID)
-}
-
-func (service *launchCommandService) MarkUnavailable(ctx context.Context, alias string) error {
-	item, err := service.store.GetProfile(ctx, alias)
-	if errors.Is(err, profile.ErrNotFound) || (err == nil && item.Status == profile.StatusPending) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return service.store.SetAuthenticationState(ctx, item.ID, profile.StatusUnavailable, "")
 }

@@ -235,7 +235,7 @@ func TestVerifyAuthenticationStopsLaunchAndMarksProfileForReauthentication(t *te
 	}
 }
 
-func TestVerifyAuthenticationMarksStatusInterfaceFailureUnavailable(t *testing.T) {
+func TestVerifyAuthenticationLeavesStatusUnchangedWhenStatusInterfaceFails(t *testing.T) {
 	homePath := t.TempDir()
 	repository := &authenticationRepositoryStub{profile: IdentityProfile{
 		ID:               "profile-1",
@@ -252,8 +252,8 @@ func TestVerifyAuthenticationMarksStatusInterfaceFailureUnavailable(t *testing.T
 	if err == nil || apperrors.Code(err) != apperrors.ProfileAuthenticationUnavailable {
 		t.Fatalf("VerifyAuthentication() error = %v, want authentication unavailable", err)
 	}
-	if item.Status != StatusUnavailable || repository.status != StatusUnavailable {
-		t.Fatalf("result/state = %q/%q, want unavailable", item.Status, repository.status)
+	if item.Status != StatusReady || repository.status != "" {
+		t.Fatalf("result/state = %q/%q, want unchanged ready status", item.Status, repository.status)
 	}
 }
 
@@ -577,10 +577,12 @@ func (repository *memoryRepository) PromotePendingProfile(_ context.Context, pro
 	}, nil
 }
 
-func (repository *memoryRepository) CompleteInitialSelection(_ context.Context, profileID string) (IdentityProfile, error) {
-	if !repository.ready || repository.pending.ID != profileID {
+func (repository *memoryRepository) CompleteInitialSelection(_ context.Context, profileID, _, _ string) (IdentityProfile, error) {
+	if repository.pending.ID != profileID || !repository.pending.Stages.Authentication || !repository.pending.Stages.Validation {
 		return IdentityProfile{}, ErrNotFound
 	}
+	repository.ready = true
+	repository.pending.Status = StatusReady
 	repository.pending.Stages.Selection = true
 	repository.selected = true
 	return IdentityProfile{

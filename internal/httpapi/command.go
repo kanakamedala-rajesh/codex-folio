@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -37,6 +39,56 @@ func (client *CommandClient) ListProfiles(ctx context.Context) (CommandProfilesR
 
 func (client *CommandClient) EditProfile(ctx context.Context, alias string, edits profile.ProfileEdits) (CommandProfilesResponse, error) {
 	return client.profiles(ctx, http.MethodPut, alias, edits)
+}
+
+func (client *CommandClient) AuthenticateProfile(ctx context.Context, input CommandProfileAuthenticationRequest, output io.Writer) (CommandProfileAuthenticationResult, error) {
+	var result CommandProfileAuthenticationResult
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return result, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.origin+CommandProfileAuthenticationPath, bytes.NewReader(encoded))
+	if err != nil {
+		return result, err
+	}
+	request.Header.Set("Accept", "application/x-ndjson")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		var failure struct {
+			Code string `json:"code"`
+		}
+		if json.NewDecoder(response.Body).Decode(&failure) == nil && failure.Code != "" {
+			return result, apperrors.New(failure.Code, fmt.Errorf("POST %s returned HTTP %d", CommandProfileAuthenticationPath, response.StatusCode))
+		}
+		return result, fmt.Errorf("POST %s returned HTTP %d", CommandProfileAuthenticationPath, response.StatusCode)
+	}
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var event profileAuthenticationEvent
+		if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
+			return result, io.ErrUnexpectedEOF
+		} else if err != nil {
+			return result, err
+		}
+		if event.Output != "" && output != nil {
+			if _, err := io.WriteString(output, event.Output); err != nil {
+				return result, err
+			}
+		}
+		if event.Code != "" {
+			return result, apperrors.New(event.Code, errors.New("profile authentication failed"))
+		}
+		if event.Result != nil {
+			return *event.Result, nil
+		}
+	}
 }
 
 func (client *CommandClient) PreviewProfileLifecycle(ctx context.Context, action, alias string) (profile.RemovalRecord, error) {

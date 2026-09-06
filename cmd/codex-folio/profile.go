@@ -12,6 +12,7 @@ import (
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -79,6 +80,9 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 	if command == "add" && (options.newAlias != "" || options.email != nil || options.workspace != nil || options.replacement != "" || options.confirmation != "") {
 		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid profile add arguments", diagnosticSink)
 	}
+	if command == "add" && options.identityHome != "" && options.configPackID != "" {
+		return writeProfileUsageDiagnostic(stderr, apperrors.CLIUsage, "configuration packs require a managed Identity Home", diagnosticSink)
+	}
 	if err := profilefeature.ValidateAlias(alias); err != nil {
 		return writeProfileUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
 	}
@@ -104,7 +108,42 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("profile setup requires exclusive local state access")), diagnosticSink)
+		connection, err := platform.DiscoverServiceClient(paths, ownerOptions)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		result, err := httpapi.NewCommandClient(connection.Origin, connection.Token, nil).AuthenticateProfile(context.Background(), httpapi.CommandProfileAuthenticationRequest{
+			Action: command, Alias: alias, DisplayName: options.displayName, CodexOverride: options.codexBin,
+			ReferencedHomePath: options.identityHome, AuthMethod: options.authMethod, NonInteractive: options.nonInteractive,
+			ConfigurationPackID: options.configPackID, ConfigurationPackVersion: options.configVersion,
+		}, stderr)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if command == "reauthenticate" {
+			if result.Reauthentication == nil {
+				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationFailed, profilefeature.ErrAuthenticationFailed), diagnosticSink)
+			}
+			if options.json {
+				if err := writeServiceJSON(stdout, result.Reauthentication); err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.CLIInternal, err), diagnosticSink)
+				}
+			} else {
+				writeReauthenticationResult(stdout, *result.Reauthentication)
+			}
+			return exitSuccess
+		}
+		if result.Setup == nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, profilefeature.ErrProfileStateInvalid), diagnosticSink)
+		}
+		if options.json {
+			if err := writeServiceJSON(stdout, result.Setup); err != nil {
+				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.CLIInternal, err), diagnosticSink)
+			}
+		} else {
+			writeProfileResult(stdout, *result.Setup)
+		}
+		return exitSuccess
 	}
 	owner, err := platform.Acquire(paths, ownerOptions)
 	if err != nil {
@@ -133,6 +172,16 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		}
 	}()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
+	var configurationPacks *configpack.Service
+	if options.configPackID != "" {
+		configurationPacks, err = newConfigurationPackService(stateStore)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if err := configurationPacks.ValidateAssignment(context.Background(), options.configPackID, options.configVersion); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 
 	if newAuthenticator == nil {
 		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileSetupInvalid, errors.New("profile authenticator is unavailable")), diagnosticSink)
@@ -172,35 +221,28 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		Repository:             stateStore,
 		Discoverer:             profileDiscoverer{resolver: resolver},
 		HomeProvisioner:        homeProvisioner,
-		ReferencedHomeResolver: platform.NewReferencedHomeResolver(paths.ManagedHomes),
+		ReferencedHomeResolver: platform.NewReferencedHomeResolver(paths.ManagedHomes, paths.ProfileQuarantine),
 		Authenticator:          authenticator,
 	})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	request := profilefeature.SetupRequest{
-		Alias:              alias,
-		DisplayName:        options.displayName,
-		CodexOverride:      options.codexBin,
-		ReferencedHomePath: options.identityHome,
-		AuthMethod:         options.authMethod,
-		NonInteractive:     options.nonInteractive,
-		Stdin:              input,
-		Stdout:             stderr,
-		Stderr:             stderr,
+		Alias:                    alias,
+		DisplayName:              options.displayName,
+		CodexOverride:            options.codexBin,
+		ReferencedHomePath:       options.identityHome,
+		AuthMethod:               options.authMethod,
+		NonInteractive:           options.nonInteractive,
+		Stdin:                    input,
+		Stdout:                   stderr,
+		Stderr:                   stderr,
+		ConfigurationPackID:      options.configPackID,
+		ConfigurationPackVersion: options.configVersion,
 	}
 	result, err := workflow.Add(context.Background(), request)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	if options.configPackID != "" {
-		configurationPacks, err := newConfigurationPackService(stateStore)
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		if _, err := configurationPacks.Assign(context.Background(), result.Profile.Alias, options.configPackID, options.configVersion); err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
 	}
 	if options.json {
 		if err := writeServiceJSON(stdout, result); err != nil {
@@ -534,8 +576,8 @@ func runProfileRegistryCommand(command, alias string, options profileOptions, in
 func commandProfileIdentity(item httpapi.CommandProfile) profilefeature.IdentityProfile {
 	return profilefeature.IdentityProfile{
 		ID: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, Email: item.Email, Workspace: item.Workspace,
-		Status: item.Status, IdentityHomeOwnership: item.IdentityHomeOwnership,
-		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected,
+		Status: item.Status, IdentityHomeID: item.IdentityHomeID, IdentityHomeOwnership: item.IdentityHomeOwnership,
+		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }
 

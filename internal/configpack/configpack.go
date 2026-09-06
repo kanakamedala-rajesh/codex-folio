@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pelletier/go-toml/v2"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 )
 
@@ -39,7 +40,7 @@ const (
 	maxPackBytes   = 8 << 20
 )
 
-var tomlAssignment = regexp.MustCompile(`(?m)(^|[,{}])[[:space:]]*["']?([A-Za-z0-9_.-]+)["']?[[:space:]]*=`)
+var literalSecretText = regexp.MustCompile(`(?im)(?:^|[\s{,])["']?(?:token|password|secret|credential|authorization|api[-_ ]?key|private[-_ ]?key)["']?\s*[:=]\s*["']?[A-Za-z0-9+/_.=-]{4,}|authorization\s*:\s*bearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 
 var (
 	ErrInvalid               = errors.New("configuration pack is invalid")
@@ -78,6 +79,7 @@ type ProfileTarget struct {
 	Status        string
 	HomeOwnership string
 	IdentityHome  string
+	ActiveLaunch  bool
 }
 
 type Change struct {
@@ -117,6 +119,7 @@ type Repository interface {
 	GetConfigurationOverrides(context.Context, string) (map[string]string, error)
 	SetConfigurationOverride(context.Context, string, string, string) error
 	GetConfigurationProfile(context.Context, string) (ProfileTarget, error)
+	WithStoppedConfigurationProfile(context.Context, string, func(ProfileTarget) error) error
 }
 
 type Projector interface {
@@ -301,12 +304,8 @@ func (service *Service) Approve(ctx context.Context, id, version string) (Pack, 
 
 func (service *Service) Assign(ctx context.Context, alias, id, version string) (Assignment, error) {
 	ctx = contextOrBackground(ctx)
-	pack, err := service.repository.GetConfigurationPack(ctx, id, version)
-	if err != nil {
+	if err := service.ValidateAssignment(ctx, id, version); err != nil {
 		return Assignment{}, err
-	}
-	if pack.State != StateApproved {
-		return Assignment{}, apperrors.New(apperrors.ConfigurationPackNotApproved, ErrNotApproved)
 	}
 	target, err := service.repository.GetConfigurationProfile(ctx, alias)
 	if err != nil {
@@ -316,6 +315,17 @@ func (service *Service) Assign(ctx context.Context, alias, id, version string) (
 		return Assignment{}, apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, ErrAssignmentInvalid)
 	}
 	return service.repository.AssignConfigurationPack(ctx, alias, id, version)
+}
+
+func (service *Service) ValidateAssignment(ctx context.Context, id, version string) error {
+	pack, err := service.repository.GetConfigurationPack(contextOrBackground(ctx), id, version)
+	if err != nil {
+		return err
+	}
+	if pack.State != StateApproved {
+		return apperrors.New(apperrors.ConfigurationPackNotApproved, ErrNotApproved)
+	}
+	return nil
 }
 
 func (service *Service) SetOverride(ctx context.Context, alias, path, content string) error {
@@ -352,14 +362,15 @@ func (service *Service) Project(ctx context.Context, alias string) (ProjectionRe
 	if err != nil {
 		return ProjectionResult{}, err
 	}
-	target, err := service.repository.GetConfigurationProfile(ctx, alias)
-	if err != nil {
-		return ProjectionResult{}, err
-	}
-	if target.Status != TargetStatusReady || target.HomeOwnership != TargetHomeOwnershipManaged || strings.TrimSpace(target.IdentityHome) == "" {
-		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, ErrAssignmentInvalid)
-	}
-	result, err := service.projector.Project(ctx, target.IdentityHome, merged)
+	var result ProjectionResult
+	err = service.repository.WithStoppedConfigurationProfile(ctx, alias, func(target ProfileTarget) error {
+		if target.Status != TargetStatusReady || target.HomeOwnership != TargetHomeOwnershipManaged || strings.TrimSpace(target.IdentityHome) == "" || target.ActiveLaunch {
+			return apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, ErrAssignmentInvalid)
+		}
+		var projectErr error
+		result, projectErr = service.projector.Project(ctx, target.IdentityHome, merged)
+		return projectErr
+	})
 	if err != nil {
 		if apperrors.Code(err) == apperrors.ConfigurationPackProjectionFailed {
 			return ProjectionResult{}, err
@@ -480,7 +491,13 @@ func validateFiles(files map[string]string) error {
 		if !utf8.ValidString(content) || strings.ContainsRune(content, '\x00') || len(content) > maxFileBytes {
 			return apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
 		}
-		if isTOMLPath(path) && (!validTOMLStructure(content) || containsLiteralSecret(content)) {
+		if !supportedPackFile(path) {
+			return apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+		}
+		if literalSecretText.MatchString(content) {
+			return apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+		}
+		if isTOMLPath(path) && !validNonSecretTOML(content) {
 			return apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
 		}
 		total += len(content)
@@ -495,44 +512,14 @@ func isTOMLPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".toml") || strings.EqualFold(path, "plugins.lock")
 }
 
-func validTOMLStructure(content string) bool {
-	var stack []rune
-	var quote rune
-	escaped, comment := false, false
-	runes := []rune(content)
-	for _, character := range runes {
-		if comment {
-			if character == '\n' {
-				comment = false
-			}
-			continue
-		}
-		if quote != 0 {
-			if quote == '"' && character == '\\' && !escaped {
-				escaped = true
-				continue
-			}
-			if character == quote && !escaped {
-				quote = 0
-			}
-			escaped = false
-			continue
-		}
-		switch character {
-		case '#':
-			comment = true
-		case '\'', '"':
-			quote = character
-		case '[', '{':
-			stack = append(stack, character)
-		case ']', '}':
-			if len(stack) == 0 || (character == ']' && stack[len(stack)-1] != '[') || (character == '}' && stack[len(stack)-1] != '{') {
-				return false
-			}
-			stack = stack[:len(stack)-1]
-		}
-	}
-	return quote == 0 && len(stack) == 0
+func supportedPackFile(path string) bool {
+	extension := strings.ToLower(filepath.Ext(path))
+	return isTOMLPath(path) || extension == ".md" || extension == ".rules"
+}
+
+func validNonSecretTOML(content string) bool {
+	var document map[string]any
+	return toml.Unmarshal([]byte(content), &document) == nil && !containsLiteralSecret(document)
 }
 
 func validatePath(path string) error {
@@ -568,19 +555,31 @@ func forbiddenPart(part string) bool {
 	return strings.HasSuffix(lower, ".sqlite3") || strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".log") || strings.HasSuffix(lower, ".sock")
 }
 
-func containsLiteralSecret(content string) bool {
-	for _, match := range tomlAssignment.FindAllStringSubmatch(content, -1) {
-		key := strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(match[2]))
+func containsLiteralSecret(document map[string]any) bool {
+	for name, value := range document {
+		key := strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(name))
 		if strings.HasSuffix(key, "_env") || strings.HasSuffix(key, "_env_var") || strings.HasSuffix(key, "_variable") || strings.HasSuffix(key, "_ref") || strings.HasSuffix(key, "_reference") || strings.HasSuffix(key, "_name") {
-			continue
-		}
-		for _, part := range strings.Split(key, "_") {
-			if part == "pat" || part == "token" || part == "password" || part == "secret" || part == "authorization" || part == "credential" {
+			// Reference names are declarative; their values are not credentials.
+		} else {
+			for _, part := range strings.Split(key, "_") {
+				switch part {
+				case "pat", "pats", "token", "tokens", "password", "passwords", "secret", "secrets", "authorization", "authorizations", "credential", "credentials", "oauth":
+					return true
+				}
+			}
+			if strings.Contains(key, "api_key") || strings.Contains(key, "private_key") {
 				return true
 			}
 		}
-		if strings.Contains(key, "api_key") || strings.Contains(key, "private_key") {
+		if nested, ok := value.(map[string]any); ok && containsLiteralSecret(nested) {
 			return true
+		}
+		if entries, ok := value.([]map[string]any); ok {
+			for _, nested := range entries {
+				if containsLiteralSecret(nested) {
+					return true
+				}
+			}
 		}
 	}
 	return false

@@ -206,7 +206,7 @@ func readyLaunchStore(t *testing.T) (*Store, vault.Vault, string, string) {
 		_ = stateStore.Close()
 		t.Fatalf("PromotePendingProfile() error = %v", err)
 	}
-	if _, err := stateStore.CompleteInitialSelection(ctx, profileID); err != nil {
+	if _, err := stateStore.CompleteInitialSelection(ctx, profileID, "", ""); err != nil {
 		_ = stateStore.Close()
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}

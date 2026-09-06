@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -19,23 +19,25 @@ import (
 // output is streamed to the caller; account/read output is captured only as a
 // structured authentication response.
 type CommandRunner func(context.Context, string, []string, []string, io.Reader, io.Writer, io.Writer) error
+type appServerRunner func(context.Context, string, []string, string, int) ([]byte, error)
 
 // Authenticator delegates all authentication and status checks to Codex.
 type Authenticator struct {
-	run CommandRunner
+	run       CommandRunner
+	appServer appServerRunner
 }
 
 var errAccountReadUnavailable = errors.New("Codex account/read is unavailable")
 
 func NewAuthenticator() *Authenticator {
-	return NewAuthenticatorWithCommandRunner(runCommand)
+	return &Authenticator{run: runCommand, appServer: runAppServer}
 }
 
 func NewAuthenticatorWithCommandRunner(run CommandRunner) *Authenticator {
 	if run == nil {
 		run = runCommand
 	}
-	return &Authenticator{run: run}
+	return &Authenticator{run: run, appServer: appServerWithCommandRunner(run)}
 }
 
 func (authenticator *Authenticator) Authenticate(ctx context.Context, request profile.AuthenticationRequest) error {
@@ -125,18 +127,9 @@ type accountRateLimitsResponse struct {
 }
 
 func (authenticator *Authenticator) readAccount(ctx context.Context, request profile.AuthenticationRequest) (bool, error) {
-	var output bytes.Buffer
-	err := authenticator.run(
-		ctx,
-		request.Discovery.Executable,
-		[]string{"app-server", "--stdio"},
-		codexEnvironment(request.IdentityHome),
-		strings.NewReader("{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex-folio\",\"version\":\"0.0.1-alpha\"}}}\n{\"method\":\"initialized\"}\n{\"method\":\"account/read\",\"id\":2,\"params\":{\"refreshToken\":false}}\n"),
-		&output,
-		io.Discard,
-	)
+	output, err := authenticator.appServer(ctx, request.Discovery.Executable, codexEnvironment(request.IdentityHome), `{"method":"account/read","id":2,"params":{"refreshToken":false}}`, 2)
 
-	scanner := bufio.NewScanner(&output)
+	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Buffer(make([]byte, 1024), 64*1024)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
@@ -168,18 +161,9 @@ func (authenticator *Authenticator) readAccount(ctx context.Context, request pro
 }
 
 func (authenticator *Authenticator) readWorkspaceAccount(ctx context.Context, request profile.AuthenticationRequest) (string, error) {
-	var output bytes.Buffer
-	err := authenticator.run(
-		ctx,
-		request.Discovery.Executable,
-		[]string{"app-server", "--stdio"},
-		codexEnvironment(request.IdentityHome),
-		strings.NewReader("{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex-folio\",\"version\":\"0.0.1-alpha\"}}}\n{\"method\":\"initialized\"}\n{\"method\":\"account/rateLimits/read\",\"id\":3}\n"),
-		&output,
-		io.Discard,
-	)
+	output, err := authenticator.appServer(ctx, request.Discovery.Executable, codexEnvironment(request.IdentityHome), `{"method":"account/rateLimits/read","id":3}`, 3)
 
-	scanner := bufio.NewScanner(&output)
+	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Buffer(make([]byte, 1024), 64*1024)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
@@ -219,7 +203,7 @@ func codexEnvironment(identityHome string) []string {
 	filtered := make([]string, 0, len(environment)+1)
 	for _, entry := range environment {
 		name, _, found := strings.Cut(entry, "=")
-		if found && strings.EqualFold(name, "CODEX_HOME") {
+		if found && sameEnvironmentName(name, "CODEX_HOME") {
 			continue
 		}
 		filtered = append(filtered, entry)
@@ -228,12 +212,84 @@ func codexEnvironment(identityHome string) []string {
 }
 
 func runCommand(ctx context.Context, executable string, args []string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	command := exec.CommandContext(ctx, executable, args...)
+	command := codexCommand(ctx, executable, args...)
 	command.Env = environment
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
 	return command.Run()
+}
+
+func appServerWithCommandRunner(run CommandRunner) appServerRunner {
+	return func(ctx context.Context, executable string, environment []string, request string, _ int) ([]byte, error) {
+		var output bytes.Buffer
+		input := "{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex-folio\",\"version\":\"0.0.1-alpha\"}}}\n{\"method\":\"initialized\"}\n" + request + "\n"
+		err := run(ctx, executable, []string{"app-server", "--stdio"}, environment, strings.NewReader(input), &output, io.Discard)
+		return output.Bytes(), err
+	}
+}
+
+func runAppServer(ctx context.Context, executable string, environment []string, request string, responseID int) ([]byte, error) {
+	command := codexCommand(ctx, executable, "app-server", "--stdio")
+	command.Env = environment
+	command.Stderr = io.Discard
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	return exchangeAppServer(stdin, stdout, command.Wait, request, responseID)
+}
+
+func exchangeAppServer(stdin io.WriteCloser, stdout io.Reader, wait func() error, request string, responseID int) ([]byte, error) {
+	finish := func() error {
+		_ = stdin.Close()
+		return wait()
+	}
+	if _, err := io.WriteString(stdin, "{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex-folio\",\"version\":\"0.0.1-alpha\"}}}\n"); err != nil {
+		_ = finish()
+		return nil, err
+	}
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024), 64*1024)
+	for scanner.Scan() {
+		var envelope struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &envelope) == nil && bytes.Equal(bytes.TrimSpace(envelope.ID), []byte("1")) {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		_ = finish()
+		return nil, err
+	}
+	if _, err := io.WriteString(stdin, "{\"method\":\"initialized\"}\n"+request+"\n"); err != nil {
+		_ = finish()
+		return nil, err
+	}
+	wantID := []byte(fmt.Sprint(responseID))
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		var envelope struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if json.Unmarshal(line, &envelope) == nil && bytes.Equal(bytes.TrimSpace(envelope.ID), wantID) {
+			waitErr := finish()
+			return append(line, '\n'), waitErr
+		}
+	}
+	waitErr := finish()
+	if scanner.Err() != nil {
+		return nil, scanner.Err()
+	}
+	return nil, waitErr
 }
 
 func outputOrDiscard(output io.Writer) io.Writer {

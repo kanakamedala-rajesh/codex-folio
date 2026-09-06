@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,47 @@ import (
 	"venkatasudha.com/codex-folio/internal/store"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
+
+type runningProfileAuthenticationService struct{}
+
+func (runningProfileAuthenticationService) Authenticate(_ context.Context, request httpapi.CommandProfileAuthenticationRequest, output io.Writer) (httpapi.CommandProfileAuthenticationResult, error) {
+	_, _ = io.WriteString(output, "device code: ABCD\n")
+	result := profilefeature.SetupResult{Profile: profilefeature.IdentityProfile{ID: "profile-1", Alias: request.Alias, Status: profilefeature.StatusReady, Selected: true}}
+	return httpapi.CommandProfileAuthenticationResult{Setup: &result}, nil
+}
+
+func TestProfileAddCLIReusesRunningService(t *testing.T) {
+	paths := launchTestPaths(t)
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{ProfileAuthentication: runningProfileAuthenticationService{}, CommandToken: "profile-auth-token"})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "profile-auth-token"}); err != nil {
+		t.Fatalf("PublishClient() error = %v", err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close(); _ = owner.Close() })
+	var stdout, stderr bytes.Buffer
+	code := runProfileWithInputAndDependencies(
+		[]string{"add", "Work", "--device-code", "--non-interactive", "--json"}, strings.NewReader(""), &stdout, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil }, nil,
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			return nil, errors.New("must reuse service")
+		},
+		nil, nil, nil,
+	)
+	if code != exitSuccess || !strings.Contains(stderr.String(), "device code: ABCD") || !strings.Contains(stdout.String(), `"alias":"Work"`) {
+		t.Fatalf("exit/stdout/stderr = %d/%q/%q", code, stdout.String(), stderr.String())
+	}
+}
 
 func TestProfileAddCLIComposesStoreHomeAndCodexWithoutPrintingHomePath(t *testing.T) {
 	stateRoot := filepath.Join(testServiceTempDir(t), "state")
@@ -476,7 +518,7 @@ func TestProfileLifecycleCLIQuarantinesRestoresAndPurgesManagedHome(t *testing.T
 			t.Fatalf("PromotePendingProfile(%q) error = %v", item.alias, err)
 		}
 		if index == 0 {
-			if _, err := stateStore.CompleteInitialSelection(ctx, item.id); err != nil {
+			if _, err := stateStore.CompleteInitialSelection(ctx, item.id, "", ""); err != nil {
 				t.Fatalf("CompleteInitialSelection() error = %v", err)
 			}
 		}

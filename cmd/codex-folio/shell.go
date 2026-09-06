@@ -289,6 +289,9 @@ func writeShellIntegration(filesystem platform.FileSystem, path, content, expect
 	if err := filesystem.MkdirAll(directory, 0o700); err != nil {
 		return apperrors.New(apperrors.CLIShellIntegrationFailed, err)
 	}
+	if err := filesystem.EnforcePrivatePermissions(directory); err != nil {
+		return apperrors.New(apperrors.CLIShellIntegrationFailed, err)
+	}
 	if err := ensureShellIntegrationDirectory(filesystem, directory); err != nil {
 		return err
 	}
@@ -350,7 +353,10 @@ func writeShellIntegrationFile(filesystem platform.FileSystem, path, content str
 	if writeErr != nil {
 		return writeErr
 	}
-	return closeErr
+	if closeErr != nil {
+		return closeErr
+	}
+	return filesystem.EnforcePrivatePermissions(path)
 }
 
 func ensureShellIntegrationDirectory(filesystem platform.FileSystem, directory string) error {
@@ -428,15 +434,15 @@ func validateShellIntegration(content []byte, path, expectedVersion string) erro
 	return apperrors.New(apperrors.CLIShellIntegrationInvalid, errors.New("generated shell integration has an unknown name"))
 }
 
-func validateShellIntegrationFor(content []byte, shell, kind, expectedVersion string) error {
+func validateShellIntegrationFor(content []byte, shell, kind, _ string) error {
 	header, _, err := parseShellIntegration(content)
 	if err != nil {
 		return apperrors.New(apperrors.CLIShellIntegrationInvalid, err)
 	}
-	if header.Format != shellIntegrationFormat || header.Shell != shell || header.Kind != kind || header.Version != expectedVersion {
+	if header.Format != shellIntegrationFormat || header.Shell != shell || header.Kind != kind {
 		return apperrors.New(apperrors.CLIShellIntegrationInvalid, errors.New("generated shell integration is incompatible"))
 	}
-	if string(content) != renderShellIntegration(shell, kind, expectedVersion) {
+	if string(content) != renderShellIntegration(shell, kind, header.Version) {
 		return apperrors.New(apperrors.CLIShellIntegrationInvalid, errors.New("generated shell integration was changed"))
 	}
 	return nil

@@ -322,13 +322,24 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if err := launches.workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	profileAuthentication, err := newProfileAuthenticationCommandService(paths, stateStore, configurationPacks, codexadapter.NewResolver(codexadapter.ResolverOptions{}), codexadapter.NewAuthenticator())
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Launches: launches, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()

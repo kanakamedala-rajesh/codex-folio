@@ -42,7 +42,7 @@ func runSelectWithDependencies(args []string, input io.Reader, stdout, stderr io
 		if response.Selected == nil {
 			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
 		}
-		result := profile.SelectionResult{Profile: profile.IdentityProfile{ID: response.Selected.ID, Alias: response.Selected.Alias, DisplayName: response.Selected.DisplayName, Status: profile.StatusReady, Selected: true}}
+		result := profile.SelectionResult{Profile: selectionProfileIdentity(*response.Selected)}
 		if response.Warning != "" {
 			result.Warnings = []string{response.Warning}
 		}
@@ -57,9 +57,21 @@ func runSelectWithDependencies(args []string, input io.Reader, stdout, stderr io
 	})
 }
 
+func selectionProfileIdentity(item httpapi.CommandSelectionProfile) profile.IdentityProfile {
+	return profile.IdentityProfile{
+		ID: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, Email: item.Email, Workspace: item.Workspace,
+		Status: item.Status, IdentityHomeID: item.IdentityHomeID, IdentityHomeOwnership: item.IdentityHomeOwnership,
+		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+	}
+}
+
 func runInteractiveSelectionWithDependencies(input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, launchSelected func(string) int, diagnosticSink diagnostics.Sink) int {
+	return runInteractiveSelectionWithOptions(input, stdout, stderr, resolvePaths, openStore, launchSelected, diagnosticSink, selectionOptions{})
+}
+
+func runInteractiveSelectionWithOptions(input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, launchSelected func(string) int, diagnosticSink diagnostics.Sink, options selectionOptions) int {
 	chosen := ""
-	code := withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, selectionOptions{}, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
+	code := withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, options, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		response, err := client.GetSelection(context.Background())
 		if err != nil {
 			return err

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/vault"
@@ -84,7 +85,7 @@ func TestProfileStatePersistsEachSetupStageAndKeepsHomeOpaque(t *testing.T) {
 	if ready.Status != profile.StatusReady || ready.Selected {
 		t.Fatalf("ready = %#v, want ready and not selected before initial selection", ready)
 	}
-	selected, err := stateStore.CompleteInitialSelection(ctx, "profile-1")
+	selected, err := stateStore.CompleteInitialSelection(ctx, "profile-1", "", "")
 	if err != nil {
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}
@@ -127,6 +128,37 @@ func TestProfileStateRejectsAliasCollisionAndIncompletePromotion(t *testing.T) {
 	}
 	if _, err := stateStore.PromotePendingProfile(ctx, first.ID); err == nil || apperrors.Code(err) != apperrors.ProfileValidationFailed {
 		t.Fatalf("incomplete promotion error = %v, want validation-failed", err)
+	}
+}
+
+func TestProfileSelectionAndPackAssignmentCommitTogether(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-1", Alias: "Work", DisplayName: "Work"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.SetManagedHome(ctx, "profile-1", "home-1", filepath.Join(t.TempDir(), "home")); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, "profile-1", stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1", "missing", "1"); !errors.Is(err, configpack.ErrNotFound) {
+		t.Fatalf("CompleteInitialSelection() error = %v, want missing pack", err)
+	}
+	pending, err := stateStore.GetPendingProfile(ctx, "profile-1")
+	if err != nil || pending.Status != profile.StatusPending || pending.Stages.Selection {
+		t.Fatalf("pending after assignment failure = %#v/%v", pending, err)
+	}
+	var selected int
+	if err := stateStore.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM selected_profile WHERE profile_id = 'profile-1'`).Scan(&selected); err != nil || selected != 0 {
+		t.Fatalf("selected rows = %d/%v, want 0", selected, err)
 	}
 }
 
@@ -198,7 +230,7 @@ func TestSelectProfilePersistsAndWarnsWithoutChangingRunningLaunches(t *testing.
 	ctx := context.Background()
 	firstHome := addReadyProfile(t, stateStore, "profile-1", "Work")
 	addReadyProfile(t, stateStore, "profile-2", "Personal")
-	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1"); err != nil {
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1", "", ""); err != nil {
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}
 	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{
@@ -418,13 +450,16 @@ func TestProfileRemovalHonorsOwnershipSelectionAndRunningLaunches(t *testing.T) 
 	ctx := context.Background()
 	managedHome := addReadyProfile(t, stateStore, "profile-1", "Work")
 	_ = addReadyProfile(t, stateStore, "profile-2", "Personal")
-	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1"); err != nil {
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1", "", ""); err != nil {
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}
 
 	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(managedHome, "codex"), WorkingDirectory: managedHome})
 	if err != nil {
 		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+	if _, err := stateStore.BeginProfileRemoval(ctx, "Work", "Personal"); !errors.Is(err, profile.ErrRunningLaunch) {
+		t.Fatalf("BeginProfileRemoval() pending error = %v, want ErrRunningLaunch", err)
 	}
 	if err := stateStore.MarkManagedLaunchStarted(ctx, plan.LeaseID, 42); err != nil {
 		t.Fatalf("MarkManagedLaunchStarted() error = %v", err)
@@ -499,6 +534,17 @@ func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testi
 	if _, err := stateStore.PromotePendingProfile(ctx, "profile-external"); err != nil {
 		t.Fatalf("PromotePendingProfile() error = %v", err)
 	}
+	for _, statement := range []string{
+		`INSERT INTO usage_metrics (metric_key, unit, value_kind, created_at) VALUES ('requests', 'count', 'count', '2026-09-06T00:00:00Z')`,
+		`INSERT INTO metric_provenance (provenance_id, source, captured_at, freshness, availability) VALUES ('source-1', 'derived', '2026-09-06T00:00:00Z', 'fresh', 'available')`,
+		`INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id) VALUES ('availability-1', 'profile-external', 'requests', 'available', '2026-09-06T00:00:00Z', 'source-1')`,
+		`INSERT INTO usage_observations (observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, observed_at) VALUES ('observation-1', 'profile-external', 'requests', 'source-1', 'availability-1', 1, 'count', '2026-09-06T00:00:00Z')`,
+		`INSERT INTO alerts (alert_id, profile_id, category, severity, state, created_at) VALUES ('alert-1', 'profile-external', 'capacity', 'warning', 'open', '2026-09-06T00:00:00Z')`,
+	} {
+		if _, err := stateStore.db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seed analytics: %v", err)
+		}
+	}
 	record, err := stateStore.BeginProfileRemoval(ctx, "External", "")
 	if err != nil || record.Action != profile.RemovalDeregistered {
 		t.Fatalf("BeginProfileRemoval() = %#v, %v", record, err)
@@ -508,6 +554,12 @@ func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testi
 	}
 	if _, err := stateStore.GetProfile(ctx, "External"); !errors.Is(err, profile.ErrNotFound) {
 		t.Fatalf("GetProfile() error = %v, want not found", err)
+	}
+	for _, table := range []string{"metric_availability", "usage_observations", "alerts"} {
+		var count int
+		if err := stateStore.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE profile_id = 'profile-external'`).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("preserved %s rows = %d, error = %v, want 1", table, count, err)
+		}
 	}
 }
 

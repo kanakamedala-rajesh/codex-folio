@@ -2,6 +2,8 @@ package configpack
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -64,6 +66,7 @@ type priorFile struct {
 	install   bool
 	moved     bool
 	installed bool
+	preserve  bool
 }
 
 func (projector *filesystemProjector) Project(ctx context.Context, home string, files map[string]string) (ProjectionResult, error) {
@@ -97,7 +100,7 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 		return ProjectionResult{}, err
 	}
 	affected := make(map[string]bool, len(paths)+len(previous)+1)
-	for _, path := range previous {
+	for path := range previous {
 		affected[path] = false
 	}
 	for _, path := range paths {
@@ -133,19 +136,11 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 			return ProjectionResult{}, projectionError(err)
 		}
 	}
-	manifest, err := json.Marshal(paths)
-	if err != nil {
-		return ProjectionResult{}, projectionError(err)
-	}
-	manifestStage := filepath.Join(stage, "next", projectionManifest)
-	if err := projector.fs.MkdirAll(filepath.Dir(manifestStage), 0o700); err != nil {
-		return ProjectionResult{}, projectionError(err)
-	}
-	if err := projector.fs.WriteFile(manifestStage, manifest, 0o600); err != nil {
-		return ProjectionResult{}, projectionError(err)
-	}
-
 	prior := make([]priorFile, len(affectedPaths))
+	manifestEntries := make(map[string]string, len(paths))
+	for path, content := range files {
+		manifestEntries[path] = contentDigest(content)
+	}
 	for index, path := range affectedPaths {
 		target := filepath.Join(home, filepath.FromSlash(path))
 		if err := projector.rejectSymlinkParents(home, path); err != nil {
@@ -163,11 +158,35 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 			return ProjectionResult{}, projectionError(errors.New("projection target is a directory"))
 		default:
 			prior[index].exists = true
+			content, readErr := projector.fs.ReadFile(target)
+			if readErr != nil {
+				return ProjectionResult{}, projectionError(readErr)
+			}
+			previousDigest, tracked := previous[path]
+			desired, installing := files[path]
+			if path != projectionManifest && (!tracked || previousDigest == "" || contentDigest(string(content)) != previousDigest) && (!installing || string(content) != desired) {
+				prior[index].preserve = true
+				delete(manifestEntries, path)
+			}
 		}
+	}
+	manifest, err := json.Marshal(manifestEntries)
+	if err != nil {
+		return ProjectionResult{}, projectionError(err)
+	}
+	manifestStage := filepath.Join(stage, "next", projectionManifest)
+	if err := projector.fs.MkdirAll(filepath.Dir(manifestStage), 0o700); err != nil {
+		return ProjectionResult{}, projectionError(err)
+	}
+	if err := projector.fs.WriteFile(manifestStage, manifest, 0o600); err != nil {
+		return ProjectionResult{}, projectionError(err)
 	}
 
 	applied := make([]int, 0, len(affectedPaths))
 	for index, path := range affectedPaths {
+		if prior[index].preserve {
+			continue
+		}
 		applied = append(applied, index)
 		if err := contextError(ctx); err != nil {
 			keepStage = !projector.rollback(applied, prior)
@@ -202,21 +221,33 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 	return ProjectionResult{Digest: DigestFiles(files), Files: paths}, nil
 }
 
-func (projector *filesystemProjector) previousProjection(home string) ([]string, error) {
+func (projector *filesystemProjector) previousProjection(home string) (map[string]string, error) {
 	encoded, err := projector.fs.ReadFile(filepath.Join(home, projectionManifest))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 	if err != nil {
 		return nil, projectionError(err)
 	}
-	var paths []string
-	if json.Unmarshal(encoded, &paths) != nil || len(paths) > maxFiles {
+	paths := make(map[string]string)
+	if json.Unmarshal(encoded, &paths) != nil {
+		var legacy []string
+		if json.Unmarshal(encoded, &legacy) != nil || len(legacy) > maxFiles {
+			return nil, projectionError(ErrProjectionFailed)
+		}
+		for _, path := range legacy {
+			paths[path] = ""
+		}
+	}
+	if len(paths) > maxFiles {
 		return nil, projectionError(ErrProjectionFailed)
 	}
 	seen := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
+	for path, digest := range paths {
 		if validatePath(path) != nil {
+			return nil, projectionError(ErrProjectionFailed)
+		}
+		if digest != "" && (len(digest) != 64 || !isHex(digest)) {
 			return nil, projectionError(ErrProjectionFailed)
 		}
 		normalized := strings.ToLower(filepath.ToSlash(path))
@@ -226,6 +257,16 @@ func (projector *filesystemProjector) previousProjection(home string) ([]string,
 		seen[normalized] = struct{}{}
 	}
 	return paths, nil
+}
+
+func contentDigest(content string) string {
+	digest := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(digest[:])
+}
+
+func isHex(value string) bool {
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func (projector *filesystemProjector) rejectSymlinkParents(home, path string) error {

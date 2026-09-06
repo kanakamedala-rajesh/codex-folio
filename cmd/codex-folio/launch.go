@@ -76,9 +76,6 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 	report, err := launch.Discover(resolver, options.codexBin)
 	return withLaunchCommandService(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
 		if err != nil {
-			if _, stateErr := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "unavailable", Alias: alias}); stateErr != nil {
-				return writeServiceErrorWithDiagnostics(stderr, stateErr, diagnosticSink)
-			}
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		prepared, prepareErr := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
@@ -92,6 +89,9 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
 		}
 		plan := *prepared.Plan
+		if prepared.Warning != "" {
+			_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", prepared.Warning)
+		}
 		abandon := func() {
 			_, _ = client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "abandoned", LeaseID: plan.LeaseID})
 		}
@@ -298,7 +298,7 @@ func newForegroundProcess(plan launch.Plan, stdin io.Reader, stdout, stderr io.W
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	command := exec.Command(plan.Executable, plan.Arguments...)
+	command := foregroundCommand(plan.Executable, plan.Arguments...)
 	command.Dir = plan.WorkingDirectory
 	command.Env = environmentWithDelta(plan.Environment)
 	command.Stdin = stdin
@@ -350,13 +350,19 @@ func environmentWithDelta(delta map[string]string) []string {
 	sort.Strings(keys)
 	blocked := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
-		blocked[strings.ToLower(key)] = struct{}{}
+		blocked[key] = struct{}{}
 	}
 	environment := make([]string, 0, len(os.Environ())+len(keys))
 	for _, entry := range os.Environ() {
 		name, _, found := strings.Cut(entry, "=")
 		if found {
-			if _, skip := blocked[strings.ToLower(name)]; skip {
+			for key := range blocked {
+				if platform.SameEnvironmentName(name, key) {
+					found = false
+					break
+				}
+			}
+			if !found {
 				continue
 			}
 		}

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestForegroundSignalsKeepParentAliveWithoutForwardingUnix(t *testing.T) {
+func TestForegroundSignalsForwardToChildUnix(t *testing.T) {
 	process := &launchTestProcess{}
 	stop := forwardForegroundSignals(process)
 	defer stop()
@@ -30,7 +30,21 @@ func TestForegroundSignalsKeepParentAliveWithoutForwardingUnix(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for signal")
 	}
-	if len(process.signals) != 0 {
-		t.Fatalf("forwarded signals = %v, want none", process.signals)
+	deadline := time.Now().Add(time.Second)
+	for len(process.signals) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(process.signals) != 1 || process.signals[0] != syscall.SIGTERM {
+		t.Fatalf("forwarded signals = %v, want SIGTERM", process.signals)
+	}
+}
+
+func TestForegroundSignalsDoNotRelayTerminalGroupSignalsUnix(t *testing.T) {
+	for _, candidate := range []os.Signal{os.Interrupt, syscall.SIGHUP, syscall.SIGQUIT} {
+		for _, relayed := range foregroundSignals() {
+			if relayed == candidate {
+				t.Fatalf("foregroundSignals() = %v, must not relay %v already delivered to the foreground process group", foregroundSignals(), candidate)
+			}
+		}
 	}
 }

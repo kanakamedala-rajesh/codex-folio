@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -332,13 +333,52 @@ func (store *Store) SetConfigurationOverride(ctx context.Context, alias, path, c
 }
 
 func (store *Store) GetConfigurationProfile(ctx context.Context, alias string) (configpack.ProfileTarget, error) {
-	item, err := store.GetProfile(ctx, alias)
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	return store.configurationProfile(ctx, alias)
+}
+
+func (store *Store) WithStoppedConfigurationProfile(ctx context.Context, alias string, project func(configpack.ProfileTarget) error) error {
+	if project == nil {
+		return apperrors.New(apperrors.ConfigurationPackProjectionFailed, configpack.ErrProjectionFailed)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	target, err := store.configurationProfile(ctx, alias)
+	if err != nil {
+		return err
+	}
+	return project(target)
+}
+
+func (store *Store) configurationProfile(ctx context.Context, alias string) (configpack.ProfileTarget, error) {
+	if err := profile.ValidateAlias(alias); err != nil {
+		return configpack.ProfileTarget{}, err
+	}
+	var profileID string
+	if err := store.db.QueryRowContext(ctx, `SELECT a.profile_id FROM cli_aliases a WHERE a.alias = ? COLLATE NOCASE
+		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = a.profile_id)`, alias).Scan(&profileID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return configpack.ProfileTarget{}, profile.ErrNotFound
+		}
+		return configpack.ProfileTarget{}, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+	}
+	item, err := store.getIdentityProfile(ctx, profileID)
 	if err != nil {
 		return configpack.ProfileTarget{}, err
 	}
+	if err := store.populateIdentityHomePath(ctx, &item); err != nil {
+		return configpack.ProfileTarget{}, err
+	}
+	var active int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_launches WHERE profile_id = ? AND state IN ('pending', 'running')`, item.ID).Scan(&active); err != nil {
+		return configpack.ProfileTarget{}, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+	}
 	return configpack.ProfileTarget{
 		ID: item.ID, Alias: item.Alias, Status: string(item.Status),
-		HomeOwnership: string(item.IdentityHomeOwnership), IdentityHome: item.IdentityHomePath,
+		HomeOwnership: string(item.IdentityHomeOwnership), IdentityHome: item.IdentityHomePath, ActiveLaunch: active != 0,
 	}, nil
 }
 
@@ -412,7 +452,8 @@ func validPackDigest(digest []byte, files map[string]string) bool {
 }
 
 func configurationPackVersionID(pack configpack.Pack) string {
-	return "configuration-pack-" + pack.ID + "-" + pack.Version
+	digest := sha256.Sum256([]byte(pack.ID + "\x00" + pack.Version))
+	return "configuration-pack-" + hex.EncodeToString(digest[:])
 }
 
 func configurationPackInvalid() error {

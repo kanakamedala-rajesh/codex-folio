@@ -90,7 +90,7 @@ func (lifecycle *ProfileHomeLifecycle) validate(ctx context.Context, profileID, 
 	if profileID == "" || profileID == "." || profileID == ".." || strings.ContainsAny(profileID, `/\\`) || filepath.Base(profileID) != profileID {
 		return apperrors.New(apperrors.PlatformStatePathUnsafe, errors.New("profile identifier is unsafe"))
 	}
-	if filepath.Clean(managedPath) != filepath.Join(lifecycle.managedRoot, profileID) {
+	if !SamePath(filepath.Clean(managedPath), filepath.Join(lifecycle.managedRoot, profileID)) {
 		return apperrors.New(apperrors.PlatformStatePathUnsafe, errors.New("managed Identity Home is outside its owned boundary"))
 	}
 	return nil

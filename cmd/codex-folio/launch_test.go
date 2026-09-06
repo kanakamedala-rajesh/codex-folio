@@ -509,7 +509,7 @@ func TestLaunchCLIRecoversAndRepeatedlyLaunchesTwoAuthenticatedProfiles(t *testi
 	}
 }
 
-func TestLaunchCLIMarksExistingProfileUnavailableWhenDiscoveryFails(t *testing.T) {
+func TestLaunchCLILeavesProfileReadyWhenDiscoveryFails(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	started := false
@@ -541,8 +541,8 @@ func TestLaunchCLIMarksExistingProfileUnavailableWhenDiscoveryFails(t *testing.T
 	if err != nil {
 		t.Fatalf("GetProfile() error = %v", err)
 	}
-	if item.Status != profile.StatusUnavailable {
-		t.Fatalf("profile status = %q, want unavailable", item.Status)
+	if item.Status != profile.StatusReady {
+		t.Fatalf("profile status = %q, want unchanged ready status", item.Status)
 	}
 }
 
@@ -636,7 +636,7 @@ func seedReadyLaunchProfile(t *testing.T, paths platform.Paths) vault.Vault {
 		_ = stateStore.Close()
 		t.Fatalf("PromotePendingProfile() error = %v", err)
 	}
-	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1"); err != nil {
+	if _, err := stateStore.CompleteInitialSelection(ctx, "profile-1", "", ""); err != nil {
 		_ = stateStore.Close()
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}

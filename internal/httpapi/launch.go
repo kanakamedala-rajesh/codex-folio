@@ -19,11 +19,10 @@ import (
 const maxLaunchBodySize = 1024 * 1024
 
 type CommandLaunchService interface {
-	Prepare(context.Context, launch.PrepareRequest, string) (launch.Plan, error)
+	Prepare(context.Context, launch.PrepareRequest, string) (launch.Plan, string, error)
 	MarkStarted(context.Context, string, int) error
 	MarkExited(context.Context, string, int) error
 	MarkAbandoned(context.Context, string) error
-	MarkUnavailable(context.Context, string) error
 }
 
 type CommandLaunchRequest struct {
@@ -39,7 +38,8 @@ type CommandLaunchRequest struct {
 }
 
 type CommandLaunchResponse struct {
-	Plan *launch.Plan `json:"plan,omitempty"`
+	Plan    *launch.Plan `json:"plan,omitempty"`
+	Warning string       `json:"warning,omitempty"`
 }
 
 func (client *CommandClient) Launch(ctx context.Context, input CommandLaunchRequest) (CommandLaunchResponse, error) {
@@ -106,12 +106,13 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 	var result CommandLaunchResponse
 	switch strings.TrimSpace(input.Action) {
 	case "prepare":
-		plan, actionErr := server.launches.Prepare(request.Context(), launch.PrepareRequest{
+		plan, warning, actionErr := server.launches.Prepare(request.Context(), launch.PrepareRequest{
 			Alias: input.Alias, Executable: input.Executable, WorkingDirectory: input.WorkingDirectory, Arguments: input.Arguments,
 		}, input.Version)
 		err = actionErr
 		if err == nil {
 			result.Plan = &plan
+			result.Warning = warning
 		}
 	case "started":
 		err = server.launches.MarkStarted(request.Context(), input.LeaseID, input.ProcessID)
@@ -119,8 +120,6 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 		err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus)
 	case "abandoned":
 		err = server.launches.MarkAbandoned(request.Context(), input.LeaseID)
-	case "unavailable":
-		err = server.launches.MarkUnavailable(request.Context(), input.Alias)
 	default:
 		err = apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid)
 	}

@@ -56,3 +56,16 @@ func TestReferencedHomeResolverRejectsManagedBoundaryAndSymlink(t *testing.T) {
 		}
 	}
 }
+
+func TestReferencedHomeResolverRejectsQuarantineBoundary(t *testing.T) {
+	root := t.TempDir()
+	managed := filepath.Join(root, "managed-homes")
+	quarantine := filepath.Join(root, "profile-quarantine")
+	home := filepath.Join(quarantine, "profile-1")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReferencedHomeResolver(managed, quarantine).Resolve(context.Background(), home); err == nil {
+		t.Fatal("Resolve() succeeded for quarantined managed home")
+	}
+}

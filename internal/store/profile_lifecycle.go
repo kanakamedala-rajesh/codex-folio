@@ -43,7 +43,7 @@ func (store *Store) BeginProfileRemoval(ctx context.Context, alias, replacement 
 	}
 	rollback := func() { _ = tx.Rollback() }
 	var running int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_launches WHERE profile_id = ? AND state = 'running'`, item.ID).Scan(&running); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM managed_launches WHERE profile_id = ? AND state IN ('pending', 'running')`, item.ID).Scan(&running); err != nil {
 		rollback()
 		return profile.RemovalRecord{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
@@ -245,13 +245,13 @@ func (store *Store) updateQuarantineState(ctx context.Context, profileID string,
 }
 
 func deleteProfileRows(ctx context.Context, tx *sql.Tx, profileID string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE identity_profiles SET display_name = '', email = '', workspace = '', status = 'unavailable', identity_home_id = NULL, authentication_method = 'auto' WHERE profile_id = ?`, profileID); err != nil {
+		return err
+	}
 	statements := []string{
 		`DELETE FROM correlation_evidence WHERE managed_launch_id IN (SELECT managed_launch_id FROM managed_launches WHERE profile_id = ?)`,
 		`DELETE FROM configuration_pack_overrides WHERE profile_id = ?`,
 		`DELETE FROM configuration_pack_assignments WHERE profile_id = ?`,
-		`DELETE FROM usage_observations WHERE profile_id = ?`,
-		`DELETE FROM metric_availability WHERE profile_id = ?`,
-		`DELETE FROM alerts WHERE profile_id = ?`,
 		`UPDATE observed_sessions SET profile_id = NULL WHERE profile_id = ?`,
 		`DELETE FROM managed_launches WHERE profile_id = ?`,
 		`DELETE FROM selected_profile WHERE profile_id = ?`,
@@ -260,7 +260,6 @@ func deleteProfileRows(ctx context.Context, tx *sql.Tx, profileID string) error 
 		`DELETE FROM pending_profiles WHERE pending_profile_id = ?`,
 		`DELETE FROM identity_homes WHERE profile_id = ?`,
 		`DELETE FROM cli_aliases WHERE profile_id = ?`,
-		`DELETE FROM identity_profiles WHERE profile_id = ?`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement, profileID); err != nil {

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -89,6 +90,35 @@ func TestAuthenticatorUsesAccountReadForUsableAuth(t *testing.T) {
 	}
 	if !strings.Contains(input, `"method":"account/read"`) || !strings.Contains(input, `"refreshToken":false`) {
 		t.Fatalf("account/read request = %q", input)
+	}
+}
+
+func TestAppServerHandshakeWaitsForInitializeBeforeRequest(t *testing.T) {
+	serverInput, clientInput := io.Pipe()
+	clientOutput, serverOutput := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(serverInput)
+		if !scanner.Scan() || !strings.Contains(scanner.Text(), `"method":"initialize"`) {
+			done <- errors.New("missing initialize request")
+			return
+		}
+		_, _ = io.WriteString(serverOutput, `{"id":1,"result":{}}`+"\n")
+		if !scanner.Scan() || !strings.Contains(scanner.Text(), `"method":"initialized"`) {
+			done <- errors.New("missing initialized notification")
+			return
+		}
+		if !scanner.Scan() || !strings.Contains(scanner.Text(), `"method":"account/read"`) {
+			done <- errors.New("missing account request")
+			return
+		}
+		_, _ = io.WriteString(serverOutput, `{"id":2,"result":{"account":{"type":"chatgpt"}}}`+"\n")
+		_ = serverOutput.Close()
+		done <- nil
+	}()
+	output, err := exchangeAppServer(clientInput, clientOutput, func() error { return <-done }, `{"method":"account/read","id":2}`, 2)
+	if err != nil || !strings.Contains(string(output), `"account"`) {
+		t.Fatalf("exchangeAppServer() = %q/%v", output, err)
 	}
 }
 

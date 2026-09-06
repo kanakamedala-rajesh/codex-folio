@@ -96,6 +96,34 @@ func TestResolverUsesOnlyNonMutatingVersionInvocation(t *testing.T) {
 	}
 }
 
+func TestResolverDeduplicatesSymlinkedPATHCandidate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires host-specific privileges")
+	}
+	first := t.TempDir()
+	executable := writeFakeCodex(t, first, "codex-cli 0.1.2", "")
+	second := t.TempDir()
+	if err := os.Symlink(executable, filepath.Join(second, "codex")); err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewResolver(ResolverOptions{PathEnvironment: strings.Join([]string{first, second}, string(os.PathListSeparator))})
+	if _, err := resolver.Resolve(""); err != nil {
+		t.Fatalf("Resolve() error = %v, want one canonical candidate", err)
+	}
+}
+
+func TestResolverDeduplicatesWindowsPATHCase(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path comparison")
+	}
+	directory := t.TempDir()
+	writeFakeCodex(t, directory, "codex-cli 0.1.2", "")
+	resolver := NewResolver(ResolverOptions{PathEnvironment: strings.Join([]string{directory, strings.ToUpper(directory)}, string(os.PathListSeparator))})
+	if _, err := resolver.Resolve(""); err != nil {
+		t.Fatalf("Resolve() error = %v, want case-insensitive deduplication", err)
+	}
+}
+
 func TestResolverDoesNotExposeCandidateDetailsInErrors(t *testing.T) {
 	sentinel := filepath.Join(t.TempDir(), "private-codex-candidate")
 	resolver := NewResolver(ResolverOptions{PathEnvironment: ""})

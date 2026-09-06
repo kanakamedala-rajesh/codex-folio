@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/configpack"
+	"venkatasudha.com/codex-folio/internal/launch"
 )
 
 func TestConfigurationPackStoreKeepsImmutableVersionsAndProfileLocalOverrides(t *testing.T) {
@@ -112,6 +114,61 @@ func TestConfigurationPackStoreKeepsImmutableVersionsAndProfileLocalOverrides(t 
 	}
 }
 
+type blockingProjector struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (projector blockingProjector) Project(_ context.Context, _ string, files map[string]string) (configpack.ProjectionResult, error) {
+	close(projector.entered)
+	<-projector.release
+	return configpack.ProjectionResult{Digest: configpack.DigestFiles(files)}, nil
+}
+
+func TestConfigurationProjectionExcludesConcurrentLaunchPreparation(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	home := addReadyProfile(t, stateStore, "profile-1", "Work")
+	projector := blockingProjector{entered: make(chan struct{}), release: make(chan struct{})}
+	service, err := configpack.NewService(stateStore, projector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := service.CreateDraft(ctx, "shared", "1", map[string]string{"config/base.toml": "model = \"gpt-5\"\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Approve(ctx, "shared", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Assign(ctx, "Work", "shared", "1"); err != nil {
+		t.Fatal(err)
+	}
+	projected := make(chan error, 1)
+	go func() { _, err := service.Project(ctx, "Work"); projected <- err }()
+	<-projector.entered
+	launched := make(chan error, 1)
+	go func() {
+		_, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: home})
+		launched <- err
+	}()
+	select {
+	case err := <-launched:
+		t.Fatalf("launch preparation completed during projection: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(projector.release)
+	if err := <-projected; err != nil {
+		t.Fatalf("Project() error = %v", err)
+	}
+	if err := <-launched; err != nil {
+		t.Fatalf("PrepareLaunch() error = %v", err)
+	}
+}
+
 func TestConfigurationPackStoreReportsMissingAssignment(t *testing.T) {
 	stateStore, err := openProfileTestStore(t)
 	if err != nil {
@@ -122,6 +179,14 @@ func TestConfigurationPackStoreReportsMissingAssignment(t *testing.T) {
 	_, err = stateStore.GetConfigurationPackAssignment(context.Background(), "Work")
 	if !errors.Is(err, configpack.ErrNoAssignment) {
 		t.Fatalf("GetConfigurationPackAssignment() error = %v, want no assignment", err)
+	}
+}
+
+func TestConfigurationPackVersionIDsDoNotConcatenateFields(t *testing.T) {
+	first := configurationPackVersionID(configpack.Pack{ID: "ab", Version: "c"})
+	second := configurationPackVersionID(configpack.Pack{ID: "a", Version: "bc"})
+	if first == second {
+		t.Fatalf("version IDs collide: %q", first)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/profile"
 )
 
@@ -44,12 +45,12 @@ func (store *Store) GetPendingProfile(ctx context.Context, profileID string) (pr
 	defer store.operationMu.RUnlock()
 
 	var pending profile.PendingProfile
-	var status string
+	var status, authenticationMethod string
 	var homeID sql.NullString
 	var ownership sql.NullString
 	var discovery, home, authentication, validation, selection int
 	err := store.db.QueryRowContext(ctx, `SELECT p.pending_profile_id, a.alias, p.display_name,
-		ip.status, p.identity_home_id, h.ownership,
+		ip.status, ip.authentication_method, p.identity_home_id, h.ownership,
 		s.discovery_completed, s.home_completed, s.authentication_completed,
 		s.validation_completed, s.selection_completed
 		FROM pending_profiles p
@@ -62,6 +63,7 @@ func (store *Store) GetPendingProfile(ctx context.Context, profileID string) (pr
 		&pending.Alias,
 		&pending.DisplayName,
 		&status,
+		&authenticationMethod,
 		&homeID,
 		&ownership,
 		&discovery,
@@ -77,6 +79,7 @@ func (store *Store) GetPendingProfile(ctx context.Context, profileID string) (pr
 		return profile.PendingProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
 	pending.Status = profile.Status(status)
+	pending.AuthenticationMethod = profile.AuthMethod(authenticationMethod)
 	if homeID.Valid {
 		pending.IdentityHomeID = homeID.String
 	}
@@ -624,7 +627,7 @@ func (store *Store) PromotePendingProfile(ctx context.Context, profileID string)
 	return store.getIdentityProfile(ctx, profileID)
 }
 
-func (store *Store) CompleteInitialSelection(ctx context.Context, profileID string) (profile.IdentityProfile, error) {
+func (store *Store) CompleteInitialSelection(ctx context.Context, profileID, packID, packVersion string) (profile.IdentityProfile, error) {
 	if store == nil || store.db == nil {
 		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, ErrProfileState)
 	}
@@ -644,21 +647,51 @@ func (store *Store) CompleteInitialSelection(ctx context.Context, profileID stri
 	}
 	rollback := func() { _ = tx.Rollback() }
 	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT status FROM identity_profiles WHERE profile_id = ?`, profileID).Scan(&status); err != nil {
+	var authentication, validation int
+	if err := tx.QueryRowContext(ctx, `SELECT ip.status, s.authentication_completed, s.validation_completed
+		FROM identity_profiles ip JOIN profile_setup_stages s ON s.profile_id = ip.profile_id
+		WHERE ip.profile_id = ?`, profileID).Scan(&status, &authentication, &validation); err != nil {
 		rollback()
 		if errors.Is(err, sql.ErrNoRows) {
 			return profile.IdentityProfile{}, profile.ErrNotFound
 		}
 		return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
-	if status != string(profile.StatusReady) {
+	if status != string(profile.StatusReady) && (status != string(profile.StatusPending) || authentication == 0 || validation == 0) {
 		rollback()
 		return profile.IdentityProfile{}, apperrors.New(apperrors.ProfileValidationFailed, profile.ErrValidationFailed)
+	}
+	if packID != "" {
+		var ownership, packState string
+		if err := tx.QueryRowContext(ctx, `SELECT h.ownership FROM identity_profiles ip JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id WHERE ip.profile_id = ?`, profileID).Scan(&ownership); err != nil || ownership != string(profile.HomeOwnershipManaged) {
+			rollback()
+			return profile.IdentityProfile{}, apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, configpack.ErrAssignmentInvalid)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM configuration_pack_versions WHERE configuration_pack_id = ? AND pack_version = ?`, packID, packVersion).Scan(&packState); errors.Is(err, sql.ErrNoRows) {
+			rollback()
+			return profile.IdentityProfile{}, apperrors.New(apperrors.ConfigurationPackNotFound, configpack.ErrNotFound)
+		} else if err != nil {
+			rollback()
+			return profile.IdentityProfile{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		} else if packState != string(configpack.StateApproved) {
+			rollback()
+			return profile.IdentityProfile{}, apperrors.New(apperrors.ConfigurationPackNotApproved, configpack.ErrNotApproved)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO configuration_pack_assignments (profile_id, configuration_pack_id, pack_version, assigned_at) VALUES (?, ?, ?, ?)
+			ON CONFLICT(profile_id) DO UPDATE SET configuration_pack_id = excluded.configuration_pack_id, pack_version = excluded.pack_version, assigned_at = excluded.assigned_at`, profileID, packID, packVersion, encodedNow); err != nil {
+			rollback()
+			return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE identity_profiles SET status = 'ready', updated_at = ? WHERE profile_id = ?`, encodedNow, profileID); err != nil {
+		rollback()
+		return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
 	}
 	var selected sql.NullString
 	selectErr := tx.QueryRowContext(ctx, `SELECT profile_id FROM selected_profile WHERE selection_id = 1`).Scan(&selected)
 	if errors.Is(selectErr, sql.ErrNoRows) || !selected.Valid || selected.String == "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO selected_profile (selection_id, profile_id, updated_at) VALUES (1, ?, ?)`, profileID, encodedNow); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO selected_profile (selection_id, profile_id, updated_at) VALUES (1, ?, ?)
+			ON CONFLICT(selection_id) DO UPDATE SET profile_id = excluded.profile_id, updated_at = excluded.updated_at`, profileID, encodedNow); err != nil {
 			rollback()
 			return profile.IdentityProfile{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrProfileState, err))
 		}

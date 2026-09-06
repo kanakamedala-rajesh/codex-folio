@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -256,14 +257,11 @@ func TestShellRefusesChangedOrInaccessibleIntegrationWithoutDeletingIt(t *testin
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := runShell([]string{"remove", "--shell", "bash"}, &stdout, &stderr, resolver, "0.0.1-alpha"); code != exitFailure {
-		t.Fatalf("incompatible-version remove exit code = %d, want failure; stderr = %q", code, stderr.String())
+	if code := runShell([]string{"remove", "--shell", "bash"}, &stdout, &stderr, resolver, "0.0.1-alpha"); code != exitSuccess {
+		t.Fatalf("older-version remove exit code = %d, want success; stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "CF_CLI_SHELL_INTEGRATION_INVALID") {
-		t.Fatalf("incompatible-version stderr = %q, want stable invalid code", stderr.String())
-	}
-	if got, err := os.ReadFile(result.Path); err != nil || string(got) != versioned {
-		t.Fatalf("incompatible-version content/error = %q/%v, want preserved content", got, err)
+	if _, err := os.Stat(result.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("older-version integration stat error = %v, want removed", err)
 	}
 
 	canonical := renderShellIntegration("bash", shellKindCompletion, "0.0.1-alpha")

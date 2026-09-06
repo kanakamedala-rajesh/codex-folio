@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -81,10 +80,17 @@ func (resolver *Resolver) resolvePATH() (launch.Candidate, error) {
 				continue
 			}
 			path = filepath.Clean(path)
-			if _, exists := seen[path]; exists {
+			key := path
+			if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
+				key = filepath.Clean(resolved)
+			}
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(key)
+			}
+			if _, exists := seen[key]; exists {
 				continue
 			}
-			seen[path] = struct{}{}
+			seen[key] = struct{}{}
 			candidates = append(candidates, path)
 		}
 	}
@@ -196,7 +202,7 @@ func isExecutable(info os.FileInfo) bool {
 func runVersion(path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), versionCommandTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, path, "--version").Output()
+	output, err := codexCommand(ctx, path, "--version").Output()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

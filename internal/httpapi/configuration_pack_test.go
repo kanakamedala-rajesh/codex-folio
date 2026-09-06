@@ -93,6 +93,14 @@ func (repository *commandConfigurationPackRepository) GetConfigurationProfile(co
 	return configpack.ProfileTarget{ID: "profile-1", Alias: "Work", Status: configpack.TargetStatusReady, HomeOwnership: configpack.TargetHomeOwnershipManaged, IdentityHome: tTempHome}, nil
 }
 
+func (repository *commandConfigurationPackRepository) WithStoppedConfigurationProfile(ctx context.Context, alias string, project func(configpack.ProfileTarget) error) error {
+	target, err := repository.GetConfigurationProfile(ctx, alias)
+	if err != nil {
+		return err
+	}
+	return project(target)
+}
+
 var tTempHome = "/tmp/codex-folio-test-home"
 
 func packKey(id, version string) string { return id + "@" + version }

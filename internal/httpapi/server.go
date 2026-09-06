@@ -30,20 +30,21 @@ const (
 	DefaultBootstrapTTL = 5 * time.Minute
 	DefaultSessionTTL   = 15 * time.Minute
 
-	SessionCookieName            = "codexfolio_session"
-	CSRFHeaderName               = "X-CodexFolio-CSRF"
-	CommandTokenHeader           = "X-CodexFolio-Command-Token"
-	CommandSelectionPath         = "/api/v1/command/selection"
-	CommandProfilesPath          = "/api/v1/command/profiles"
-	CommandProfileLifecyclePath  = "/api/v1/command/profile-lifecycle"
-	CommandConfigurationPackPath = "/api/v1/command/configuration-pack"
-	CommandLaunchPath            = "/api/v1/command/launch"
-	BootstrapPathName            = "/bootstrap"
-	BootstrapQueryName           = "bootstrap"
-	maxBootstrapBodySize         = 4096
-	maxSelectionBodySize         = 4096
-	maxConfigPackBodySize        = 9 * 1024 * 1024
-	randomTokenSize              = 32
+	SessionCookieName                = "codexfolio_session"
+	CSRFHeaderName                   = "X-CodexFolio-CSRF"
+	CommandTokenHeader               = "X-CodexFolio-Command-Token"
+	CommandSelectionPath             = "/api/v1/command/selection"
+	CommandProfilesPath              = "/api/v1/command/profiles"
+	CommandProfileAuthenticationPath = "/api/v1/command/profile-authentication"
+	CommandProfileLifecyclePath      = "/api/v1/command/profile-lifecycle"
+	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
+	CommandLaunchPath                = "/api/v1/command/launch"
+	BootstrapPathName                = "/bootstrap"
+	BootstrapQueryName               = "bootstrap"
+	maxBootstrapBodySize             = 4096
+	maxSelectionBodySize             = 4096
+	maxConfigPackBodySize            = 9 * 1024 * 1024
+	randomTokenSize                  = 32
 )
 
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
@@ -64,18 +65,19 @@ type Clock interface {
 // in-memory bootstrap, session, and CSRF material; none of those values are
 // persisted by this package.
 type Options struct {
-	Product            string
-	BootstrapTTL       time.Duration
-	SessionTTL         time.Duration
-	Random             io.Reader
-	Clock              Clock
-	Diagnostics        diagnostics.Sink
-	Selection          *profile.Selector
-	Profiles           *profile.Registry
-	ProfileLifecycle   *profile.Lifecycle
-	ConfigurationPacks *configpack.Service
-	Launches           CommandLaunchService
-	CommandToken       string
+	Product               string
+	BootstrapTTL          time.Duration
+	SessionTTL            time.Duration
+	Random                io.Reader
+	Clock                 Clock
+	Diagnostics           diagnostics.Sink
+	Selection             *profile.Selector
+	Profiles              *profile.Registry
+	ProfileLifecycle      *profile.Lifecycle
+	ProfileAuthentication CommandProfileAuthenticationService
+	ConfigurationPacks    *configpack.Service
+	Launches              CommandLaunchService
+	CommandToken          string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -87,19 +89,20 @@ type ServerOptions = Options
 type Server struct {
 	mu sync.Mutex
 
-	product            string
-	bootstrapTTL       time.Duration
-	sessionTTL         time.Duration
-	random             io.Reader
-	randomMu           sync.Mutex
-	clock              Clock
-	diagnostics        diagnostics.Sink
-	selection          *profile.Selector
-	profiles           *profile.Registry
-	profileLifecycle   *profile.Lifecycle
-	configurationPacks *configpack.Service
-	launches           CommandLaunchService
-	commandToken       [sha256.Size]byte
+	product               string
+	bootstrapTTL          time.Duration
+	sessionTTL            time.Duration
+	random                io.Reader
+	randomMu              sync.Mutex
+	clock                 Clock
+	diagnostics           diagnostics.Sink
+	selection             *profile.Selector
+	profiles              *profile.Registry
+	profileLifecycle      *profile.Lifecycle
+	profileAuthentication CommandProfileAuthenticationService
+	configurationPacks    *configpack.Service
+	launches              CommandLaunchService
+	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -159,23 +162,24 @@ func NewServer(options Options) (*Server, error) {
 	now := clock.Now().UTC()
 	commandToken := sha256.Sum256([]byte(options.CommandToken))
 	return &Server{
-		product:            product,
-		bootstrapTTL:       bootstrapTTL,
-		sessionTTL:         sessionTTL,
-		random:             randomReader,
-		clock:              clock,
-		diagnostics:        options.Diagnostics,
-		selection:          options.Selection,
-		profiles:           options.Profiles,
-		profileLifecycle:   options.ProfileLifecycle,
-		configurationPacks: options.ConfigurationPacks,
-		launches:           options.Launches,
-		commandToken:       commandToken,
-		bootstrapToken:     token,
-		bootstrapDigest:    sha256.Sum256([]byte(encodedToken)),
-		bootstrapExpiresAt: now.Add(bootstrapTTL),
-		bootstrapAvailable: true,
-		sessions:           make(map[[sha256.Size]byte]session),
+		product:               product,
+		bootstrapTTL:          bootstrapTTL,
+		sessionTTL:            sessionTTL,
+		random:                randomReader,
+		clock:                 clock,
+		diagnostics:           options.Diagnostics,
+		selection:             options.Selection,
+		profiles:              options.Profiles,
+		profileLifecycle:      options.ProfileLifecycle,
+		profileAuthentication: options.ProfileAuthentication,
+		configurationPacks:    options.ConfigurationPacks,
+		launches:              options.Launches,
+		commandToken:          commandToken,
+		bootstrapToken:        token,
+		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
+		bootstrapExpiresAt:    now.Add(bootstrapTTL),
+		bootstrapAvailable:    true,
+		sessions:              make(map[[sha256.Size]byte]session),
 	}, nil
 }
 
@@ -373,6 +377,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandProfileLifecycle(response, request)
+	case CommandProfileAuthenticationPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandProfileAuthentication(response, request)
 	case CommandConfigurationPackPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -466,10 +475,18 @@ func (server *Server) authorizeCommand(response http.ResponseWriter, request *ht
 }
 
 type CommandSelectionProfile struct {
-	ID          string `json:"profile_id"`
-	Alias       string `json:"alias"`
-	DisplayName string `json:"display_name"`
-	Selected    bool   `json:"selected"`
+	ID                    string                `json:"profile_id"`
+	Alias                 string                `json:"alias"`
+	DisplayName           string                `json:"display_name"`
+	Email                 string                `json:"email,omitempty"`
+	Workspace             string                `json:"workspace,omitempty"`
+	Status                profile.Status        `json:"status"`
+	IdentityHomeID        string                `json:"identity_home_id"`
+	IdentityHomeOwnership profile.HomeOwnership `json:"identity_home_ownership,omitempty"`
+	AuthenticationMethod  profile.AuthMethod    `json:"authentication_method,omitempty"`
+	Selected              bool                  `json:"selected"`
+	CreatedAt             time.Time             `json:"created_at"`
+	UpdatedAt             time.Time             `json:"updated_at"`
 }
 
 type CommandProfile struct {
@@ -479,9 +496,12 @@ type CommandProfile struct {
 	Email                 string                `json:"email,omitempty"`
 	Workspace             string                `json:"workspace,omitempty"`
 	Status                profile.Status        `json:"status"`
+	IdentityHomeID        string                `json:"identity_home_id"`
 	IdentityHomeOwnership profile.HomeOwnership `json:"identity_home_ownership,omitempty"`
 	AuthenticationMethod  profile.AuthMethod    `json:"authentication_method,omitempty"`
 	Selected              bool                  `json:"selected"`
+	CreatedAt             time.Time             `json:"created_at"`
+	UpdatedAt             time.Time             `json:"updated_at"`
 }
 
 type CommandProfilesResponse struct {
@@ -617,8 +637,8 @@ func (server *Server) commandProfiles(response http.ResponseWriter, request *htt
 func commandProfile(item profile.IdentityProfile) CommandProfile {
 	return CommandProfile{
 		ID: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, Email: item.Email, Workspace: item.Workspace,
-		Status: item.Status, IdentityHomeOwnership: item.IdentityHomeOwnership,
-		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected,
+		Status: item.Status, IdentityHomeID: item.IdentityHomeID, IdentityHomeOwnership: item.IdentityHomeOwnership,
+		AuthenticationMethod: item.AuthenticationMethod, Selected: item.Selected, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }
 
@@ -681,7 +701,11 @@ func (server *Server) commandSelection(response http.ResponseWriter, request *ht
 }
 
 func commandSelectionProfile(candidate profile.IdentityProfile) CommandSelectionProfile {
-	return CommandSelectionProfile{ID: candidate.ID, Alias: candidate.Alias, DisplayName: candidate.DisplayName, Selected: candidate.Selected}
+	return CommandSelectionProfile{
+		ID: candidate.ID, Alias: candidate.Alias, DisplayName: candidate.DisplayName, Email: candidate.Email, Workspace: candidate.Workspace,
+		Status: candidate.Status, IdentityHomeID: candidate.IdentityHomeID, IdentityHomeOwnership: candidate.IdentityHomeOwnership,
+		AuthenticationMethod: candidate.AuthenticationMethod, Selected: candidate.Selected, CreatedAt: candidate.CreatedAt, UpdatedAt: candidate.UpdatedAt,
+	}
 }
 
 func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *http.Request) {
@@ -831,16 +855,16 @@ func (server *Server) writeMetadata(response http.ResponseWriter, request *http.
 }
 
 func (server *Server) getSelection(response http.ResponseWriter, request *http.Request) {
-	if server.selection == nil {
+	if server.profiles == nil {
 		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
-	profiles, err := server.selection.Eligible(request.Context())
+	inventory, err := server.profiles.Inventory(request.Context())
 	if err != nil {
 		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
 		return
 	}
-	for _, candidate := range profiles {
+	for _, candidate := range inventory.Profiles {
 		if candidate.Selected {
 			writeJSON(response, http.StatusOK, selectionResponse(candidate, ""))
 			return

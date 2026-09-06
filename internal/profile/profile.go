@@ -92,20 +92,23 @@ type PendingProfile struct {
 	Status                Status        `json:"status"`
 	IdentityHomeID        string        `json:"identity_home_id,omitempty"`
 	IdentityHomeOwnership HomeOwnership `json:"identity_home_ownership,omitempty"`
+	AuthenticationMethod  AuthMethod    `json:"authentication_method,omitempty"`
 	Stages                SetupStages   `json:"stages"`
 	IdentityHomePath      string        `json:"-"`
 }
 
 type SetupRequest struct {
-	Alias              string
-	DisplayName        string
-	CodexOverride      string
-	ReferencedHomePath string
-	AuthMethod         AuthMethod
-	NonInteractive     bool
-	Stdin              io.Reader
-	Stdout             io.Writer
-	Stderr             io.Writer
+	Alias                    string
+	DisplayName              string
+	CodexOverride            string
+	ReferencedHomePath       string
+	AuthMethod               AuthMethod
+	NonInteractive           bool
+	Stdin                    io.Reader
+	Stdout                   io.Writer
+	Stderr                   io.Writer
+	ConfigurationPackID      string
+	ConfigurationPackVersion string
 }
 
 type SetupResult struct {
@@ -258,8 +261,7 @@ type Repository interface {
 	SaveDocumentedMetadata(context.Context, string, DocumentedMetadata) (bool, error)
 	SaveSetupStage(context.Context, string, SetupStage) error
 	ResetAuthentication(context.Context, string) error
-	PromotePendingProfile(context.Context, string) (IdentityProfile, error)
-	CompleteInitialSelection(context.Context, string) (IdentityProfile, error)
+	CompleteInitialSelection(context.Context, string, string, string) (IdentityProfile, error)
 }
 
 type SelectionRepository interface {
@@ -471,7 +473,7 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 		pending.IdentityHomeID = pending.ID
 		pending.IdentityHomeOwnership = homeOwnership
 		pending.IdentityHomePath = homePath
-	} else if pending.IdentityHomeOwnership != homeOwnership || pending.IdentityHomePath == "" || filepath.Clean(pending.IdentityHomePath) != filepath.Clean(homePath) {
+	} else if pending.IdentityHomeOwnership != homeOwnership || pending.IdentityHomePath == "" || !samePath(filepath.Clean(pending.IdentityHomePath), filepath.Clean(homePath)) {
 		return workflow.result(pending, discovery, resumed, ""), apperrors.New(apperrors.ProfileHomeInvalid, ErrHomeInvalid)
 	}
 	if !pending.Stages.Home {
@@ -510,17 +512,13 @@ func (workflow *Workflow) Add(ctx context.Context, request SetupRequest) (SetupR
 		}
 	}
 
-	ready, err := workflow.repository.PromotePendingProfile(ctx, pending.ID)
-	if err != nil {
-		return workflow.result(pending, discovery, resumed, authenticationMethod), err
-	}
-	selected, err := workflow.repository.CompleteInitialSelection(ctx, pending.ID)
+	selected, err := workflow.repository.CompleteInitialSelection(ctx, pending.ID, request.ConfigurationPackID, request.ConfigurationPackVersion)
 	if err != nil {
 		return workflow.result(pending, discovery, resumed, authenticationMethod), err
 	}
 	pending.Stages.Selection = true
 	result := SetupResult{
-		Profile:              selectedProfile(ready, selected),
+		Profile:              selected,
 		Discovery:            discovery,
 		Stages:               pending.Stages,
 		Resumed:              resumed,
@@ -688,10 +686,6 @@ func VerifyAuthentication(ctx context.Context, repository AuthenticationReposito
 		item.Status = StatusNeedsReauthentication
 		return item, apperrors.New(apperrors.ProfileReauthenticationRequired, ErrReauthenticationRequired)
 	}
-	if stateErr := repository.SetAuthenticationState(ctx, item.ID, StatusUnavailable, ""); stateErr != nil {
-		return item, stateErr
-	}
-	item.Status = StatusUnavailable
 	return item, apperrors.New(apperrors.ProfileAuthenticationUnavailable, ErrAuthenticationUnavailable)
 }
 
@@ -704,6 +698,9 @@ func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request S
 		Stderr:       request.Stderr,
 	}
 	method := AuthMethodReused
+	if pending.Stages.Authentication && (pending.AuthenticationMethod == AuthMethodBrowser || pending.AuthenticationMethod == AuthMethodDeviceCode) {
+		method = pending.AuthenticationMethod
+	}
 	if pending.IdentityHomeOwnership == HomeOwnershipReferenced && !pending.Stages.Authentication && !pending.Stages.Validation && preferred == AuthMethodAutomatic {
 		authRequest.Method = AuthMethodReused
 		if err := workflow.authenticator.Check(ctx, authRequest); err == nil {
@@ -745,6 +742,11 @@ func (workflow *Workflow) authenticateAndValidate(ctx context.Context, request S
 			}
 			method = selectedMethod
 			authRequest.Method = selectedMethod
+			if authenticationRepository, ok := workflow.repository.(AuthenticationRepository); ok {
+				if err := authenticationRepository.SetAuthenticationState(ctx, pending.ID, StatusPending, selectedMethod); err != nil {
+					return method, err
+				}
+			}
 			if err := workflow.repository.SaveSetupStage(ctx, pending.ID, StageAuthentication); err != nil {
 				return method, err
 			}
@@ -835,13 +837,6 @@ func (workflow *Workflow) result(pending PendingProfile, discovery Discovery, re
 		Resumed:              resumed,
 		AuthenticationMethod: method,
 	}
-}
-
-func selectedProfile(ready, selected IdentityProfile) IdentityProfile {
-	if selected.ID == "" {
-		return ready
-	}
-	return selected
 }
 
 func normalizeAuthMethod(method AuthMethod) AuthMethod {

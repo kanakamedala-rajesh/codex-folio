@@ -36,6 +36,9 @@ func TestPackRejectsCodexOwnedStateAndLiteralSecrets(t *testing.T) {
 		"sqlite state":         {"state/threads.sqlite3": "not allowed"},
 		"literal token":        {"mcp/server.toml": "token = \"real-token\"\n"},
 		"credential field":     {"config/base.toml": "  \"GITHUB_PAT\" = \"secret\"\n"},
+		"credential table":     {"config/base.toml": "[credentials]\nvalue = \"actual-secret\"\n"},
+		"markdown secret":      {"guidance/AGENTS.md": "token = real-token\n"},
+		"unsupported JSON":     {"mcp/server.json": `{"token":"real-token"}`},
 		"malformed TOML":       {"config/base.toml": "[models\nname = \"gpt-5\"\n"},
 		"Windows path collision": {
 			"config/A.toml": "model = \"gpt-5\"\n",

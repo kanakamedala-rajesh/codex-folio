@@ -164,7 +164,11 @@ func TestAuthorizedSelectionAPIReadsAndUpdatesSelectedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSelector() error = %v", err)
 	}
-	server, _, _ := startTestServer(t, Options{Selection: selector})
+	registry, err := profile.NewRegistry(&registryRepository{profiles: repository.profiles})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	server, _, _ := startTestServer(t, Options{Selection: selector, Profiles: registry})
 	client := testClient(t)
 	origin := server.Origin()
 	token := mustBootstrapToken(t, server.BootstrapURL())
@@ -228,7 +232,7 @@ func TestCommandProfileAPIRequiresAuthorizationAndReturnsSafeProjection(t *testi
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
-	if len(result.Profiles) != 1 || result.Profiles[0].Alias != "Work" || strings.Contains(string(encoded), "secret/home") || strings.Contains(string(encoded), "home-1") {
+	if len(result.Profiles) != 1 || result.Profiles[0].Alias != "Work" || result.Profiles[0].IdentityHomeID != "home-1" || strings.Contains(string(encoded), "secret/home") {
 		t.Fatalf("safe profile projection = %s", encoded)
 	}
 
@@ -241,7 +245,7 @@ func TestCommandProfileAPIRequiresAuthorizationAndReturnsSafeProjection(t *testi
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
-	if result.Updated == nil || result.Updated.ID != "profile-1" || result.Updated.Alias != newAlias || result.Updated.IdentityHomeOwnership != profile.HomeOwnershipManaged || strings.Contains(string(encoded), "secret/home") || strings.Contains(string(encoded), "home-1") {
+	if result.Updated == nil || result.Updated.ID != "profile-1" || result.Updated.Alias != newAlias || result.Updated.IdentityHomeID != "home-1" || result.Updated.IdentityHomeOwnership != profile.HomeOwnershipManaged || strings.Contains(string(encoded), "secret/home") {
 		t.Fatalf("safe edited profile projection = %s", encoded)
 	}
 }
