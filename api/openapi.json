@@ -89,6 +89,71 @@
         "warning"
       ],
       "type": "object"
+    },
+    "UsageRefreshRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {"description": "The CLI Alias of the Ready Identity Profile to refresh.", "type": "string"}
+      },
+      "required": ["alias"],
+      "type": "object"
+    },
+    "UsageErrorResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {"description": "Stable machine-readable error identifier.", "type": "string"},
+        "message": {"description": "Safe user-facing error message.", "type": "string"}
+      },
+      "required": ["code", "message"],
+      "type": "object"
+    },
+    "UsageMetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_availability_id": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "state": {"type": "string"},
+        "checked_at": {"type": "string"},
+        "provenance": {"type": "string"}
+      },
+      "required": ["metric_availability_id", "metric_key", "state", "checked_at", "provenance"],
+      "type": "object"
+    },
+    "UsageObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "value": {"type": "number"},
+        "unit": {"type": "string"},
+        "value_kind": {"type": "string"},
+        "source_class": {"type": "string"},
+        "scope": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "observed_at": {"type": "string"},
+        "window_start": {"type": "string"},
+        "window_end": {"type": "string"},
+        "provenance": {"type": "string"},
+        "freshness": {"type": "string"},
+        "availability": {"type": "string"}
+      },
+      "required": ["observation_id", "metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "observed_at", "window_start", "window_end", "provenance", "freshness", "availability"],
+      "type": "object"
+    },
+    "UsageSnapshotResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {"type": "string"},
+        "profile_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
+        "captured_at": {"type": "string"},
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/UsageObservation"}},
+        "availability": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAvailability"}}
+      },
+      "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "observations", "availability"],
+      "type": "object"
     }
   },
   "info": {
@@ -180,6 +245,25 @@
               }
             },
             "description": "Persists one Ready Identity Profile as Selected Profile."
+          }
+        }
+      }
+    },
+    "/api/v1/usage/refresh": {
+      "post": {
+        "operationId": "refreshUsage",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageRefreshRequest"}}},
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageSnapshotResponse"}}},
+            "description": "Collects and persists one normalized Usage Snapshot."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when refresh fails."
           }
         }
       }

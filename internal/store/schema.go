@@ -134,6 +134,34 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 9,
+			name:    "normalized-usage-snapshots",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE usage_snapshots (
+						snapshot_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						source TEXT NOT NULL CHECK (source IN ('codex_app_server')),
+						source_version TEXT NOT NULL,
+						captured_at TEXT NOT NULL,
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`ALTER TABLE usage_metrics ADD COLUMN source_class TEXT NOT NULL DEFAULT 'Provider-reported Metric' CHECK (source_class IN ('Provider-reported Metric', 'Locally-derived Metric', 'Estimated Metric', 'Observed during session'))`,
+					`ALTER TABLE usage_metrics ADD COLUMN scope TEXT NOT NULL DEFAULT 'provider_quota_window'`,
+					`ALTER TABLE usage_metrics ADD COLUMN aggregation TEXT NOT NULL DEFAULT 'none'`,
+					`ALTER TABLE metric_provenance ADD COLUMN provenance_label TEXT NOT NULL DEFAULT 'Provider-reported Metric' CHECK (provenance_label IN ('Provider-reported Metric', 'Locally-derived Metric', 'Estimated Metric', 'Observed during session'))`,
+					`ALTER TABLE usage_observations ADD COLUMN snapshot_id TEXT REFERENCES usage_snapshots (snapshot_id)`,
+					`CREATE INDEX idx_usage_snapshots_profile_time ON usage_snapshots (profile_id, captured_at)`,
+					`CREATE INDEX idx_usage_observations_snapshot ON usage_observations (snapshot_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -391,7 +419,7 @@ var expectedTables = map[string][]string{
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
 	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
-	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
+	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
 	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
@@ -402,8 +430,9 @@ var expectedTables = map[string][]string{
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
 	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
-	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at"},
-	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at"},
+	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
+	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id"},
+	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at"},
 }
 
 var expectedIndexes = []string{
@@ -427,6 +456,8 @@ var expectedIndexes = []string{
 	"idx_service_ownership_state",
 	"idx_usage_metrics_kind",
 	"idx_usage_observations_profile_time",
+	"idx_usage_observations_snapshot",
+	"idx_usage_snapshots_profile_time",
 }
 
 var sensitiveColumns = map[string][]string{

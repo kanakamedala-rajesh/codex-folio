@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "53b0dbb4504dc50c4894aaf217838e13317e7bcbae5d7c907110a87a91ece15a" as const;
+  "c63f6969ad87f575511f210dbd365b6536ed887ecafdc09e569f28b956eb667a" as const;
 
 export interface BootstrapRequest {
   bootstrap_token: string;
@@ -28,6 +28,63 @@ export interface SelectionResponse {
   alias: string;
   display_name: string;
   warning: string;
+}
+
+export interface UsageRefreshRequest {
+  alias: string;
+}
+
+export interface UsageErrorResponse {
+  code: string;
+  message: string;
+}
+
+export class UsageRefreshError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "UsageRefreshError";
+    this.status = status;
+  }
+}
+
+export interface UsageObservation {
+  observation_id: string;
+  metric_key: string;
+  value: number;
+  unit: string;
+  value_kind: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+  observed_at: string;
+  window_start: string;
+  window_end: string;
+  provenance: string;
+  freshness: string;
+  availability: string;
+}
+
+export interface UsageMetricAvailability {
+  metric_availability_id: string;
+  metric_key: string;
+  state: string;
+  checked_at: string;
+  provenance: string;
+}
+
+export interface UsageSnapshotResponse {
+  snapshot_id: string;
+  profile_id: string;
+  alias: string;
+  source: string;
+  source_version: string;
+  captured_at: string;
+  observations: UsageObservation[];
+  availability: UsageMetricAvailability[];
 }
 
 export interface ApiPaths {
@@ -67,6 +124,16 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": SelectionResponse } } };
     };
   };
+  "/api/v1/usage/refresh": {
+    post: {
+      operationId: "refreshUsage";
+      requestBody: UsageRefreshRequest;
+      responses: {
+        200: { content: { "application/json": UsageSnapshotResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
@@ -74,6 +141,7 @@ export interface CodexFolioApiClient {
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
+  refreshUsage(request: UsageRefreshRequest, init?: RequestInit): Promise<UsageSnapshotResponse>;
 }
 
 export function createCodexFolioApiClient(
@@ -140,6 +208,23 @@ export function createCodexFolioApiClient(
         throw new Error("PUT /api/v1/selection failed with HTTP " + response.status);
       }
       return (await response.json()) as SelectionResponse;
+    },
+    async refreshUsage(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/usage/refresh", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UsageSnapshotResponse;
     },
   };
 }

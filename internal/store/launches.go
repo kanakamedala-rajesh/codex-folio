@@ -81,12 +81,12 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, errors.New("launch clock returned zero")))
 	}
-	managedLaunchID, err := newLaunchIdentifier("launch")
+	managedLaunchID, err := newStoreIdentifier("launch")
 	if err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
-	leaseID, err := newLaunchIdentifier("lease")
+	leaseID, err := newStoreIdentifier("lease")
 	if err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
@@ -286,7 +286,7 @@ func (store *Store) GetManagedLaunch(ctx context.Context, leaseID string) (launc
 	return record, nil
 }
 
-func newLaunchIdentifier(prefix string) (string, error) {
+func newStoreIdentifier(prefix string) (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return "", err

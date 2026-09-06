@@ -56,6 +56,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"settings",
 		"usage_metrics",
 		"usage_observations",
+		"usage_snapshots",
 	}
 	if !reflect.DeepEqual(gotTables, wantTables) {
 		t.Fatalf("tables = %v, want allowlisted tables %v", gotTables, wantTables)

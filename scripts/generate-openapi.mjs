@@ -142,8 +142,9 @@ function validateContract(contract, productVersion) {
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const selectionPath = `/api/${apiVersion}/selection`;
+  const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [bootstrapPath, metadataPath, selectionPath], "paths");
+  assertExactKeys(contract.paths, [bootstrapPath, metadataPath, selectionPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -192,12 +193,25 @@ function validateContract(contract, productVersion) {
   const selectionResponseReference = responseReference(getSelectionOperation, `GET ${selectionPath}`);
   assertEqual(responseReference(setSelectionOperation, `PUT ${selectionPath}`), selectionResponseReference, "selection response reference");
 
+  const usageOperation = contract.paths[usageRefreshPath]?.post;
+  assertObject(usageOperation, `POST ${usageRefreshPath}`);
+  assertExactKeys(usageOperation, ["operationId", "requestBody", "responses"], `POST ${usageRefreshPath}`);
+  assertIdentifier(usageOperation.operationId, "usage refresh operationId");
+  const usageRequestReference = requestReference(usageOperation.requestBody, `POST ${usageRefreshPath} request body`);
+  const usageResponseReference = responseReference(usageOperation, `POST ${usageRefreshPath}`, ["200", "default"]);
+  const usageErrorResponseReference = errorResponseReference(usageOperation, `POST ${usageRefreshPath}`);
+
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
     schemaNameFromReference(metadataResponseReference, "metadata response"),
     schemaNameFromReference(selectionRequestReference, "selection request"),
     schemaNameFromReference(selectionResponseReference, "selection response"),
+    schemaNameFromReference(usageRequestReference, "usage request"),
+    schemaNameFromReference(usageResponseReference, "usage response"),
+    schemaNameFromReference(usageErrorResponseReference, "usage error response"),
+    "UsageObservation",
+    "UsageMetricAvailability",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -212,6 +226,11 @@ function validateContract(contract, productVersion) {
   const metadataFields = schemaFields(contract.$defs[schemaNames[2]], schemaNames[2]);
   const selectionRequestFields = schemaFields(contract.$defs[schemaNames[3]], schemaNames[3]);
   const selectionResponseFields = schemaFields(contract.$defs[schemaNames[4]], schemaNames[4]);
+  const usageRequestFields = schemaFields(contract.$defs[schemaNames[5]], schemaNames[5]);
+  const usageResponseFields = schemaFields(contract.$defs[schemaNames[6]], schemaNames[6]);
+  const usageErrorResponseFields = schemaFields(contract.$defs[schemaNames[7]], schemaNames[7]);
+  const usageObservationFields = schemaFields(contract.$defs.UsageObservation, "UsageObservation");
+  const usageAvailabilityFields = schemaFields(contract.$defs.UsageMetricAvailability, "UsageMetricAvailability");
 
   return {
     apiVersion,
@@ -232,6 +251,18 @@ function validateContract(contract, productVersion) {
     selectionResponseFields,
     selectionResponseType: schemaNames[4],
     selectionSetOperationId: setSelectionOperation.operationId,
+    usageAvailabilityFields,
+    usageAvailabilityType: "UsageMetricAvailability",
+    usageObservationFields,
+    usageObservationType: "UsageObservation",
+    usageOperationId: usageOperation.operationId,
+    usageErrorResponseFields,
+    usageErrorResponseType: schemaNames[7],
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType: schemaNames[5],
+    usageResponseFields,
+    usageResponseType: schemaNames[6],
   };
 }
 
@@ -247,9 +278,9 @@ function requestReference(requestBody, name) {
   return mediaType.schema.$ref;
 }
 
-function responseReference(operation, name) {
+function responseReference(operation, name, expectedStatuses = ["200"]) {
   assertObject(operation.responses, `${name} responses`);
-  assertExactKeys(operation.responses, ["200"], `${name} responses`);
+  assertExactKeys(operation.responses, expectedStatuses, `${name} responses`);
   const response = operation.responses["200"];
   assertObject(response, `${name} 200 response`);
   assertObject(response.content, `${name} response content`);
@@ -257,6 +288,17 @@ function responseReference(operation, name) {
   const mediaType = response.content["application/json"];
   assertObject(mediaType, `${name} JSON response`);
   assertObject(mediaType.schema, `${name} response schema`);
+  return mediaType.schema.$ref;
+}
+
+function errorResponseReference(operation, name) {
+  const response = operation.responses.default;
+  assertObject(response, `${name} default response`);
+  assertObject(response.content, `${name} default response content`);
+  assertExactKeys(response.content, ["application/json"], `${name} default response content`);
+  const mediaType = response.content["application/json"];
+  assertObject(mediaType, `${name} default JSON response`);
+  assertObject(mediaType.schema, `${name} default response schema`);
   return mediaType.schema.$ref;
 }
 
@@ -285,9 +327,6 @@ function schemaFields(schema, schemaName) {
     }
     return { name, schema: schema.properties[name] };
   });
-  for (const { schema: fieldSchema } of fields) {
-    assertEqual(fieldSchema.type, "string", `${schemaName} property type`);
-  }
   return fields;
 }
 
@@ -339,22 +378,40 @@ function renderGo(productVersion, sourceHash, contractShape) {
     selectionResponseFields,
     selectionResponseType,
     selectionSetOperationId,
+    usageAvailabilityFields,
+    usageAvailabilityType,
+    usageObservationFields,
+    usageObservationType,
+    usageOperationId,
+    usageErrorResponseFields,
+    usageErrorResponseType,
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType,
+    usageResponseFields,
+    usageResponseType,
   } = contractShape;
   const bootstrapMethod = goIdentifier(bootstrapOperationId);
   const metadataMethod = goIdentifier(metadataOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
+  const usageMethod = goIdentifier(usageOperationId);
   const types = [
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
     renderGoStruct(selectionRequestType, selectionRequestFields),
     renderGoStruct(selectionResponseType, selectionResponseFields),
+    renderGoStruct(usageRequestType, usageRequestFields),
+    renderGoStruct(usageErrorResponseType, usageErrorResponseFields),
+    renderGoStruct(usageObservationType, usageObservationFields),
+    renderGoStruct(usageAvailabilityType, usageAvailabilityFields),
+    renderGoStruct(usageResponseType, usageResponseFields),
   ].join("\n\n");
 
   const source = `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
-// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}, ${selectionResponseType}
+// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}, ${selectionResponseType}, ${usageResponseType}
 package httpapi
 
 import (
@@ -373,9 +430,12 @@ const (
 \tBootstrapPath        = "${bootstrapPath}"
 \tMetadataPath         = "${metadataPath}"
 \tSelectionPath        = "${selectionPath}"
+\tUsageRefreshPath     = "${usageRefreshPath}"
 )
 
 ${types}
+
+func (response ${usageErrorResponseType}) Error() string { return response.Code }
 
 type HTTPDoer interface {
 \tDo(*http.Request) (*http.Response, error)
@@ -494,6 +554,30 @@ func (client *Client) ${selectionSetMethod}(ctx context.Context, input ${selecti
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
 }
+
+func (client *Client) ${usageMethod}(ctx context.Context, input ${usageRequestType}) (${usageResponseType}, *http.Response, error) {
+\tvar result ${usageResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+UsageRefreshPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("POST %s returned HTTP %d", UsageRefreshPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
 `;
 
   return formatGo(source);
@@ -528,6 +612,18 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     selectionResponseFields,
     selectionResponseType,
     selectionSetOperationId,
+    usageAvailabilityFields,
+    usageAvailabilityType,
+    usageObservationFields,
+    usageObservationType,
+    usageOperationId,
+    usageErrorResponseFields,
+    usageErrorResponseType,
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType,
+    usageResponseFields,
+    usageResponseType,
   } = contractShape;
   const bootstrapRequestLines = bootstrapRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
@@ -544,6 +640,11 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   const selectionResponseLines = selectionResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
+  const usageRequestLines = usageRequestFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageErrorResponseLines = usageErrorResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageObservationLines = usageObservationFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageAvailabilityLines = usageAvailabilityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageResponseLines = usageResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
 
   return `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
@@ -570,6 +671,38 @@ ${selectionRequestLines}
 
 export interface ${selectionResponseType} {
 ${selectionResponseLines}
+}
+
+export interface ${usageRequestType} {
+${usageRequestLines}
+}
+
+export interface ${usageErrorResponseType} {
+${usageErrorResponseLines}
+}
+
+export class UsageRefreshError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "UsageRefreshError";
+    this.status = status;
+  }
+}
+
+export interface ${usageObservationType} {
+${usageObservationLines}
+}
+
+export interface ${usageAvailabilityType} {
+${usageAvailabilityLines}
+}
+
+export interface ${usageResponseType} {
+${usageResponseLines}
 }
 
 export interface ApiPaths {
@@ -609,6 +742,16 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ${selectionResponseType} } } };
     };
   };
+  "${usageRefreshPath}": {
+    post: {
+      operationId: "${usageOperationId}";
+      requestBody: ${usageRequestType};
+      responses: {
+        200: { content: { "application/json": ${usageResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
@@ -616,6 +759,7 @@ export interface CodexFolioApiClient {
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
+  ${usageOperationId}(request: ${usageRequestType}, init?: RequestInit): Promise<${usageResponseType}>;
 }
 
 export function createCodexFolioApiClient(
@@ -682,6 +826,23 @@ export function createCodexFolioApiClient(
         throw new Error("PUT ${selectionPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${selectionResponseType};
+    },
+    async ${usageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${usageRefreshPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${usageResponseType};
     },
   };
 }
@@ -783,12 +944,24 @@ function goType(schema) {
   if (schema.type === "string") {
     return "string";
   }
+  if (schema.type === "number") {
+    return "float64";
+  }
+  if (schema.type === "array" && typeof schema.items?.$ref === "string") {
+    return `[]${goIdentifier(schemaNameFromReference(schema.items.$ref, "array item"))}`;
+  }
   throw new Error(`unsupported Go schema type ${JSON.stringify(schema.type)}`);
 }
 
 function typescriptType(schema) {
   if (schema.type === "string") {
     return "string";
+  }
+  if (schema.type === "number") {
+    return "number";
+  }
+  if (schema.type === "array" && typeof schema.items?.$ref === "string") {
+    return `${schemaNameFromReference(schema.items.$ref, "array item")}[]`;
   }
   throw new Error(`unsupported TypeScript schema type ${JSON.stringify(schema.type)}`);
 }

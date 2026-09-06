@@ -23,6 +23,21 @@ test("the checked-in OpenAPI artifacts match the canonical contract", () => {
   assert.doesNotThrow(() => checkOpenAPI(repositoryDirectory));
 });
 
+test("the generated usage client exposes safe error identifiers", async () => {
+  const { createCodexFolioApiClient, UsageRefreshError } = await import("../web/src/generated/openapi.ts");
+  const client = createCodexFolioApiClient("", async () => new Response(
+    JSON.stringify({ code: "CF_USAGE_PROFILE_UNAVAILABLE", message: "Usage is unavailable for this profile." }),
+    { status: 409, headers: { "Content-Type": "application/json" } },
+  ));
+
+  await assert.rejects(
+    client.refreshUsage({ alias: "Work" }),
+    (error) => error instanceof UsageRefreshError
+      && error.code === "CF_USAGE_PROFILE_UNAVAILABLE"
+      && error.message === "Usage is unavailable for this profile.",
+  );
+});
+
 test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const fixtureDirectory = mkdtempSync(join(tmpdir(), "codex-folio-openapi-"));
   t.after(() => rmSync(fixtureDirectory, { force: true, recursive: true }));

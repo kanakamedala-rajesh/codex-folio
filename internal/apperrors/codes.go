@@ -40,6 +40,11 @@ const (
 	ConfigurationPackAssignmentInvalid       = "CF_CONFIGPACK_ASSIGNMENT_INVALID"
 	ConfigurationPackProjectionFailed        = "CF_CONFIGPACK_PROJECTION_FAILED"
 	ConfigurationPackPromotionReviewRequired = "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED"
+	UsageRequestInvalid                      = "CF_USAGE_REQUEST_INVALID"
+	UsageProfileNotFound                     = "CF_USAGE_PROFILE_NOT_FOUND"
+	UsageProfileUnavailable                  = "CF_USAGE_PROFILE_UNAVAILABLE"
+	UsageCollectionFailed                    = "CF_USAGE_COLLECTION_FAILED"
+	UsageSourceInvalid                       = "CF_USAGE_SOURCE_INVALID"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -149,6 +154,11 @@ func IsRegistered(code string) bool {
 		ConfigurationPackAssignmentInvalid,
 		ConfigurationPackProjectionFailed,
 		ConfigurationPackPromotionReviewRequired,
+		UsageRequestInvalid,
+		UsageProfileNotFound,
+		UsageProfileUnavailable,
+		UsageCollectionFailed,
+		UsageSourceInvalid,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

@@ -39,6 +39,7 @@ const (
 	CommandProfileLifecyclePath      = "/api/v1/command/profile-lifecycle"
 	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
 	CommandLaunchPath                = "/api/v1/command/launch"
+	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
@@ -77,6 +78,7 @@ type Options struct {
 	ProfileAuthentication CommandProfileAuthenticationService
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
+	Usage                 CommandUsageService
 	CommandToken          string
 }
 
@@ -102,6 +104,7 @@ type Server struct {
 	profileAuthentication CommandProfileAuthenticationService
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
+	usage                 CommandUsageService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -174,6 +177,7 @@ func NewServer(options Options) (*Server, error) {
 		profileAuthentication: options.ProfileAuthentication,
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
+		usage:                 options.Usage,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -392,6 +396,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandLaunch(response, request)
+	case CommandUsageRefreshPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.usageRefresh(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
@@ -446,6 +455,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.setSelection(response, request)
+	case UsageRefreshPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.usageRefresh(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {
