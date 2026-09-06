@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -17,14 +18,15 @@ type launchCommandService struct {
 	workflow           *launch.Workflow
 	configurationPacks *configpack.Service
 	authenticator      profile.Authenticator
+	projects           *activity.ProjectService
 }
 
-func newLaunchCommandService(stateStore *store.Store, configurationPacks *configpack.Service, authenticator profile.Authenticator) (*launchCommandService, error) {
+func newLaunchCommandService(stateStore *store.Store, configurationPacks *configpack.Service, authenticator profile.Authenticator, projects *activity.ProjectService) (*launchCommandService, error) {
 	workflow, err := launch.NewWorkflow(launch.WorkflowOptions{Repository: stateStore})
 	if err != nil {
 		return nil, err
 	}
-	return &launchCommandService{store: stateStore, workflow: workflow, configurationPacks: configurationPacks, authenticator: authenticator}, nil
+	return &launchCommandService{store: stateStore, workflow: workflow, configurationPacks: configurationPacks, authenticator: authenticator, projects: projects}, nil
 }
 
 func (service *launchCommandService) Prepare(ctx context.Context, request launch.PrepareRequest, version string) (launch.Plan, string, error) {
@@ -54,6 +56,15 @@ func (service *launchCommandService) Prepare(ctx context.Context, request launch
 	}
 	if err := service.workflow.Reconcile(ctx, foregroundProcessInspector{}); err != nil {
 		return launch.Plan{}, "", err
+	}
+	if service.projects != nil {
+		project, projectErr := service.projects.Resolve(ctx, request.WorkingDirectory, "")
+		if projectErr != nil && !errors.Is(projectErr, activity.ErrPathInvalid) {
+			return launch.Plan{}, "", projectErr
+		}
+		if projectErr == nil {
+			request.ProjectID = project.ID
+		}
 	}
 	plan, err := service.workflow.Prepare(ctx, request)
 	if err != nil {

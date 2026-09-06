@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
@@ -171,6 +172,10 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 	}
 	defer func() { _ = stateStore.Close() }()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	configurationPacks, err := newConfigurationPackService(stateStore)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -182,7 +187,7 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
 		}
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator)
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator, projects)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

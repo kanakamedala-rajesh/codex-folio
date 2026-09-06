@@ -42,6 +42,7 @@ const (
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandProjectsPath              = "/api/v1/command/projects"
+	CommandActivityPath              = "/api/v1/command/activity"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
@@ -82,6 +83,7 @@ type Options struct {
 	Launches              CommandLaunchService
 	Usage                 CommandUsageService
 	Projects              *activity.ProjectService
+	Activities            CommandActivityService
 	CommandToken          string
 }
 
@@ -109,6 +111,7 @@ type Server struct {
 	launches              CommandLaunchService
 	usage                 CommandUsageService
 	projects              *activity.ProjectService
+	activities            CommandActivityService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -183,6 +186,7 @@ func NewServer(options Options) (*Server, error) {
 		launches:              options.Launches,
 		usage:                 options.Usage,
 		projects:              options.Projects,
+		activities:            options.Activities,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -371,6 +375,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandActivityPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandActivity(response, request)
 	case CommandProfilesPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -483,6 +492,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.getProjects(response, request)
+	case ActivityPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !isReadMethod(request.Method) {
+			server.writeMethodError(response, http.MethodGet)
+			return
+		}
+		server.getActivity(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {

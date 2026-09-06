@@ -3,7 +3,35 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "978e89a676e464382167ce055ea5e81d89062519e327de979ca8e0bca7a813c8" as const;
+  "3d01fb16de92f0c0e18a7a63e16e176305d15cf2428cee694aede714122cb76a" as const;
+
+export interface ActivityRecord {
+  record_type: string;
+  id: string;
+  source_session_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  source: string;
+  source_version: string;
+  provenance: string;
+  started_at: string;
+  last_observed_at: string;
+  lifecycle: string;
+  exit_status: string;
+  model: string;
+  tokens_used: string;
+  correlation_state: string;
+  correlation_managed_launch_id: string;
+  correlation_evidence_type: string;
+  correlation_confidence: string;
+}
+
+export interface ActivityResponse {
+  records: ActivityRecord[];
+}
 
 export interface BootstrapRequest {
   bootstrap_token: string;
@@ -100,6 +128,12 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/activity": {
+    get: {
+      operationId: "getActivity";
+      responses: { 200: { content: { "application/json": ActivityResponse } } };
+    };
+  };
   "/api/v1/bootstrap": {
     post: {
       operationId: "exchangeBootstrap";
@@ -155,6 +189,11 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getActivity(
+    profileAlias?: string,
+    projectId?: string,
+    init?: RequestInit,
+  ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
@@ -168,6 +207,24 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getActivity(profileAlias = "", projectId = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (profileAlias) query.set("profile", profileAlias);
+      if (projectId) query.set("project", projectId);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "/api/v1/activity" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET /api/v1/activity failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ActivityResponse;
+    },
     async exchangeBootstrap(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

@@ -317,7 +317,13 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator())
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -340,7 +346,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	activities, err := newActivityCommandService(stateStore, projects, nil)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -352,7 +358,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -656,6 +662,7 @@ func serviceDiagnosticState(code string) string {
 		apperrors.ConfigurationPackNotApproved,
 		apperrors.ConfigurationPackAssignmentInvalid,
 		apperrors.ConfigurationPackPromotionReviewRequired,
+		apperrors.ActivityRequestInvalid,
 		apperrors.ProjectIdentityInvalid,
 		apperrors.ProjectIdentityNotFound,
 		apperrors.ProjectPathCollision,
@@ -694,6 +701,7 @@ func serviceDiagnosticState(code string) string {
 	case apperrors.PlatformPermissionDenied,
 		apperrors.LaunchProfileUnavailable,
 		apperrors.ProfileAuthenticationUnavailable,
+		apperrors.ActivitySourceUnavailable,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -744,6 +752,10 @@ func serviceRemediation(code string) string {
 		return "the Profile Quarantine recovery period has expired"
 	case apperrors.ProjectIdentityInvalid:
 		return "the Project Identity or Project Alias is invalid"
+	case apperrors.ActivityRequestInvalid:
+		return "the activity request or filter is invalid"
+	case apperrors.ActivitySourceUnavailable:
+		return "supported Codex activity metadata is unavailable"
 	case apperrors.ProjectIdentityNotFound:
 		return "the Project Identity was not found"
 	case apperrors.ProjectPathInvalid:

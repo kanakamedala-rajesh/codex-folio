@@ -145,7 +145,7 @@ func TestLaunchCLIUsesRunningServiceForLaunchLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newConfigurationPackService() error = %v", err)
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, &cliProfileAuthenticator{})
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, &cliProfileAuthenticator{}, nil)
 	if err != nil {
 		t.Fatalf("newLaunchCommandService() error = %v", err)
 	}

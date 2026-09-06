@@ -94,8 +94,9 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 	encodedNow := formatStoredTime(now)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO managed_launches (
 		managed_launch_id, profile_id, lease_id, project_identity_id, state,
-		started_at, ended_at, process_id, exit_status
-	) VALUES (?, ?, ?, NULL, 'pending', ?, NULL, NULL, NULL)`, managedLaunchID, profileID, leaseID, encodedNow); err != nil {
+		started_at, ended_at, process_id, exit_status,
+		expected_session_id
+	) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?)`, managedLaunchID, profileID, leaseID, nullableString(request.ProjectID), encodedNow, nullableString(request.ExpectedSessionID)); err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}

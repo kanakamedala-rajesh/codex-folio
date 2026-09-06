@@ -1,5 +1,41 @@
 {
   "$defs": {
+    "ActivityRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "record_type": {"type": "string"},
+        "id": {"type": "string"},
+        "source_session_id": {"type": "string"},
+        "profile_id": {"type": "string"},
+        "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"},
+        "project_alias": {"type": "string"},
+        "project_basename": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
+        "provenance": {"type": "string"},
+        "started_at": {"type": "string"},
+        "last_observed_at": {"type": "string"},
+        "lifecycle": {"type": "string"},
+        "exit_status": {"type": "string"},
+        "model": {"type": "string"},
+        "tokens_used": {"type": "string"},
+        "correlation_state": {"type": "string"},
+        "correlation_managed_launch_id": {"type": "string"},
+        "correlation_evidence_type": {"type": "string"},
+        "correlation_confidence": {"type": "string"}
+      },
+      "required": ["record_type", "id", "source_session_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"],
+      "type": "object"
+    },
+    "ActivityResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+      },
+      "required": ["records"],
+      "type": "object"
+    },
     "BootstrapRequest": {
       "additionalProperties": false,
       "properties": {
@@ -183,6 +219,21 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/activity": {
+      "get": {
+        "operationId": "getActivity",
+        "parameters": [
+          {"in": "query", "name": "profile", "required": false, "schema": {"type": "string"}},
+          {"in": "query", "name": "project", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityResponse"}}},
+            "description": "Returns the safe filtered Managed Launch and Observed Session timeline."
+          }
+        }
+      }
+    },
     "/api/v1/bootstrap": {
       "post": {
         "operationId": "exchangeBootstrap",

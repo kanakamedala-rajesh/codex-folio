@@ -248,6 +248,18 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_ACTIVITY_REQUEST_INVALID",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_ACTIVITY_SOURCE_UNAVAILABLE",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_ACTIVITY_PROJECT_IDENTITY_INVALID",
       "owner": "activity",
       "lifecycle": "active",

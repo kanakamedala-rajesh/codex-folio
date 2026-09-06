@@ -170,6 +170,28 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 11,
+			name:    "observed-session-activity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE managed_launches ADD COLUMN expected_session_id TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN source_session_id TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN source_version TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE observed_sessions ADD COLUMN project_identity_id TEXT REFERENCES project_identities (project_identity_id)`,
+					`ALTER TABLE observed_sessions ADD COLUMN last_observed_at TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN model TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN tokens_used INTEGER CHECK (tokens_used IS NULL OR tokens_used >= 0)`,
+					`ALTER TABLE observed_sessions ADD COLUMN correlation_state TEXT NOT NULL DEFAULT 'uncorrelated' CHECK (correlation_state IN ('correlated', 'uncorrelated', 'ambiguous', 'contradictory'))`,
+					`CREATE UNIQUE INDEX idx_observed_sessions_source_identity ON observed_sessions (profile_id, source, source_session_id) WHERE source_session_id IS NOT NULL`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -425,10 +447,10 @@ var expectedTables = map[string][]string{
 	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
-	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
+	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id"},
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
-	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
+	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
@@ -460,6 +482,7 @@ var expectedIndexes = []string{
 	"idx_metric_availability_profile",
 	"idx_metric_provenance_captured_at",
 	"idx_observed_sessions_profile_time",
+	"idx_observed_sessions_source_identity",
 	"idx_pending_profiles_state",
 	"idx_service_ownership_state",
 	"idx_usage_metrics_kind",
