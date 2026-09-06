@@ -38,6 +38,11 @@ type FileSystem interface {
 
 type osFileSystem struct{}
 
+// NewFileSystem returns the native filesystem adapter for composition roots.
+func NewFileSystem() FileSystem {
+	return osFileSystem{}
+}
+
 func (osFileSystem) Lstat(path string) (os.FileInfo, error) {
 	return os.Lstat(path)
 }

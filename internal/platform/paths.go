@@ -21,12 +21,16 @@ const (
 )
 
 const (
-	appDirectoryName   = "CodexFolio"
-	linuxDirectoryName = "codex-folio"
-	runtimeDirectory   = "runtime"
-	lockFileName       = "service.owner.lock"
-	metadataFileName   = "service.owner.json"
-	vaultFileName      = "codex-folio.vault"
+	appDirectoryName      = "CodexFolio"
+	linuxDirectoryName    = "codex-folio"
+	runtimeDirectory      = "runtime"
+	lockFileName          = "service.owner.lock"
+	metadataFileName      = "service.owner.json"
+	clientFileName        = "service.client.json"
+	vaultFileName         = "codex-folio.vault"
+	managedHomesName      = "managed-homes"
+	profileQuarantineName = "profile-quarantine"
+	shellIntegrationName  = "shell-integration"
 )
 
 // Platform identifies the operating-system path convention to use. It is
@@ -52,12 +56,16 @@ type PathOptions struct {
 // owner lock and metadata use a canonical user-scoped runtime so alternate
 // path overrides cannot create a second owner.
 type Paths struct {
-	Root         string
-	Runtime      string
-	LockFile     string
-	MetadataFile string
-	DatabaseFile string
-	VaultFile    string
+	Root              string
+	Runtime           string
+	LockFile          string
+	MetadataFile      string
+	ClientFile        string
+	DatabaseFile      string
+	VaultFile         string
+	ManagedHomes      string
+	ProfileQuarantine string
+	ShellIntegration  string
 }
 
 // ResolvePaths resolves the platform default or an explicit absolute state
@@ -102,12 +110,16 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 	}
 
 	return Paths{
-		Root:         root,
-		Runtime:      filepath.Join(root, runtimeDirectory),
-		LockFile:     filepath.Join(ownerRuntime, lockFileName),
-		MetadataFile: filepath.Join(ownerRuntime, metadataFileName),
-		DatabaseFile: filepath.Join(root, "codex-folio.sqlite3"),
-		VaultFile:    filepath.Join(root, vaultFileName),
+		Root:              root,
+		Runtime:           filepath.Join(root, runtimeDirectory),
+		LockFile:          filepath.Join(ownerRuntime, lockFileName),
+		MetadataFile:      filepath.Join(ownerRuntime, metadataFileName),
+		ClientFile:        filepath.Join(ownerRuntime, clientFileName),
+		DatabaseFile:      filepath.Join(root, "codex-folio.sqlite3"),
+		VaultFile:         filepath.Join(root, vaultFileName),
+		ManagedHomes:      filepath.Join(root, managedHomesName),
+		ProfileQuarantine: filepath.Join(root, profileQuarantineName),
+		ShellIntegration:  filepath.Join(root, shellIntegrationName),
 	}, nil
 }
 

@@ -14,6 +14,210 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_CLI_SHELL_INTEGRATION_INVALID",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CLI_SHELL_INTEGRATION_FAILED",
+      "owner": "cli",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_NOT_FOUND",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_AMBIGUOUS",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_PATH_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_CODEX_VERSION_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PLAN_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_LEASE_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROFILE_NOT_FOUND",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROFILE_UNAVAILABLE",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROCESS_START_FAILED",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_LAUNCH_PROCESS_STATUS_INVALID",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_SETUP_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_ALIAS_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_ALIAS_TAKEN",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_NOT_SELECTABLE",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_SETUP_CHOICE_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_FAILED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_CANCELLED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_REAUTHENTICATION_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_AUTHENTICATION_UNAVAILABLE",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_HOME_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_VALIDATION_FAILED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_REMOVAL_BLOCKED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_REPLACEMENT_REQUIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_CONFIRMATION_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_QUARANTINE_INVALID",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_PROFILE_QUARANTINE_EXPIRED",
+      "owner": "profile",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_INVALID",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_NOT_FOUND",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_NOT_APPROVED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_ASSIGNMENT_INVALID",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_PROJECTION_FAILED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED",
+      "owner": "configpack",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

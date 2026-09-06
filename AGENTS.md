@@ -22,6 +22,18 @@ Run it from a clean checkout with the pinned toolchains before claiming a change
 
 See `docs/development/BUILDING.md` for focused checks, expected output, and qualification limits.
 
+### Cross-platform compatibility
+
+Write portable-by-default code for Windows and Unix-like systems.
+
+For any path, filesystem, executable, process, shell, environment, or signal change:
+
+* use `filepath` for local paths and `filepath.SplitList` or `os.PathListSeparator` for path lists; normalize paths before comparison and keep displayed paths native;
+* treat executable extensions, permission bits, line endings, case sensitivity, home and temporary directories, environment variable names, shell quoting, signals, and exit status as platform-specific behavior;
+* use `os/exec` with argument slices and platform-aware fixtures; keep shell scripts and shell-specific commands behind explicit operating-system branches;
+* make tests runnable on both Windows and Unix, using native fixture formats such as `.cmd`/`.bat` and POSIX scripts, while asserting semantic values rather than host-specific line endings;
+* run the canonical verifier for boundary changes and record any native-runtime or compile-only limitation precisely.
+
 ### Delivery roadmap
 
 GitHub issue #9 is the MVP Roadmap and coordination index.

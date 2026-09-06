@@ -17,11 +17,124 @@ type migration struct {
 }
 
 func migrations() []migration {
-	return []migration{{
-		version: 1,
-		name:    "allowlisted-foundation",
-		apply:   applyFoundationMigration,
-	}}
+	return []migration{
+		{
+			version: 1,
+			name:    "allowlisted-foundation",
+			apply:   applyFoundationMigration,
+		},
+		{
+			version: 2,
+			name:    "profile-setup-stages",
+			apply:   applyProfileSetupMigration,
+		},
+		{
+			version: 3,
+			name:    "documented-profile-metadata",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, column := range []string{"documented_login_identity_ciphertext", "documented_workspace_ciphertext"} {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE identity_homes ADD COLUMN "+column+" BLOB CHECK ("+column+" IS NULL OR typeof("+column+") = 'blob')"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 4,
+			name:    "managed-launch-lifecycle",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					"ALTER TABLE managed_launches ADD COLUMN process_id INTEGER CHECK (process_id IS NULL OR process_id > 0)",
+					"ALTER TABLE managed_launches ADD COLUMN exit_status INTEGER CHECK (exit_status IS NULL OR (exit_status >= 0 AND exit_status <= 4294967295))",
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 5,
+			name:    "profile-authentication-preference",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE identity_profiles ADD COLUMN authentication_method TEXT NOT NULL DEFAULT 'auto' CHECK (authentication_method IN ('auto', 'browser', 'device-code'))`)
+				return err
+			},
+		},
+		{
+			version: 6,
+			name:    "profile-display-metadata",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, column := range []string{"email", "workspace"} {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE identity_profiles ADD COLUMN "+column+" TEXT NOT NULL DEFAULT ''"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 7,
+			name:    "profile-quarantine",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE profile_quarantine (
+					profile_id TEXT PRIMARY KEY NOT NULL,
+					state TEXT NOT NULL CHECK (state IN ('prepared', 'quarantined')),
+					was_selected INTEGER NOT NULL CHECK (was_selected IN (0, 1)),
+					quarantined_at TEXT NOT NULL,
+					purge_after TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+				)`)
+				return err
+			},
+		},
+		{
+			version: 8,
+			name:    "configuration-pack-versions-and-assignments",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE configuration_pack_versions (
+						configuration_pack_version_id TEXT PRIMARY KEY NOT NULL,
+						configuration_pack_id TEXT NOT NULL,
+						pack_version TEXT NOT NULL,
+						state TEXT NOT NULL CHECK (state IN ('draft', 'approved', 'superseded')),
+						content_digest BLOB NOT NULL CHECK (typeof(content_digest) = 'blob'),
+						content_json BLOB NOT NULL CHECK (typeof(content_json) = 'blob'),
+						created_at TEXT NOT NULL,
+						UNIQUE (configuration_pack_id, pack_version),
+						FOREIGN KEY (configuration_pack_id) REFERENCES configuration_packs (configuration_pack_id)
+					)`,
+					`CREATE TABLE configuration_pack_assignments (
+						profile_id TEXT PRIMARY KEY NOT NULL,
+						configuration_pack_id TEXT NOT NULL,
+						pack_version TEXT NOT NULL,
+						assigned_at TEXT NOT NULL,
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id),
+						FOREIGN KEY (configuration_pack_id, pack_version) REFERENCES configuration_pack_versions (configuration_pack_id, pack_version)
+					)`,
+					`CREATE TABLE configuration_pack_overrides (
+						profile_id TEXT NOT NULL,
+						path TEXT NOT NULL,
+						content TEXT NOT NULL,
+						updated_at TEXT NOT NULL,
+						PRIMARY KEY (profile_id, path),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`CREATE INDEX idx_configuration_pack_versions_pack ON configuration_pack_versions (configuration_pack_id, pack_version)`,
+					`CREATE INDEX idx_configuration_pack_assignments_pack ON configuration_pack_assignments (configuration_pack_id, pack_version)`,
+					`CREATE INDEX idx_configuration_pack_overrides_profile ON configuration_pack_overrides (profile_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+	}
 }
 
 func applyFoundationMigration(ctx context.Context, tx *sql.Tx) error {
@@ -31,6 +144,20 @@ func applyFoundationMigration(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+func applyProfileSetupMigration(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE profile_setup_stages (
+		profile_id TEXT PRIMARY KEY NOT NULL,
+		discovery_completed INTEGER NOT NULL CHECK (discovery_completed IN (0, 1)),
+		home_completed INTEGER NOT NULL CHECK (home_completed IN (0, 1)),
+		authentication_completed INTEGER NOT NULL CHECK (authentication_completed IN (0, 1)),
+		validation_completed INTEGER NOT NULL CHECK (validation_completed IN (0, 1)),
+		selection_completed INTEGER NOT NULL CHECK (selection_completed IN (0, 1)),
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+	)`)
+	return err
 }
 
 var foundationSchemaStatements = []string{
@@ -250,28 +377,33 @@ var foundationSchemaStatements = []string{
 }
 
 var expectedTables = map[string][]string{
-	"alerts":                    {"alert_id", "profile_id", "category", "severity", "state", "created_at", "acknowledged_at"},
-	"checkpoints":               {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
-	"cli_aliases":               {"alias_id", "profile_id", "alias", "created_at"},
-	"configuration_packs":       {"configuration_pack_id", "pack_version", "state", "content_digest", "created_at"},
-	"correlation_evidence":      {"correlation_evidence_id", "managed_launch_id", "observed_session_id", "confidence", "evidence_type", "observed_at"},
-	"diagnostic_aggregates":     {"diagnostic_aggregate_id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"},
-	"experimental_transactions": {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
-	"identity_homes":            {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "created_at", "updated_at"},
-	"identity_profiles":         {"profile_id", "display_name", "status", "identity_home_id", "created_at", "updated_at"},
-	"managed_launches":          {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at"},
-	"metric_availability":       {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
-	"metric_provenance":         {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
-	"observed_sessions":         {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
-	"pending_profiles":          {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
-	"project_identities":        {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
-	"retention_state":           {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
-	"schema_migrations":         {"version", "name", "applied_at"},
-	"selected_profile":          {"selection_id", "profile_id", "updated_at"},
-	"service_ownership":         {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                  {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
-	"usage_metrics":             {"metric_key", "unit", "value_kind", "created_at"},
-	"usage_observations":        {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at"},
+	"alerts":                         {"alert_id", "profile_id", "category", "severity", "state", "created_at", "acknowledged_at"},
+	"checkpoints":                    {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
+	"cli_aliases":                    {"alias_id", "profile_id", "alias", "created_at"},
+	"configuration_packs":            {"configuration_pack_id", "pack_version", "state", "content_digest", "created_at"},
+	"configuration_pack_assignments": {"profile_id", "configuration_pack_id", "pack_version", "assigned_at"},
+	"configuration_pack_overrides":   {"profile_id", "path", "content", "updated_at"},
+	"configuration_pack_versions":    {"configuration_pack_version_id", "configuration_pack_id", "pack_version", "state", "content_digest", "content_json", "created_at"},
+	"correlation_evidence":           {"correlation_evidence_id", "managed_launch_id", "observed_session_id", "confidence", "evidence_type", "observed_at"},
+	"diagnostic_aggregates":          {"diagnostic_aggregate_id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"},
+	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
+	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
+	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
+	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
+	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
+	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
+	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
+	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
+	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
+	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
+	"project_identities":             {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
+	"retention_state":                {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
+	"schema_migrations":              {"version", "name", "applied_at"},
+	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
+	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
+	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
+	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at"},
+	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at"},
 }
 
 var expectedIndexes = []string{
@@ -279,6 +411,9 @@ var expectedIndexes = []string{
 	"idx_checkpoints_project_time",
 	"idx_cli_aliases_profile",
 	"idx_configuration_packs_state",
+	"idx_configuration_pack_assignments_pack",
+	"idx_configuration_pack_overrides_profile",
+	"idx_configuration_pack_versions_pack",
 	"idx_correlation_evidence_launch",
 	"idx_diagnostic_aggregates_code",
 	"idx_experimental_transactions_state",
@@ -296,7 +431,7 @@ var expectedIndexes = []string{
 
 var sensitiveColumns = map[string][]string{
 	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
-	"identity_homes":     {"location_ciphertext"},
+	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
 	"project_identities": {"canonical_path_ciphertext"},
 }
 

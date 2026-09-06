@@ -1,6 +1,6 @@
 {
   "schema": "codex-folio.go-dependency-licenses.v1",
-  "reviewed_on": "2026-08-31",
+  "reviewed_on": "2026-09-06",
   "dependencies": [
     {
       "path": "github.com/dustin/go-humanize",
@@ -23,13 +23,18 @@
       "license": "MIT"
     },
     {
+      "path": "github.com/pelletier/go-toml/v2",
+      "version": "v2.2.4",
+      "license": "MIT"
+    },
+    {
       "path": "github.com/remyoudompheng/bigfft",
       "version": "v0.0.0-20230129092748-24d4a6f8daec",
       "license": "BSD-3-Clause"
     },
     {
       "path": "golang.org/x/crypto",
-      "version": "v0.41.0",
+      "version": "v0.56.0",
       "license": "BSD-3-Clause"
     },
     {

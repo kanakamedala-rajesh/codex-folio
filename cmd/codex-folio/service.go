@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,10 +15,13 @@ import (
 	"strings"
 	"time"
 
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
+	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
 )
 
@@ -287,7 +292,54 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink})
+	selector, err := profile.NewSelector(stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	registry, err := profile.NewRegistry(stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	lifecycle, err := newProfileLifecycle(paths, stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	configurationPacks, err := newConfigurationPackService(stateStore)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator())
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if err := launches.workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	profileAuthentication, err := newProfileAuthenticationCommandService(paths, stateStore, configurationPacks, codexadapter.NewResolver(codexadapter.ResolverOptions{}), codexadapter.NewAuthenticator())
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	commandToken, err := newCommandToken()
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -299,12 +351,38 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
+		_ = server.Close()
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
 
 	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profile.Lifecycle, error) {
+	homes, err := platform.NewProfileHomeLifecycle(paths.ManagedHomes, paths.ProfileQuarantine)
+	if err != nil {
+		return nil, err
+	}
+	return profile.NewLifecycle(stateStore, homes)
+}
+
+func newConfigurationPackService(stateStore *store.Store) (*configpack.Service, error) {
+	return configpack.NewService(stateStore, configpack.NewProjector(nil))
+}
+
+func newCommandToken() (string, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return "", apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
+	}
+	return base64.RawURLEncoding.EncodeToString(token), nil
 }
 
 func runServiceRecovery(paths platform.Paths, action string, options serviceOptions, stdout, stderr io.Writer) (resultCode int) {
@@ -555,6 +633,16 @@ func recordServiceDiagnostic(diagnosticSink diagnostics.Sink, code string, sever
 func serviceDiagnosticState(code string) string {
 	switch code {
 	case apperrors.CLIUsage,
+		apperrors.CLIShellIntegrationInvalid,
+		apperrors.LaunchLeaseInvalid,
+		apperrors.LaunchProfileNotFound,
+		apperrors.ProfileNotSelectable,
+		apperrors.ProfileReauthenticationRequired,
+		apperrors.ConfigurationPackInvalid,
+		apperrors.ConfigurationPackNotFound,
+		apperrors.ConfigurationPackNotApproved,
+		apperrors.ConfigurationPackAssignmentInvalid,
+		apperrors.ConfigurationPackPromotionReviewRequired,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -566,6 +654,8 @@ func serviceDiagnosticState(code string) string {
 		return diagnostics.StateRejected
 	case apperrors.PlatformStatePathInvalid,
 		apperrors.PlatformStatePathUnsafe,
+		apperrors.LaunchPlanInvalid,
+		apperrors.LaunchProcessStatusInvalid,
 		apperrors.DiagnosticsConfigurationInvalid,
 		apperrors.DiagnosticsEventInvalid,
 		apperrors.StoreSchemaIncompatible,
@@ -578,11 +668,15 @@ func serviceDiagnosticState(code string) string {
 		apperrors.VaultKeyGenerationMismatch,
 		apperrors.VaultEncryptionFailed:
 		return diagnostics.StateInvalid
+	case apperrors.ConfigurationPackProjectionFailed:
+		return diagnostics.StateFailed
 	case apperrors.PlatformServiceAlreadyRunning:
 		return diagnostics.StateContention
 	case apperrors.VaultLocked:
 		return diagnostics.StateLocked
 	case apperrors.PlatformPermissionDenied,
+		apperrors.LaunchProfileUnavailable,
+		apperrors.ProfileAuthenticationUnavailable,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -595,6 +689,66 @@ func serviceDiagnosticState(code string) string {
 
 func serviceRemediation(code string) string {
 	switch code {
+	case apperrors.ProfileSetupInvalid:
+		return "profile setup state or arguments are invalid"
+	case apperrors.CLIShellIntegrationInvalid:
+		return "generated shell integration is changed or incompatible; remove it manually before retrying"
+	case apperrors.CLIShellIntegrationFailed:
+		return "the shell integration file could not be read or written"
+	case apperrors.ProfileAliasInvalid:
+		return "alias must start with a letter or number and contain only portable ASCII letters, numbers, '.', '_' or '-'; maximum 64 characters"
+	case apperrors.ProfileAliasTaken:
+		return "profile alias is already in use; choose another alias"
+	case apperrors.ProfileSetupChoiceRequired:
+		return "non-interactive profile authentication requires exactly one of --browser or --device-code"
+	case apperrors.ProfileAuthenticationCancelled:
+		return "Codex authentication was cancelled; rerun profile add or profile reauthenticate to retry"
+	case apperrors.ProfileAuthenticationFailed:
+		return "Codex authentication failed; rerun profile add or profile reauthenticate to retry"
+	case apperrors.ProfileReauthenticationRequired:
+		return "Codex authentication requires recovery; run profile reauthenticate ALIAS [--browser|--device-code]"
+	case apperrors.ProfileAuthenticationUnavailable:
+		return "Codex authentication status is unavailable; retry profile reauthenticate"
+	case apperrors.ProfileHomeInvalid:
+		return "the Identity Home could not be resolved or validated safely"
+	case apperrors.ProfileValidationFailed:
+		return "Codex did not validate the Identity Home"
+	case apperrors.ProfileNotSelectable:
+		return "the Identity Profile is not eligible for selection"
+	case apperrors.ProfileRemovalBlocked:
+		return "the Identity Profile is the Launch Profile of a running Managed Launch"
+	case apperrors.ProfileReplacementRequired:
+		return "removing the Selected Profile requires an eligible --replacement"
+	case apperrors.ProfileConfirmationInvalid:
+		return "type the exact CLI Alias or provide it with --confirm"
+	case apperrors.ProfileQuarantineInvalid:
+		return "the Profile Quarantine operation could not be completed safely"
+	case apperrors.ProfileQuarantineExpired:
+		return "the Profile Quarantine recovery period has expired"
+	case apperrors.ConfigurationPackInvalid:
+		return "the configuration pack or its reviewed files are invalid"
+	case apperrors.ConfigurationPackNotFound:
+		return "the configuration pack version was not found"
+	case apperrors.ConfigurationPackNotApproved:
+		return "only an approved configuration pack version can be assigned or projected"
+	case apperrors.ConfigurationPackAssignmentInvalid:
+		return "configuration packs require a ready Managed Identity Profile"
+	case apperrors.ConfigurationPackProjectionFailed:
+		return "the configuration pack projection failed; the prior Identity Home remains recoverable"
+	case apperrors.ConfigurationPackPromotionReviewRequired:
+		return "promotion requires explicit reviewed confirmation"
+	case apperrors.LaunchProfileNotFound:
+		return "the requested Identity Profile was not found"
+	case apperrors.LaunchProfileUnavailable:
+		return "the requested Identity Profile is not ready to launch"
+	case apperrors.LaunchPlanInvalid:
+		return "the launch plan is invalid"
+	case apperrors.LaunchLeaseInvalid:
+		return "the Managed Launch lease is invalid or already completed"
+	case apperrors.LaunchProcessStartFailed:
+		return "Codex could not be started in the foreground"
+	case apperrors.LaunchProcessStatusInvalid:
+		return "Codex returned an invalid process status"
 	case apperrors.DiagnosticsConfigurationInvalid:
 		return "the local diagnostics configuration is invalid"
 	case apperrors.DiagnosticsEventInvalid:
@@ -667,7 +821,11 @@ func readServiceVaultPassphrase(input io.Reader) (string, error) {
 	if input == nil {
 		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault requires an explicit passphrase input"))
 	}
-	line, err := bufio.NewReader(input).ReadString('\n')
+	reader, ok := input.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(input)
+	}
+	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", apperrors.New(apperrors.VaultLocked, errors.New("headless vault passphrase input is unavailable"))
 	}

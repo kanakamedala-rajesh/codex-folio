@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,6 +54,13 @@ type OwnerStatus struct {
 	Metadata *OwnerMetadata
 }
 
+// ServiceClient is the private connection descriptor used by sibling CLI
+// processes. It is deliberately separate from owner status and its output.
+type ServiceClient struct {
+	Origin string `json:"origin"`
+	Token  string `json:"token"`
+}
+
 // Owner is a process-local handle for the user-scoped state ownership lock.
 // Keeping the lock file open for the lifetime of Owner makes process crashes
 // recoverable through the operating system's lock release semantics.
@@ -94,6 +103,11 @@ func Acquire(paths Paths, options OwnerOptions) (*Owner, error) {
 	locked = true
 
 	if err := removeOwnerMetadata(filesystem, paths.MetadataFile); err != nil {
+		_ = filesystem.ReleaseExclusiveLock(file)
+		locked = false
+		return nil, err
+	}
+	if err := removeOwnerMetadata(filesystem, clientFilePath(paths)); err != nil {
 		_ = filesystem.ReleaseExclusiveLock(file)
 		locked = false
 		return nil, err
@@ -170,14 +184,42 @@ func (owner *Owner) Metadata() OwnerMetadata {
 	return owner.metadata
 }
 
+// PublishClient makes the running service reachable to sibling CLI processes.
+func (owner *Owner) PublishClient(client ServiceClient) error {
+	if err := validateServiceClient(client); err != nil {
+		return err
+	}
+	return writePrivateJSON(owner.filesystem, clientFilePath(owner.paths), owner.metadata.PID, client)
+}
+
+// DiscoverServiceClient reads the private descriptor of a healthy owner.
+func DiscoverServiceClient(paths Paths, options OwnerOptions) (ServiceClient, error) {
+	status, err := Discover(paths, options)
+	if err != nil {
+		return ServiceClient{}, err
+	}
+	if !status.Running {
+		return ServiceClient{}, apperrors.New(apperrors.PlatformServiceUnavailable, errors.New("service owner is not running"))
+	}
+	var client ServiceClient
+	if err := readPrivateJSON(fileSystemOrDefault(options.FileSystem), clientFilePath(paths), &client); err != nil {
+		return ServiceClient{}, err
+	}
+	if err := validateServiceClient(client); err != nil {
+		return ServiceClient{}, err
+	}
+	return client, nil
+}
+
 // Close removes the descriptor and releases the lock. It is safe to call more
 // than once; the lock is always released even if descriptor cleanup fails.
 func (owner *Owner) Close() error {
 	owner.close.Do(func() {
+		clientErr := removeOwnerMetadata(owner.filesystem, clientFilePath(owner.paths))
 		metadataErr := removeOwnerMetadata(owner.filesystem, owner.paths.MetadataFile)
 		unlockErr := owner.filesystem.ReleaseExclusiveLock(owner.lockFile)
 		closeErr := owner.lockFile.Close()
-		owner.closeErr = firstError(metadataErr, unlockErr, closeErr)
+		owner.closeErr = firstError(clientErr, metadataErr, unlockErr, closeErr)
 		if owner.closeErr != nil && apperrors.Code(owner.closeErr) == "" {
 			owner.closeErr = apperrors.New(apperrors.PlatformServiceUnavailable, owner.closeErr)
 		}
@@ -322,12 +364,16 @@ func removeOwnerMetadata(filesystem FileSystem, path string) error {
 }
 
 func writeOwnerMetadata(filesystem FileSystem, path string, metadata OwnerMetadata) error {
-	encoded, err := json.MarshalIndent(metadata, "", "  ")
+	return writePrivateJSON(filesystem, path, metadata.PID, metadata)
+}
+
+func writePrivateJSON(filesystem FileSystem, path string, processID int, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return apperrors.New(apperrors.PlatformServiceUnavailable, err)
 	}
 	encoded = append(encoded, '\n')
-	temporary := path + ".tmp-" + strconv.Itoa(metadata.PID)
+	temporary := path + ".tmp-" + strconv.Itoa(processID)
 	_ = filesystem.Remove(temporary)
 	file, err := filesystem.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -368,6 +414,47 @@ func writeOwnerMetadata(filesystem FileSystem, path string, metadata OwnerMetada
 	}
 	cleanup = false
 	return nil
+}
+
+func readPrivateJSON(filesystem FileSystem, path string, destination any) error {
+	info, err := filesystem.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || !isPrivateFileMode(info.Mode()) {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	file, err := filesystem.Open(path)
+	if err != nil {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	defer func() { _ = file.Close() }()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	return nil
+}
+
+func validateServiceClient(client ServiceClient) error {
+	parsed, err := url.Parse(client.Origin)
+	if err != nil || parsed.Scheme != "http" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSpace(client.Token) == "" {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	host, _, err := net.SplitHostPort(parsed.Host)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	return nil
+}
+
+func clientFilePath(paths Paths) string {
+	if paths.ClientFile != "" {
+		return paths.ClientFile
+	}
+	return filepath.Join(filepath.Dir(paths.MetadataFile), clientFileName)
 }
 
 func readOwnerMetadata(filesystem FileSystem, path string) (OwnerMetadata, error) {

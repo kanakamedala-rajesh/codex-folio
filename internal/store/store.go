@@ -29,7 +29,7 @@ const (
 
 	// CurrentSchemaVersion is independent of the product and browser API
 	// versions. Every durable shape change must add an ordered migration.
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = 8
 )
 
 var (
@@ -61,6 +61,11 @@ type MigrationHooks struct {
 	After  func(version int) error
 }
 
+// ProfileHooks are test seams for interruption at durable onboarding boundaries.
+type ProfileHooks struct {
+	BeforeSelection func(string) error
+}
+
 // Options configures a store open. OpenDatabase is used by isolated tests to
 // inject an opening failure; production uses the pure-Go SQLite adapter.
 type Options struct {
@@ -70,6 +75,7 @@ type Options struct {
 	FileSystem    FileSystem
 	OpenDatabase  func(path string) (*sql.DB, error)
 	MigrationHook MigrationHooks
+	ProfileHooks  ProfileHooks
 	RecoveryHooks RecoveryHooks
 }
 
@@ -77,13 +83,14 @@ type Options struct {
 // intentionally remains private so callers cannot create an unreviewed write
 // path around the schema and state-owner protocol.
 type Store struct {
-	db          *sql.DB
-	path        string
-	version     int
-	clock       Clock
-	vault       Vault
-	recovery    *Recovery
-	operationMu sync.RWMutex
+	db           *sql.DB
+	path         string
+	version      int
+	clock        Clock
+	vault        Vault
+	recovery     *Recovery
+	profileHooks ProfileHooks
+	operationMu  sync.RWMutex
 
 	closeOnce sync.Once
 	closeErr  error
@@ -128,7 +135,7 @@ func OpenWithOptions(options Options) (*Store, error) {
 func openVerifiedDatabase(database *sql.DB, databasePath string, options Options, malformedCandidate bool) (*Store, error) {
 	database.SetMaxOpenConns(1)
 	database.SetMaxIdleConns(1)
-	opened := &Store{db: database, path: databasePath, clock: options.Clock, vault: options.Vault}
+	opened := &Store{db: database, path: databasePath, clock: options.Clock, vault: options.Vault, profileHooks: options.ProfileHooks}
 	if opened.clock == nil {
 		opened.clock = systemClock{}
 	}

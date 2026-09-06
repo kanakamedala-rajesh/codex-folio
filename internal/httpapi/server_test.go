@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 type testClock struct {
@@ -151,6 +153,141 @@ func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
 		t.Fatalf("bootstrap replay: %v", err)
 	}
 	assertErrorResponse(t, replay, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid, token)
+}
+
+func TestAuthorizedSelectionAPIReadsAndUpdatesSelectedProfile(t *testing.T) {
+	repository := &selectionRepository{profiles: []profile.IdentityProfile{
+		{ID: "profile-1", Alias: "Work", DisplayName: "Work", Status: profile.StatusReady, Selected: true},
+		{ID: "profile-2", Alias: "Personal", DisplayName: "Personal", Status: profile.StatusReady},
+	}}
+	selector, err := profile.NewSelector(repository)
+	if err != nil {
+		t.Fatalf("NewSelector() error = %v", err)
+	}
+	registry, err := profile.NewRegistry(&registryRepository{profiles: repository.profiles})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	server, _, _ := startTestServer(t, Options{Selection: selector, Profiles: registry})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatalf("bootstrap exchange: %v", err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatalf("decode bootstrap: %v", err)
+	}
+	_ = exchange.Body.Close()
+
+	current, err := doRequest(client, http.MethodGet, origin+SelectionPath, server.Address(), origin, nil, "")
+	if err != nil {
+		t.Fatalf("get selection: %v", err)
+	}
+	var currentSelection SelectionResponse
+	if err := json.NewDecoder(current.Body).Decode(&currentSelection); err != nil {
+		t.Fatalf("decode current selection: %v", err)
+	}
+	_ = current.Body.Close()
+	if currentSelection.Alias != "Work" {
+		t.Fatalf("current selection = %#v, want Work", currentSelection)
+	}
+
+	updated, err := doRequest(client, http.MethodPut, origin+SelectionPath, server.Address(), origin, []byte(`{"alias":"personal"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatalf("put selection: %v", err)
+	}
+	var updatedSelection SelectionResponse
+	if err := json.NewDecoder(updated.Body).Decode(&updatedSelection); err != nil {
+		t.Fatalf("decode updated selection: %v", err)
+	}
+	_ = updated.Body.Close()
+	if updatedSelection.Alias != "Personal" || repository.profiles[1].Selected != true || repository.profiles[0].Selected {
+		t.Fatalf("updated selection/repository = %#v/%#v, want Personal selected", updatedSelection, repository.profiles)
+	}
+}
+
+func TestCommandProfileAPIRequiresAuthorizationAndReturnsSafeProjection(t *testing.T) {
+	repository := &registryRepository{profiles: []profile.IdentityProfile{{
+		ID: "profile-1", Alias: "Work", DisplayName: "Work", Email: "user@example.com", Workspace: "Example",
+		Status: profile.StatusReady, IdentityHomeID: "home-1", IdentityHomePath: "/secret/home",
+		IdentityHomeOwnership: profile.HomeOwnershipManaged, AuthenticationMethod: profile.AuthMethodBrowser, Selected: true,
+	}}}
+	registry, err := profile.NewRegistry(repository)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	server, _, _ := startTestServer(t, Options{Profiles: registry, CommandToken: "command-token"})
+	if _, err := NewCommandClient(server.Origin(), "wrong-token", nil).ListProfiles(context.Background()); apperrors.Code(err) != apperrors.HTTPAPISessionInvalid {
+		t.Fatalf("unauthorized ListProfiles() error = %v", err)
+	}
+	client := NewCommandClient(server.Origin(), "command-token", nil)
+	result, err := client.ListProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("ListProfiles() error = %v", err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if len(result.Profiles) != 1 || result.Profiles[0].Alias != "Work" || result.Profiles[0].IdentityHomeID != "home-1" || strings.Contains(string(encoded), "secret/home") {
+		t.Fatalf("safe profile projection = %s", encoded)
+	}
+
+	newAlias := "Personal"
+	result, err = client.EditProfile(context.Background(), "Work", profile.ProfileEdits{Alias: &newAlias})
+	if err != nil {
+		t.Fatalf("EditProfile() error = %v", err)
+	}
+	encoded, err = json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if result.Updated == nil || result.Updated.ID != "profile-1" || result.Updated.Alias != newAlias || result.Updated.IdentityHomeID != "home-1" || result.Updated.IdentityHomeOwnership != profile.HomeOwnershipManaged || strings.Contains(string(encoded), "secret/home") {
+		t.Fatalf("safe edited profile projection = %s", encoded)
+	}
+}
+
+type registryRepository struct{ profiles []profile.IdentityProfile }
+
+func (repository *registryRepository) ListProfiles(context.Context) ([]profile.IdentityProfile, error) {
+	return append([]profile.IdentityProfile(nil), repository.profiles...), nil
+}
+
+func (repository *registryRepository) EditProfile(_ context.Context, alias string, edits profile.ProfileEdits) (profile.IdentityProfile, error) {
+	for index := range repository.profiles {
+		if !strings.EqualFold(repository.profiles[index].Alias, alias) {
+			continue
+		}
+		if edits.Alias != nil {
+			repository.profiles[index].Alias = *edits.Alias
+		}
+		return repository.profiles[index], nil
+	}
+	return profile.IdentityProfile{}, profile.ErrNotFound
+}
+
+type selectionRepository struct {
+	profiles []profile.IdentityProfile
+}
+
+func (repository *selectionRepository) ListEligibleProfiles(context.Context) ([]profile.IdentityProfile, error) {
+	return append([]profile.IdentityProfile(nil), repository.profiles...), nil
+}
+
+func (repository *selectionRepository) SelectProfile(_ context.Context, alias string) (profile.SelectionResult, error) {
+	for index := range repository.profiles {
+		if !strings.EqualFold(repository.profiles[index].Alias, alias) {
+			continue
+		}
+		for other := range repository.profiles {
+			repository.profiles[other].Selected = other == index
+		}
+		return profile.SelectionResult{Profile: repository.profiles[index]}, nil
+	}
+	return profile.SelectionResult{}, profile.ErrNotSelectable
 }
 
 func TestHostOriginAndCSRFChecksFailClosedWithoutCORS(t *testing.T) {

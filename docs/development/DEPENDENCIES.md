@@ -56,7 +56,7 @@ license review and release inventory together.
 
 ## Reviewed Go cryptography dependency
 
-Issue #17 adds `golang.org/x/crypto` at `v0.41.0` for its maintained Argon2id
+Issue #17 adds `golang.org/x/crypto`, currently pinned at `v0.56.0`, for its maintained Argon2id
 implementation. The headless Linux vault needs a memory-hard password-based
 key derivation function; the Go standard library does not provide one, and a
 local implementation would add security and maintenance risk. The module is
@@ -72,6 +72,17 @@ Alternatives considered were a standard-library KDF (none is memory-hard) and
 a local implementation (rejected for security and maintenance risk). A future
 replacement must preserve the versioned vault format or provide an explicit
 migration.
+
+## Reviewed TOML dependency
+
+PR #34 adds `github.com/pelletier/go-toml/v2` at `v2.2.4` so configuration
+packs are validated with the TOML grammar instead of a partial local parser.
+The standard library has no TOML parser. The module is MIT licensed, maintained,
+pure Go, and performs no network, process, credential, or generated-code work.
+It adds a small runtime parsing cost and is pinned in `go.mod` and `go.sum`.
+Alternatives were retaining the incomplete parser or implementing TOML locally;
+both were rejected because malformed configuration could bypass validation. A
+future replacement must preserve full TOML validation and secret-field checks.
 
 ## Linux Secret Service runtime
 
