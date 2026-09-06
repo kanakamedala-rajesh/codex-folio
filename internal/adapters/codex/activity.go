@@ -34,7 +34,11 @@ func (*LocalActivityReader) Read(ctx context.Context, request activity.ReadReque
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, activity.ErrActivityUnavailable
 	}
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String()
+	dsnPath := filepath.ToSlash(path)
+	if volume := filepath.VolumeName(path); len(volume) == 2 && volume[1] == ':' {
+		dsnPath = "/" + dsnPath
+	}
+	dsn := (&url.URL{Scheme: "file", Path: dsnPath, RawQuery: "mode=ro"}).String()
 	database, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, activity.ErrActivityUnavailable
