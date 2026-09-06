@@ -34,6 +34,10 @@ func (service *usageCommandService) Refresh(ctx context.Context, alias string) (
 	return service.workflow.Refresh(ctx, alias, candidate.Path, candidate.Version)
 }
 
+func (service *usageCommandService) Latest(ctx context.Context, alias string) (usagefeature.Snapshot, error) {
+	return service.workflow.Latest(ctx, alias)
+}
+
 type usageClock struct{}
 
 func (usageClock) Now() time.Time { return time.Now() }

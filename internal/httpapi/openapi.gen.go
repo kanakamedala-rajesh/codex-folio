@@ -17,11 +17,12 @@ const (
 	APIVersion           = "v1"
 	ActivityPath         = "/api/v1/activity"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "3d01fb16de92f0c0e18a7a63e16e176305d15cf2428cee694aede714122cb76a"
+	ContractSourceSHA256 = "a1b0b0d195d864decf2454b7464f7d1eee55beefc7b89f651ece21eb6caf161c"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
 	SelectionPath        = "/api/v1/selection"
+	UsageLatestPath      = "/api/v1/usage/latest"
 	UsageRefreshPath     = "/api/v1/usage/refresh"
 )
 
@@ -100,26 +101,34 @@ type UsageErrorResponse struct {
 }
 
 type UsageObservation struct {
-	ObservationId string  `json:"observation_id"`
-	MetricKey     string  `json:"metric_key"`
-	Value         float64 `json:"value"`
-	Unit          string  `json:"unit"`
-	ValueKind     string  `json:"value_kind"`
-	SourceClass   string  `json:"source_class"`
-	Scope         string  `json:"scope"`
-	Aggregation   string  `json:"aggregation"`
-	ObservedAt    string  `json:"observed_at"`
-	WindowStart   string  `json:"window_start"`
-	WindowEnd     string  `json:"window_end"`
-	Provenance    string  `json:"provenance"`
-	Freshness     string  `json:"freshness"`
-	Availability  string  `json:"availability"`
+	ObservationId     string  `json:"observation_id"`
+	MetricKey         string  `json:"metric_key"`
+	Value             float64 `json:"value"`
+	Unit              string  `json:"unit"`
+	ValueKind         string  `json:"value_kind"`
+	SourceClass       string  `json:"source_class"`
+	Scope             string  `json:"scope"`
+	Aggregation       string  `json:"aggregation"`
+	ObservedAt        string  `json:"observed_at"`
+	CapturedAt        string  `json:"captured_at"`
+	CaptureAgeSeconds int64   `json:"capture_age_seconds"`
+	WindowStart       string  `json:"window_start"`
+	WindowEnd         string  `json:"window_end"`
+	WindowTimezone    string  `json:"window_timezone"`
+	Source            string  `json:"source"`
+	SourceVersion     string  `json:"source_version"`
+	Provenance        string  `json:"provenance"`
+	Freshness         string  `json:"freshness"`
+	Availability      string  `json:"availability"`
+	Assumptions       string  `json:"assumptions"`
+	Uncertainty       string  `json:"uncertainty"`
 }
 
 type UsageMetricAvailability struct {
 	MetricAvailabilityId string `json:"metric_availability_id"`
 	MetricKey            string `json:"metric_key"`
 	State                string `json:"state"`
+	Reason               string `json:"reason"`
 	CheckedAt            string `json:"checked_at"`
 	Provenance           string `json:"provenance"`
 }
@@ -131,6 +140,7 @@ type UsageSnapshotResponse struct {
 	Source        string                    `json:"source"`
 	SourceVersion string                    `json:"source_version"`
 	CapturedAt    string                    `json:"captured_at"`
+	Status        string                    `json:"status"`
 	Observations  []UsageObservation        `json:"observations"`
 	Availability  []UsageMetricAvailability `json:"availability"`
 }
@@ -359,6 +369,35 @@ func (client *Client) RefreshUsage(ctx context.Context, input UsageRefreshReques
 		var failure UsageErrorResponse
 		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
 			return result, response, fmt.Errorf("POST %s returned HTTP %d", UsageRefreshPath, response.StatusCode)
+		}
+		return result, response, failure
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return result, response, err
+	}
+	return result, response, nil
+}
+func (client *Client) GetLatestUsage(ctx context.Context, alias string) (UsageSnapshotResponse, *http.Response, error) {
+	var result UsageSnapshotResponse
+	query := url.Values{"alias": []string{alias}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+UsageLatestPath+"?"+query.Encode(), nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, fmt.Errorf("GET %s returned HTTP %d", UsageLatestPath, response.StatusCode)
 		}
 		return result, response, failure
 	}

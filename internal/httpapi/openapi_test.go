@@ -126,6 +126,19 @@ func TestGeneratedClientBuildsUsageRefreshRequest(t *testing.T) {
 	}
 }
 
+func TestGeneratedClientBuildsLatestUsageRequest(t *testing.T) {
+	t.Parallel()
+	fixture := []byte(`{"snapshot_id":"snapshot-1","profile_id":"profile-1","alias":"Work","source":"codex_app_server","source_version":"0.153.4","captured_at":"2026-09-06T12:00:00Z","status":"partial","observations":[],"availability":[]}`)
+	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
+	got, response, err := NewClient("http://127.0.0.1", httpClient).GetLatestUsage(context.Background(), "Work")
+	if err != nil || response.StatusCode != http.StatusOK || got.SnapshotId != "snapshot-1" {
+		t.Fatalf("GetLatestUsage() = %#v/%v", got, err)
+	}
+	if httpClient.request.Method != http.MethodGet || httpClient.request.URL.Path != UsageLatestPath || httpClient.request.URL.Query().Get("alias") != "Work" {
+		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.String())
+	}
+}
+
 func TestGeneratedUsageClientExposesSafeError(t *testing.T) {
 	t.Parallel()
 	httpClient := &recordingHTTPDoer{response: &http.Response{
@@ -136,6 +149,19 @@ func TestGeneratedUsageClientExposesSafeError(t *testing.T) {
 	var failure UsageErrorResponse
 	if !errors.As(err, &failure) || failure.Code != "CF_USAGE_PROFILE_UNAVAILABLE" || failure.Message != "Usage is unavailable for this profile." {
 		t.Fatalf("RefreshUsage() error = %#v", err)
+	}
+}
+
+func TestGeneratedUsageErrorExcludesSnapshotEvidence(t *testing.T) {
+	t.Parallel()
+	payload, err := json.Marshal(UsageErrorResponse{Code: "CF_USAGE_COLLECTION_FAILED", Message: "Usage refresh failed."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prohibited := range []string{"snapshot", "profile", "alias", "value", "observations"} {
+		if bytes.Contains(payload, []byte(prohibited)) {
+			t.Fatalf("error payload %s contains %q", payload, prohibited)
+		}
 	}
 }
 

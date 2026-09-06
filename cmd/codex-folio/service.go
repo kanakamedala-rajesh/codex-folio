@@ -756,6 +756,16 @@ func serviceRemediation(code string) string {
 		return "the activity request or filter is invalid"
 	case apperrors.ActivitySourceUnavailable:
 		return "supported Codex activity metadata is unavailable"
+	case apperrors.UsageCollectionFailed:
+		return "usage refresh failed temporarily; last-known evidence was preserved"
+	case apperrors.UsageSourceInvalid:
+		return "Codex returned malformed usage metadata; last-known evidence was preserved"
+	case apperrors.UsageProfileNotFound:
+		return "the requested Identity Profile was not found"
+	case apperrors.UsageProfileUnavailable:
+		return "the requested Identity Profile is not available for usage refresh"
+	case apperrors.UsageRequestInvalid:
+		return "the usage refresh request is invalid"
 	case apperrors.ProjectIdentityNotFound:
 		return "the Project Identity was not found"
 	case apperrors.ProjectPathInvalid:

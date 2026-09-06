@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "3d01fb16de92f0c0e18a7a63e16e176305d15cf2428cee694aede714122cb76a" as const;
+  "a1b0b0d195d864decf2454b7464f7d1eee55beefc7b89f651ece21eb6caf161c" as const;
 
 export interface ActivityRecord {
   record_type: string;
@@ -101,17 +101,25 @@ export interface UsageObservation {
   scope: string;
   aggregation: string;
   observed_at: string;
+  captured_at: string;
+  capture_age_seconds: number;
   window_start: string;
   window_end: string;
+  window_timezone: string;
+  source: string;
+  source_version: string;
   provenance: string;
   freshness: string;
   availability: string;
+  assumptions: string;
+  uncertainty: string;
 }
 
 export interface UsageMetricAvailability {
   metric_availability_id: string;
   metric_key: string;
   state: string;
+  reason: string;
   checked_at: string;
   provenance: string;
 }
@@ -123,6 +131,7 @@ export interface UsageSnapshotResponse {
   source: string;
   source_version: string;
   captured_at: string;
+  status: string;
   observations: UsageObservation[];
   availability: UsageMetricAvailability[];
 }
@@ -186,6 +195,15 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/usage/latest": {
+    get: {
+      operationId: "getLatestUsage";
+      responses: {
+        200: { content: { "application/json": UsageSnapshotResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
@@ -199,6 +217,7 @@ export interface CodexFolioApiClient {
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
+  getLatestUsage(alias: string, init?: RequestInit): Promise<UsageSnapshotResponse>;
   refreshUsage(request: UsageRefreshRequest, init?: RequestInit): Promise<UsageSnapshotResponse>;
 }
 
@@ -309,6 +328,22 @@ export function createCodexFolioApiClient(
         credentials: init.credentials ?? "include",
         headers,
         method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UsageSnapshotResponse;
+    },
+    async getLatestUsage(alias, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams({ alias });
+      const response = await fetcher(baseUrl + "/api/v1/usage/latest?" + query.toString(), {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
       });
       if (!response.ok) {
         const failure = (await response.json()) as UsageErrorResponse;

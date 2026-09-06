@@ -41,6 +41,7 @@ const (
 	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
+	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
 	BootstrapPathName                = "/bootstrap"
@@ -415,6 +416,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageRefresh(response, request)
+	case CommandUsageLatestPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.usageLatest(response, request)
 	case CommandProjectsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -483,6 +489,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageRefresh(response, request)
+	case UsageLatestPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.usageLatest(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1101,6 +1112,16 @@ func safeMessage(code string) string {
 		return "The requested dashboard resource was not found."
 	case apperrors.HTTPAPIServiceUnavailable:
 		return "The local dashboard is temporarily unavailable. Relaunch CodexFolio."
+	case apperrors.UsageCollectionFailed:
+		return "Usage refresh failed temporarily. Last-known evidence was preserved."
+	case apperrors.UsageSourceInvalid:
+		return "Codex returned malformed usage metadata. Last-known evidence was preserved."
+	case apperrors.UsageProfileNotFound:
+		return "The requested Identity Profile was not found."
+	case apperrors.UsageProfileUnavailable:
+		return "The requested Identity Profile is unavailable for usage refresh."
+	case apperrors.UsageRequestInvalid:
+		return "The usage refresh request is invalid."
 	default:
 		return "The local dashboard could not complete the request."
 	}

@@ -192,6 +192,25 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 12,
+			name:    "honest-usage-evidence",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					"ALTER TABLE usage_snapshots ADD COLUMN status TEXT NOT NULL DEFAULT 'available'",
+					"ALTER TABLE metric_availability ADD COLUMN reason TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE metric_availability ADD COLUMN condition TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN window_timezone TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN assumptions TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN uncertainty TEXT NOT NULL DEFAULT ''",
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -448,7 +467,7 @@ var expectedTables = map[string][]string{
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
 	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id"},
-	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
+	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
 	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
@@ -461,8 +480,8 @@ var expectedTables = map[string][]string{
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
 	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
-	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id"},
-	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at"},
+	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
+	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status"},
 }
 
 var expectedIndexes = []string{

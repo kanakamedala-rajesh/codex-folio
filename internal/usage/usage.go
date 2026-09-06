@@ -18,13 +18,31 @@ var (
 
 const (
 	SourceCodexAppServer = "codex_app_server"
+	SourceLocalMetadata  = "local_metadata"
+	SourceDerived        = "derived"
 	ProvenanceProvider   = "Provider-reported Metric"
+	ProvenanceLocal      = "Locally-derived Metric"
+	ProvenanceEstimated  = "Estimated Metric"
+	ProvenanceObserved   = "Observed during session"
 	FreshnessFresh       = "fresh"
+	FreshnessStale       = "stale"
 
 	AvailabilityAvailable                = "available"
 	AvailabilityUnsupported              = "unsupported"
 	AvailabilityTemporarilyUnavailable   = "temporarily_unavailable"
+	AvailabilityStale                    = "stale"
 	AvailabilityReauthenticationRequired = "reauthentication_required"
+	AvailabilityPartial                  = "partial"
+	AvailabilityContradictory            = "contradictory"
+
+	ReasonUnsupported      = "capability_unsupported"
+	ReasonCollectionFailed = "collection_failed"
+	ReasonMalformedSource  = "malformed_source"
+	ReasonReauthentication = "reauthentication_required"
+	ReasonStale            = "evidence_older_than_10_minutes"
+	ReasonContradictory    = "supported_sources_disagree"
+
+	freshnessLimit = 10 * time.Minute
 )
 
 type Metric struct {
@@ -46,21 +64,29 @@ func Registry() []Metric {
 }
 
 type Observation struct {
-	ID           string     `json:"observation_id,omitempty"`
-	Metric       Metric     `json:"metric"`
-	Value        float64    `json:"value"`
-	ObservedAt   time.Time  `json:"observed_at"`
-	WindowStart  *time.Time `json:"window_start,omitempty"`
-	WindowEnd    *time.Time `json:"window_end,omitempty"`
-	Provenance   string     `json:"provenance"`
-	Freshness    string     `json:"freshness"`
-	Availability string     `json:"availability"`
+	ID                string     `json:"observation_id,omitempty"`
+	Metric            Metric     `json:"metric"`
+	Value             float64    `json:"value"`
+	ObservedAt        time.Time  `json:"observed_at"`
+	CapturedAt        time.Time  `json:"captured_at"`
+	CaptureAgeSeconds int64      `json:"capture_age_seconds"`
+	WindowStart       *time.Time `json:"window_start,omitempty"`
+	WindowEnd         *time.Time `json:"window_end,omitempty"`
+	WindowTimezone    string     `json:"window_timezone"`
+	Source            string     `json:"source"`
+	SourceVersion     string     `json:"source_version"`
+	Provenance        string     `json:"provenance"`
+	Freshness         string     `json:"freshness"`
+	Availability      string     `json:"availability"`
+	Assumptions       string     `json:"assumptions"`
+	Uncertainty       string     `json:"uncertainty"`
 }
 
 type MetricAvailability struct {
 	ID         string    `json:"metric_availability_id,omitempty"`
 	MetricKey  string    `json:"metric_key"`
 	State      string    `json:"state"`
+	Reason     string    `json:"reason"`
 	CheckedAt  time.Time `json:"checked_at"`
 	Provenance string    `json:"provenance"`
 }
@@ -72,6 +98,7 @@ type Snapshot struct {
 	Source        string               `json:"source"`
 	SourceVersion string               `json:"source_version"`
 	CapturedAt    time.Time            `json:"captured_at"`
+	Status        string               `json:"status"`
 	Observations  []Observation        `json:"observations"`
 	Availability  []MetricAvailability `json:"availability"`
 }
@@ -96,6 +123,7 @@ type ProfileTarget struct {
 type Store interface {
 	ResolveUsageProfile(context.Context, string) (ProfileTarget, error)
 	SaveUsageSnapshot(context.Context, ProfileTarget, Snapshot) (Snapshot, error)
+	LatestUsageSnapshot(context.Context, ProfileTarget) (Snapshot, error)
 }
 
 type Clock interface {
@@ -128,19 +156,142 @@ func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVe
 		return Snapshot{}, ErrInvalid
 	}
 	snapshot, err := service.collector.Collect(ctx, CollectionRequest{Executable: executable, IdentityHome: target.IdentityHome, SourceVersion: sourceVersion, CapturedAt: capturedAt})
+	if err == nil {
+		err = finalizeSnapshot(&snapshot, capturedAt)
+	}
 	if err != nil {
-		if _, saveErr := service.store.SaveUsageSnapshot(ctx, target, NewUnavailableSnapshot(sourceVersion, capturedAt, AvailabilityTemporarilyUnavailable)); saveErr != nil {
+		reason := ReasonCollectionFailed
+		if errors.Is(err, ErrSourceInvalid) {
+			reason = ReasonMalformedSource
+		}
+		_, saveErr := service.store.SaveUsageSnapshot(ctx, target, NewUnavailableSnapshot(sourceVersion, capturedAt, AvailabilityTemporarilyUnavailable, reason))
+		if saveErr != nil {
 			return Snapshot{}, saveErr
 		}
-		return Snapshot{}, err
+		failure, saveErr := service.store.LatestUsageSnapshot(ctx, target)
+		if saveErr != nil {
+			return Snapshot{}, saveErr
+		}
+		finalizeSnapshot(&failure, capturedAt)
+		return failure, err
 	}
 	return service.store.SaveUsageSnapshot(ctx, target, snapshot)
 }
 
-func NewUnavailableSnapshot(sourceVersion string, capturedAt time.Time, state string) Snapshot {
-	snapshot := Snapshot{Source: SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt, Observations: []Observation{}, Availability: []MetricAvailability{}}
+func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, error) {
+	if service == nil || service.store == nil || service.clock == nil || alias == "" {
+		return Snapshot{}, ErrInvalid
+	}
+	target, err := service.store.ResolveUsageProfile(ctx, alias)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot, err := service.store.LatestUsageSnapshot(ctx, target)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	now := service.clock.Now().UTC()
+	if now.IsZero() {
+		return Snapshot{}, ErrInvalid
+	}
+	if err := finalizeSnapshot(&snapshot, now); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func NewUnavailableSnapshot(sourceVersion string, capturedAt time.Time, state, reason string) Snapshot {
+	snapshot := Snapshot{Source: SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt, Status: state, Observations: []Observation{}, Availability: []MetricAvailability{}}
 	for _, metric := range Registry() {
-		snapshot.Availability = append(snapshot.Availability, MetricAvailability{MetricKey: metric.Key, State: state, CheckedAt: capturedAt, Provenance: ProvenanceProvider})
+		snapshot.Availability = append(snapshot.Availability, MetricAvailability{MetricKey: metric.Key, State: state, Reason: reason, CheckedAt: capturedAt, Provenance: ProvenanceProvider})
 	}
 	return snapshot
+}
+
+func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
+	states := make(map[string]*MetricAvailability, len(snapshot.Availability))
+	for index := range snapshot.Availability {
+		item := &snapshot.Availability[index]
+		states[item.MetricKey] = item
+		if item.Reason == "" {
+			switch item.State {
+			case AvailabilityUnsupported:
+				item.Reason = ReasonUnsupported
+			case AvailabilityReauthenticationRequired:
+				item.Reason = ReasonReauthentication
+			}
+		}
+	}
+	values := make(map[string]float64, len(snapshot.Observations))
+	seen := make(map[string]bool, len(snapshot.Observations))
+	fresh := make(map[string]bool, len(snapshot.Observations))
+	contradictory := make(map[string]bool, len(snapshot.Observations))
+	for index := range snapshot.Observations {
+		item := &snapshot.Observations[index]
+		if item.CapturedAt.IsZero() {
+			item.CapturedAt = item.ObservedAt
+		}
+		age := now.Sub(item.CapturedAt)
+		if age < 0 || (item.Provenance == ProvenanceEstimated && item.Assumptions == "" && item.Uncertainty == "") {
+			return ErrSourceInvalid
+		}
+		item.CaptureAgeSeconds = int64(age / time.Second)
+		item.Freshness = FreshnessFresh
+		if age > freshnessLimit {
+			item.Freshness = FreshnessStale
+		} else {
+			fresh[item.Metric.Key] = true
+		}
+		if item.Source == "" {
+			item.Source = snapshot.Source
+		}
+		if item.SourceVersion == "" {
+			item.SourceVersion = snapshot.SourceVersion
+		}
+		if item.WindowTimezone == "" && (item.WindowStart != nil || item.WindowEnd != nil) {
+			item.WindowTimezone = "UTC"
+		}
+		if seen[item.Metric.Key] && values[item.Metric.Key] != item.Value {
+			contradictory[item.Metric.Key] = true
+		} else {
+			values[item.Metric.Key], seen[item.Metric.Key] = item.Value, true
+		}
+	}
+	for key := range seen {
+		availability := states[key]
+		if availability == nil || availability.State != AvailabilityAvailable {
+			continue
+		}
+		if contradictory[key] {
+			availability.State, availability.Reason = AvailabilityContradictory, ReasonContradictory
+		} else if !fresh[key] {
+			availability.State, availability.Reason = AvailabilityStale, ReasonStale
+		}
+	}
+	for index := range snapshot.Observations {
+		item := &snapshot.Observations[index]
+		if availability := states[item.Metric.Key]; availability != nil {
+			if item.Availability != AvailabilityContradictory {
+				item.Availability = availability.State
+			}
+		}
+	}
+	snapshot.Status = snapshotStatus(snapshot.Availability)
+	return nil
+}
+
+func snapshotStatus(items []MetricAvailability) string {
+	if len(items) == 0 {
+		return AvailabilityUnsupported
+	}
+	state := items[0].State
+	for _, item := range items {
+		if item.State == AvailabilityContradictory {
+			return AvailabilityContradictory
+		}
+		if item.State != state {
+			state = AvailabilityPartial
+		}
+	}
+	return state
 }

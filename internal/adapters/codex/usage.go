@@ -41,7 +41,7 @@ func (collector *UsageCollector) Collect(ctx context.Context, request usage.Coll
 		return usage.Snapshot{}, err
 	}
 	if !authenticated {
-		return usage.NewUnavailableSnapshot(request.SourceVersion, request.CapturedAt.UTC(), usage.AvailabilityReauthenticationRequired), nil
+		return usage.NewUnavailableSnapshot(request.SourceVersion, request.CapturedAt.UTC(), usage.AvailabilityReauthenticationRequired, usage.ReasonReauthentication), nil
 	}
 	rateOutput, err := collector.appServer(contextOrBackground(ctx), request.Executable, environment, `{"method":"account/rateLimits/read","id":3}`, 3)
 	if err != nil {
@@ -89,11 +89,12 @@ func normalizeRateLimits(input []byte, sourceVersion string, capturedAt time.Tim
 	snapshot := usage.Snapshot{Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt.UTC(), Observations: []usage.Observation{}, Availability: []usage.MetricAvailability{}}
 	windows := []*rateLimitWindow{response.Result.RateLimits.Primary, response.Result.RateLimits.Secondary}
 	for index, metric := range usage.Registry() {
-		availability := usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityUnsupported, CheckedAt: snapshot.CapturedAt, Provenance: usage.ProvenanceProvider}
+		availability := usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityUnsupported, Reason: usage.ReasonUnsupported, CheckedAt: snapshot.CapturedAt, Provenance: usage.ProvenanceProvider}
 		window := windows[index]
 		if window != nil {
 			if window.UsedPercent == nil {
 				availability.State = usage.AvailabilityTemporarilyUnavailable
+				availability.Reason = usage.ReasonCollectionFailed
 				snapshot.Availability = append(snapshot.Availability, availability)
 				continue
 			}
@@ -102,6 +103,7 @@ func normalizeRateLimits(input []byte, sourceVersion string, capturedAt time.Tim
 				return usage.Snapshot{}, err
 			}
 			availability.State = usage.AvailabilityAvailable
+			availability.Reason = ""
 			snapshot.Observations = append(snapshot.Observations, observation)
 		}
 		snapshot.Availability = append(snapshot.Availability, availability)
@@ -113,7 +115,7 @@ func normalizeWindow(metric usage.Metric, window *rateLimitWindow, observedAt ti
 	if window.UsedPercent == nil || *window.UsedPercent < 0 || *window.UsedPercent > 100 {
 		return usage.Observation{}, apperrors.New(apperrors.UsageSourceInvalid, usage.ErrSourceInvalid)
 	}
-	observation := usage.Observation{Metric: metric, Value: float64(*window.UsedPercent), ObservedAt: observedAt, Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}
+	observation := usage.Observation{Metric: metric, Value: float64(*window.UsedPercent), ObservedAt: observedAt, CapturedAt: observedAt, Source: usage.SourceCodexAppServer, Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}
 	if window.WindowDurationMins == nil && window.ResetsAt == nil {
 		return observation, nil
 	}
@@ -124,6 +126,7 @@ func normalizeWindow(metric usage.Metric, window *rateLimitWindow, observedAt ti
 	windowStart := windowEnd.Add(-time.Duration(*window.WindowDurationMins) * time.Minute)
 	observation.WindowStart = &windowStart
 	observation.WindowEnd = &windowEnd
+	observation.WindowTimezone = "UTC"
 	return observation, nil
 }
 

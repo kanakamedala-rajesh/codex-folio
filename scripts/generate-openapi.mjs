@@ -144,9 +144,10 @@ function validateContract(contract, productVersion) {
   const metadataPath = `/api/${apiVersion}/meta`;
   const projectsPath = `/api/${apiVersion}/projects`;
   const selectionPath = `/api/${apiVersion}/selection`;
+  const usageLatestPath = `/api/${apiVersion}/usage/latest`;
   const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [activityPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageRefreshPath], "paths");
+  assertExactKeys(contract.paths, [activityPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -217,6 +218,15 @@ function validateContract(contract, productVersion) {
   const usageRequestReference = requestReference(usageOperation.requestBody, `POST ${usageRefreshPath} request body`);
   const usageResponseReference = responseReference(usageOperation, `POST ${usageRefreshPath}`, ["200", "default"]);
   const usageErrorResponseReference = errorResponseReference(usageOperation, `POST ${usageRefreshPath}`);
+  const usageLatestOperation = contract.paths[usageLatestPath]?.get;
+  assertObject(usageLatestOperation, `GET ${usageLatestPath}`);
+  assertExactKeys(usageLatestOperation, ["operationId", "parameters", "responses"], `GET ${usageLatestPath}`);
+  assertIdentifier(usageLatestOperation.operationId, "latest usage operationId");
+  if (!Array.isArray(usageLatestOperation.parameters) || usageLatestOperation.parameters.length !== 1 || usageLatestOperation.parameters[0]?.name !== "alias") {
+    throw new Error(`GET ${usageLatestPath} must declare the alias query parameter`);
+  }
+  assertEqual(responseReference(usageLatestOperation, `GET ${usageLatestPath}`, ["200", "default"]), usageResponseReference, "latest usage response reference");
+  assertEqual(errorResponseReference(usageLatestOperation, `GET ${usageLatestPath}`), usageErrorResponseReference, "latest usage error response reference");
 
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
@@ -292,6 +302,8 @@ function validateContract(contract, productVersion) {
     usageAvailabilityType: "UsageMetricAvailability",
     usageObservationFields,
     usageObservationType: "UsageObservation",
+    usageLatestOperationId: usageLatestOperation.operationId,
+    usageLatestPath,
     usageOperationId: usageOperation.operationId,
     usageErrorResponseFields,
     usageErrorResponseType: schemaNames[8],
@@ -431,6 +443,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     usageAvailabilityType,
     usageObservationFields,
     usageObservationType,
+    usageLatestOperationId,
+    usageLatestPath,
     usageOperationId,
     usageErrorResponseFields,
     usageErrorResponseType,
@@ -446,6 +460,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const projectsMethod = goIdentifier(projectsOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
+  const usageLatestMethod = goIdentifier(usageLatestOperationId);
   const usageMethod = goIdentifier(usageOperationId);
   const types = [
     renderGoStruct(activityRecordType, activityRecordFields),
@@ -488,6 +503,7 @@ const (
 \tMetadataPath         = "${metadataPath}"
 \tProjectsPath         = "${projectsPath}"
 \tSelectionPath        = "${selectionPath}"
+\tUsageLatestPath      = "${usageLatestPath}"
 \tUsageRefreshPath     = "${usageRefreshPath}"
 )
 
@@ -675,6 +691,28 @@ func (client *Client) ${usageMethod}(ctx context.Context, input ${usageRequestTy
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
 }
+func (client *Client) ${usageLatestMethod}(ctx context.Context, alias string) (${usageResponseType}, *http.Response, error) {
+\tvar result ${usageResponseType}
+\tquery := url.Values{"alias": []string{alias}}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+UsageLatestPath+"?"+query.Encode(), nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", UsageLatestPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+
 `;
 
   return formatGo(source);
@@ -725,6 +763,8 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     usageAvailabilityType,
     usageObservationFields,
     usageObservationType,
+    usageLatestOperationId,
+    usageLatestPath,
     usageOperationId,
     usageErrorResponseFields,
     usageErrorResponseType,
@@ -893,6 +933,15 @@ export interface ApiPaths {
       };
     };
   };
+  "${usageLatestPath}": {
+    get: {
+      operationId: "${usageLatestOperationId}";
+      responses: {
+        200: { content: { "application/json": ${usageResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
@@ -906,6 +955,7 @@ export interface CodexFolioApiClient {
   ${projectsOperationId}(init?: RequestInit): Promise<${projectsResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
+  ${usageLatestOperationId}(alias: string, init?: RequestInit): Promise<${usageResponseType}>;
   ${usageOperationId}(request: ${usageRequestType}, init?: RequestInit): Promise<${usageResponseType}>;
 }
 
@@ -1023,6 +1073,22 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as ${usageResponseType};
     },
+    async ${usageLatestOperationId}(alias, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams({ alias });
+      const response = await fetcher(baseUrl + "${usageLatestPath}?" + query.toString(), {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${usageResponseType};
+    },
   };
 }
 `;
@@ -1120,11 +1186,17 @@ function goIdentifier(name) {
 }
 
 function goType(schema) {
+  if (typeof schema.$ref === "string") {
+    return goIdentifier(schemaNameFromReference(schema.$ref, "field"));
+  }
   if (schema.type === "string") {
     return "string";
   }
   if (schema.type === "number") {
     return "float64";
+  }
+  if (schema.type === "integer") {
+    return "int64";
   }
   if (schema.type === "array" && typeof schema.items?.$ref === "string") {
     return `[]${goIdentifier(schemaNameFromReference(schema.items.$ref, "array item"))}`;
@@ -1133,10 +1205,13 @@ function goType(schema) {
 }
 
 function typescriptType(schema) {
+  if (typeof schema.$ref === "string") {
+    return schemaNameFromReference(schema.$ref, "field");
+  }
   if (schema.type === "string") {
     return "string";
   }
-  if (schema.type === "number") {
+  if (schema.type === "number" || schema.type === "integer") {
     return "number";
   }
   if (schema.type === "array" && typeof schema.items?.$ref === "string") {

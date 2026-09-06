@@ -169,10 +169,11 @@
         "metric_availability_id": {"type": "string"},
         "metric_key": {"type": "string"},
         "state": {"type": "string"},
+        "reason": {"type": "string"},
         "checked_at": {"type": "string"},
         "provenance": {"type": "string"}
       },
-      "required": ["metric_availability_id", "metric_key", "state", "checked_at", "provenance"],
+      "required": ["metric_availability_id", "metric_key", "state", "reason", "checked_at", "provenance"],
       "type": "object"
     },
     "UsageObservation": {
@@ -187,13 +188,20 @@
         "scope": {"type": "string"},
         "aggregation": {"type": "string"},
         "observed_at": {"type": "string"},
+        "captured_at": {"type": "string"},
+        "capture_age_seconds": {"type": "integer"},
         "window_start": {"type": "string"},
         "window_end": {"type": "string"},
+        "window_timezone": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
         "provenance": {"type": "string"},
         "freshness": {"type": "string"},
-        "availability": {"type": "string"}
+        "availability": {"type": "string"},
+        "assumptions": {"type": "string"},
+        "uncertainty": {"type": "string"}
       },
-      "required": ["observation_id", "metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "observed_at", "window_start", "window_end", "provenance", "freshness", "availability"],
+      "required": ["observation_id", "metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "observed_at", "captured_at", "capture_age_seconds", "window_start", "window_end", "window_timezone", "source", "source_version", "provenance", "freshness", "availability", "assumptions", "uncertainty"],
       "type": "object"
     },
     "UsageSnapshotResponse": {
@@ -205,10 +213,11 @@
         "source": {"type": "string"},
         "source_version": {"type": "string"},
         "captured_at": {"type": "string"},
+        "status": {"type": "string"},
         "observations": {"type": "array", "items": {"$ref": "#/$defs/UsageObservation"}},
         "availability": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAvailability"}}
       },
-      "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "observations", "availability"],
+      "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "status", "observations", "availability"],
       "type": "object"
     }
   },
@@ -327,6 +336,24 @@
               }
             },
             "description": "Persists one Ready Identity Profile as Selected Profile."
+          }
+        }
+      }
+    },
+    "/api/v1/usage/latest": {
+      "get": {
+        "operationId": "getLatestUsage",
+        "parameters": [
+          {"in": "query", "name": "alias", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageSnapshotResponse"}}},
+            "description": "Returns the latest normalized usage evidence without collecting."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when evidence is unavailable."
           }
         }
       }
