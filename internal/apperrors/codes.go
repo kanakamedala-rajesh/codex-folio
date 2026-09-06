@@ -45,6 +45,10 @@ const (
 	UsageProfileUnavailable                  = "CF_USAGE_PROFILE_UNAVAILABLE"
 	UsageCollectionFailed                    = "CF_USAGE_COLLECTION_FAILED"
 	UsageSourceInvalid                       = "CF_USAGE_SOURCE_INVALID"
+	ProjectIdentityInvalid                   = "CF_ACTIVITY_PROJECT_IDENTITY_INVALID"
+	ProjectIdentityNotFound                  = "CF_ACTIVITY_PROJECT_IDENTITY_NOT_FOUND"
+	ProjectPathInvalid                       = "CF_ACTIVITY_PROJECT_PATH_INVALID"
+	ProjectPathCollision                     = "CF_ACTIVITY_PROJECT_PATH_COLLISION"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -159,6 +163,10 @@ func IsRegistered(code string) bool {
 		UsageProfileUnavailable,
 		UsageCollectionFailed,
 		UsageSourceInvalid,
+		ProjectIdentityInvalid,
+		ProjectIdentityNotFound,
+		ProjectPathInvalid,
+		ProjectPathCollision,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

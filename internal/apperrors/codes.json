@@ -248,6 +248,30 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_ACTIVITY_PROJECT_IDENTITY_INVALID",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_ACTIVITY_PROJECT_IDENTITY_NOT_FOUND",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_ACTIVITY_PROJECT_PATH_INVALID",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_ACTIVITY_PROJECT_PATH_COLLISION",
+      "owner": "activity",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

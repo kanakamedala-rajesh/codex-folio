@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/configpack"
@@ -40,6 +41,7 @@ const (
 	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
+	CommandProjectsPath              = "/api/v1/command/projects"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
@@ -79,6 +81,7 @@ type Options struct {
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
 	Usage                 CommandUsageService
+	Projects              *activity.ProjectService
 	CommandToken          string
 }
 
@@ -105,6 +108,7 @@ type Server struct {
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
 	usage                 CommandUsageService
+	projects              *activity.ProjectService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -178,6 +182,7 @@ func NewServer(options Options) (*Server, error) {
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
 		usage:                 options.Usage,
+		projects:              options.Projects,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -401,6 +406,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageRefresh(response, request)
+	case CommandProjectsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandProjects(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
@@ -464,6 +474,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageRefresh(response, request)
+	case ProjectsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !isReadMethod(request.Method) {
+			server.writeMethodError(response, http.MethodGet)
+			return
+		}
+		server.getProjects(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {

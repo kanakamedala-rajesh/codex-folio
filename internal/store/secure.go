@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
@@ -25,11 +26,12 @@ const (
 // ProjectIdentity is the storage boundary for an app-local repository
 // association. CanonicalPath is never written to SQLite as plaintext.
 type ProjectIdentity struct {
-	ProjectIdentityID string
-	ProjectAlias      string
-	CanonicalPath     string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ProjectIdentityID  string
+	ProjectAlias       string
+	RepositoryBasename string
+	CanonicalPath      string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Checkpoint contains sanitized continuation fields. The sensitive fields
@@ -73,15 +75,17 @@ func (store *Store) PutProjectIdentity(ctx context.Context, identity ProjectIden
 		return err
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO project_identities (
-		project_identity_id, project_alias, canonical_path_ciphertext, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?)
+		project_identity_id, project_alias, repository_basename, canonical_path_ciphertext, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_identity_id) DO UPDATE SET
 		project_alias = excluded.project_alias,
+		repository_basename = excluded.repository_basename,
 		canonical_path_ciphertext = excluded.canonical_path_ciphertext,
 		created_at = excluded.created_at,
 		updated_at = excluded.updated_at`,
 		identity.ProjectIdentityID,
 		identity.ProjectAlias,
+		identity.RepositoryBasename,
 		ciphertext,
 		formatStoredTime(identity.CreatedAt),
 		formatStoredTime(identity.UpdatedAt),
@@ -105,10 +109,11 @@ func (store *Store) GetProjectIdentity(ctx context.Context, projectIdentityID st
 	var identity ProjectIdentity
 	var ciphertext []byte
 	var createdAt, updatedAt string
-	if err := store.db.QueryRowContext(ctx, `SELECT project_identity_id, project_alias, canonical_path_ciphertext, created_at, updated_at
+	if err := store.db.QueryRowContext(ctx, `SELECT project_identity_id, project_alias, repository_basename, canonical_path_ciphertext, created_at, updated_at
 		FROM project_identities WHERE project_identity_id = ?`, projectIdentityID).Scan(
 		&identity.ProjectIdentityID,
 		&identity.ProjectAlias,
+		&identity.RepositoryBasename,
 		&ciphertext,
 		&createdAt,
 		&updatedAt,
@@ -131,6 +136,127 @@ func (store *Store) GetProjectIdentity(ctx context.Context, projectIdentityID st
 		return ProjectIdentity{}, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
 	}
 	return identity, nil
+}
+
+// listProjectIdentities returns private records to the activity workflow after
+// authenticating every encrypted canonical path.
+func (store *Store) listProjectIdentities(ctx context.Context) ([]ProjectIdentity, error) {
+	secureVault, err := store.requireVault()
+	if err != nil {
+		return nil, err
+	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	ctx = contextOrBackground(ctx)
+	rows, err := store.db.QueryContext(ctx, `SELECT project_identity_id, project_alias, repository_basename, canonical_path_ciphertext, created_at, updated_at
+		FROM project_identities ORDER BY created_at, project_identity_id`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+	}
+	defer rows.Close()
+	identities := []ProjectIdentity{}
+	for rows.Next() {
+		var identity ProjectIdentity
+		var ciphertext []byte
+		var createdAt, updatedAt string
+		if err := rows.Scan(&identity.ProjectIdentityID, &identity.ProjectAlias, &identity.RepositoryBasename, &ciphertext, &createdAt, &updatedAt); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+		}
+		identity.CanonicalPath, err = decryptField(ctx, secureVault, ciphertext, projectIdentityAAD(identity.ProjectIdentityID))
+		if err != nil {
+			return nil, err
+		}
+		identity.CreatedAt, err = parseStoredTime(createdAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+		}
+		identity.UpdatedAt, err = parseStoredTime(updatedAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+		}
+		identities = append(identities, identity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+	}
+	return identities, nil
+}
+
+func (store *Store) SaveProjectRecord(ctx context.Context, record activity.ProjectRecord) error {
+	return store.PutProjectIdentity(ctx, ProjectIdentity{
+		ProjectIdentityID:  record.ID,
+		ProjectAlias:       record.Alias,
+		RepositoryBasename: record.Basename,
+		CanonicalPath:      record.CanonicalPath,
+		CreatedAt:          record.CreatedAt,
+		UpdatedAt:          record.UpdatedAt,
+	})
+}
+
+func (store *Store) ListProjectRecords(ctx context.Context) ([]activity.ProjectRecord, error) {
+	identities, err := store.listProjectIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]activity.ProjectRecord, 0, len(identities))
+	for _, identity := range identities {
+		records = append(records, activity.ProjectRecord{
+			ID: identity.ProjectIdentityID, Alias: identity.ProjectAlias, Basename: identity.RepositoryBasename, CanonicalPath: identity.CanonicalPath,
+			CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt,
+		})
+	}
+	return records, nil
+}
+
+// ListProjectIdentities returns only the safe projection and never opens the
+// encrypted canonical-path field.
+func (store *Store) ListProjectIdentities(ctx context.Context) ([]activity.ProjectIdentity, error) {
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(contextOrBackground(ctx), `SELECT project_identity_id, project_alias, repository_basename, created_at, updated_at
+		FROM project_identities ORDER BY created_at, project_identity_id`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	defer rows.Close()
+	projects := []activity.ProjectIdentity{}
+	for rows.Next() {
+		var project activity.ProjectIdentity
+		var createdAt, updatedAt string
+		if err := rows.Scan(&project.ID, &project.Alias, &project.Basename, &createdAt, &updatedAt); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		project.CreatedAt, err = parseStoredTime(createdAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		project.UpdatedAt, err = parseStoredTime(updatedAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		projects = append(projects, project)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	return projects, nil
+}
+
+func (store *Store) UpdateProjectAlias(ctx context.Context, id, alias string, updatedAt time.Time) error {
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	result, err := store.db.ExecContext(contextOrBackground(ctx), `UPDATE project_identities SET project_alias = ?, updated_at = ? WHERE project_identity_id = ?`, alias, formatStoredTime(updatedAt), id)
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, err)
+	}
+	if changed == 0 {
+		return apperrors.New(apperrors.ProjectIdentityNotFound, activity.ErrProjectNotFound)
+	}
+	return nil
 }
 
 // PutCheckpoint inserts or replaces one checkpoint. Each sensitive field is

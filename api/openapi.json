@@ -49,6 +49,26 @@
       ],
       "type": "object"
     },
+    "ProjectIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "basename": {"type": "string"},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      },
+      "required": ["project_id", "alias", "basename", "created_at", "updated_at"],
+      "type": "object"
+    },
+    "ProjectsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "projects": {"type": "array", "items": {"$ref": "#/$defs/ProjectIdentity"}}
+      },
+      "required": ["projects"],
+      "type": "object"
+    },
     "SelectionRequest": {
       "additionalProperties": false,
       "properties": {
@@ -203,6 +223,17 @@
               }
             },
             "description": "Returns non-product API metadata."
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "getProjects",
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
+            "description": "Returns safe app-local Project Identity projections without canonical paths."
           }
         }
       }

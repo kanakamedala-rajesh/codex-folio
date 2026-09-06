@@ -92,6 +92,15 @@ func TestSensitiveRecordsRoundTripOnlyThroughTheVaultBoundary(t *testing.T) {
 			t.Fatalf("database contains forbidden sensitive bytes %q", forbidden)
 		}
 	}
+	reopened, err := OpenWithOptions(Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatalf("reopen sensitive store: %v", err)
+	}
+	defer reopened.Close()
+	records, err := reopened.ListProjectRecords(context.Background())
+	if err != nil || len(records) != 1 || records[0].ID != project.ProjectIdentityID || records[0].Alias != project.ProjectAlias || records[0].CanonicalPath != project.CanonicalPath {
+		t.Fatalf("ListProjectRecords() after restart = %#v, %v", records, err)
+	}
 }
 
 func TestSensitiveRecordsFailClosedWithoutAVault(t *testing.T) {
@@ -117,6 +126,54 @@ func TestSensitiveRecordsFailClosedWithoutAVault(t *testing.T) {
 		t.Fatal("GetProjectIdentity() succeeded without a vault")
 	} else if got := apperrors.Code(err); got != apperrors.VaultUnavailable {
 		t.Fatalf("GetProjectIdentity() error code = %q, want %q", got, apperrors.VaultUnavailable)
+	}
+}
+
+func TestProjectSafeProjectionAndAliasEditDoNotDecryptCanonicalPath(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "project-safe.sqlite3")
+	secureVault, err := vault.NewMemoryVault(vault.MemoryVaultOptions{Key: bytes.Repeat([]byte{0x6c}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withVault, err := OpenWithOptions(Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 6, 12, 0, 0, 0, time.UTC)
+	project := ProjectIdentity{ProjectIdentityID: "project-safe", ProjectAlias: "Before", RepositoryBasename: "project", CanonicalPath: "/private/sentinel/project", CreatedAt: now, UpdatedAt: now}
+	if err := withVault.PutProjectIdentity(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	if err := withVault.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	withoutVault, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := withoutVault.ListProjectIdentities(context.Background())
+	if err != nil || len(projects) != 1 || projects[0].Alias != "Before" || projects[0].Basename != "project" {
+		t.Fatalf("ListProjectIdentities() = %#v, %v", projects, err)
+	}
+	updatedAt := now.Add(time.Minute)
+	if err := withoutVault.UpdateProjectAlias(context.Background(), project.ProjectIdentityID, "After", updatedAt); err != nil {
+		t.Fatalf("UpdateProjectAlias() error = %v", err)
+	}
+	if _, err := withoutVault.ListProjectRecords(context.Background()); apperrors.Code(err) != apperrors.VaultUnavailable {
+		t.Fatalf("private project read error = %v, want %s", err, apperrors.VaultUnavailable)
+	}
+	if err := withoutVault.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenWithOptions(Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetProjectIdentity(context.Background(), project.ProjectIdentityID)
+	if err != nil || got.ProjectAlias != "After" || got.CanonicalPath != project.CanonicalPath || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("preserved Project Identity = %#v, %v", got, err)
 	}
 }
 

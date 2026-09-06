@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
@@ -339,13 +340,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -649,6 +656,9 @@ func serviceDiagnosticState(code string) string {
 		apperrors.ConfigurationPackNotApproved,
 		apperrors.ConfigurationPackAssignmentInvalid,
 		apperrors.ConfigurationPackPromotionReviewRequired,
+		apperrors.ProjectIdentityInvalid,
+		apperrors.ProjectIdentityNotFound,
+		apperrors.ProjectPathCollision,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -660,6 +670,7 @@ func serviceDiagnosticState(code string) string {
 		return diagnostics.StateRejected
 	case apperrors.PlatformStatePathInvalid,
 		apperrors.PlatformStatePathUnsafe,
+		apperrors.ProjectPathInvalid,
 		apperrors.LaunchPlanInvalid,
 		apperrors.LaunchProcessStatusInvalid,
 		apperrors.DiagnosticsConfigurationInvalid,
@@ -731,6 +742,14 @@ func serviceRemediation(code string) string {
 		return "the Profile Quarantine operation could not be completed safely"
 	case apperrors.ProfileQuarantineExpired:
 		return "the Profile Quarantine recovery period has expired"
+	case apperrors.ProjectIdentityInvalid:
+		return "the Project Identity or Project Alias is invalid"
+	case apperrors.ProjectIdentityNotFound:
+		return "the Project Identity was not found"
+	case apperrors.ProjectPathInvalid:
+		return "the repository location is inaccessible or is not a directory"
+	case apperrors.ProjectPathCollision:
+		return "the repository location belongs to another Project Identity; the prior identity was preserved"
 	case apperrors.ConfigurationPackInvalid:
 		return "the configuration pack or its reviewed files are invalid"
 	case apperrors.ConfigurationPackNotFound:

@@ -66,6 +66,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runConfigurationPack(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "usage":
 		return runUsage(args[1:], stdout, stderr, resolvePaths)
+	case "project":
+		return runProject(args[1:], stdout, stderr, resolvePaths)
 	case "shell":
 		return runShell(args[1:], stdout, stderr, resolvePaths, metadata.Version)
 	case "help", "--help", "-h":
@@ -122,6 +124,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio select ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio configuration-pack {create|approve|assign|override|preview|project|promotion-preview|promote} ...")
 	fmt.Fprintln(stdout, "  codex-folio usage refresh ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio project {resolve|list|edit|reconcile} ...")
 	fmt.Fprintln(stdout, "  codex-folio shell {generate|remove} [--shell bash|zsh|powershell] [--wrapper] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

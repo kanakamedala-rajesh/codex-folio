@@ -162,6 +162,14 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 10,
+			name:    "project-identity-safe-basename",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE project_identities ADD COLUMN repository_basename TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+		},
 	}
 }
 
@@ -424,7 +432,7 @@ var expectedTables = map[string][]string{
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
-	"project_identities":             {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
+	"project_identities":             {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at", "repository_basename"},
 	"retention_state":                {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},

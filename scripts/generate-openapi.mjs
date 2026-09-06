@@ -141,10 +141,11 @@ function validateContract(contract, productVersion) {
 
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
+  const projectsPath = `/api/${apiVersion}/projects`;
   const selectionPath = `/api/${apiVersion}/selection`;
   const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [bootstrapPath, metadataPath, selectionPath, usageRefreshPath], "paths");
+  assertExactKeys(contract.paths, [bootstrapPath, metadataPath, projectsPath, selectionPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -193,6 +194,12 @@ function validateContract(contract, productVersion) {
   const selectionResponseReference = responseReference(getSelectionOperation, `GET ${selectionPath}`);
   assertEqual(responseReference(setSelectionOperation, `PUT ${selectionPath}`), selectionResponseReference, "selection response reference");
 
+  const projectsOperation = contract.paths[projectsPath]?.get;
+  assertObject(projectsOperation, `GET ${projectsPath}`);
+  assertExactKeys(projectsOperation, ["operationId", "responses"], `GET ${projectsPath}`);
+  assertIdentifier(projectsOperation.operationId, "projects operationId");
+  const projectsResponseReference = responseReference(projectsOperation, `GET ${projectsPath}`);
+
   const usageOperation = contract.paths[usageRefreshPath]?.post;
   assertObject(usageOperation, `POST ${usageRefreshPath}`);
   assertExactKeys(usageOperation, ["operationId", "requestBody", "responses"], `POST ${usageRefreshPath}`);
@@ -207,11 +214,13 @@ function validateContract(contract, productVersion) {
     schemaNameFromReference(metadataResponseReference, "metadata response"),
     schemaNameFromReference(selectionRequestReference, "selection request"),
     schemaNameFromReference(selectionResponseReference, "selection response"),
+    schemaNameFromReference(projectsResponseReference, "projects response"),
     schemaNameFromReference(usageRequestReference, "usage request"),
     schemaNameFromReference(usageResponseReference, "usage response"),
     schemaNameFromReference(usageErrorResponseReference, "usage error response"),
     "UsageObservation",
     "UsageMetricAvailability",
+    "ProjectIdentity",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -226,11 +235,13 @@ function validateContract(contract, productVersion) {
   const metadataFields = schemaFields(contract.$defs[schemaNames[2]], schemaNames[2]);
   const selectionRequestFields = schemaFields(contract.$defs[schemaNames[3]], schemaNames[3]);
   const selectionResponseFields = schemaFields(contract.$defs[schemaNames[4]], schemaNames[4]);
-  const usageRequestFields = schemaFields(contract.$defs[schemaNames[5]], schemaNames[5]);
-  const usageResponseFields = schemaFields(contract.$defs[schemaNames[6]], schemaNames[6]);
-  const usageErrorResponseFields = schemaFields(contract.$defs[schemaNames[7]], schemaNames[7]);
+  const projectsResponseFields = schemaFields(contract.$defs[schemaNames[5]], schemaNames[5]);
+  const usageRequestFields = schemaFields(contract.$defs[schemaNames[6]], schemaNames[6]);
+  const usageResponseFields = schemaFields(contract.$defs[schemaNames[7]], schemaNames[7]);
+  const usageErrorResponseFields = schemaFields(contract.$defs[schemaNames[8]], schemaNames[8]);
   const usageObservationFields = schemaFields(contract.$defs.UsageObservation, "UsageObservation");
   const usageAvailabilityFields = schemaFields(contract.$defs.UsageMetricAvailability, "UsageMetricAvailability");
+  const projectIdentityFields = schemaFields(contract.$defs.ProjectIdentity, "ProjectIdentity");
 
   return {
     apiVersion,
@@ -244,6 +255,12 @@ function validateContract(contract, productVersion) {
     metadataPath,
     metadataOperationId,
     metadataResponseType: schemaNames[2],
+    projectIdentityFields,
+    projectIdentityType: "ProjectIdentity",
+    projectsOperationId: projectsOperation.operationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType: schemaNames[5],
     selectionGetOperationId: getSelectionOperation.operationId,
     selectionPath,
     selectionRequestFields,
@@ -257,12 +274,12 @@ function validateContract(contract, productVersion) {
     usageObservationType: "UsageObservation",
     usageOperationId: usageOperation.operationId,
     usageErrorResponseFields,
-    usageErrorResponseType: schemaNames[7],
+    usageErrorResponseType: schemaNames[8],
     usageRefreshPath,
     usageRequestFields,
-    usageRequestType: schemaNames[5],
+    usageRequestType: schemaNames[6],
     usageResponseFields,
-    usageResponseType: schemaNames[6],
+    usageResponseType: schemaNames[7],
   };
 }
 
@@ -371,6 +388,12 @@ function renderGo(productVersion, sourceHash, contractShape) {
     metadataPath,
     metadataOperationId,
     metadataResponseType,
+    projectIdentityFields,
+    projectIdentityType,
+    projectsOperationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType,
     selectionGetOperationId,
     selectionPath,
     selectionRequestFields,
@@ -393,6 +416,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   } = contractShape;
   const bootstrapMethod = goIdentifier(bootstrapOperationId);
   const metadataMethod = goIdentifier(metadataOperationId);
+  const projectsMethod = goIdentifier(projectsOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
   const usageMethod = goIdentifier(usageOperationId);
@@ -400,6 +424,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
+    renderGoStruct(projectIdentityType, projectIdentityFields),
+    renderGoStruct(projectsResponseType, projectsResponseFields),
     renderGoStruct(selectionRequestType, selectionRequestFields),
     renderGoStruct(selectionResponseType, selectionResponseFields),
     renderGoStruct(usageRequestType, usageRequestFields),
@@ -411,7 +437,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
 
   const source = `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
-// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}, ${selectionResponseType}, ${usageResponseType}
+// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}, ${projectsResponseType}, ${selectionResponseType}, ${usageResponseType}
 package httpapi
 
 import (
@@ -429,6 +455,7 @@ const (
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
 \tMetadataPath         = "${metadataPath}"
+\tProjectsPath         = "${projectsPath}"
 \tSelectionPath        = "${selectionPath}"
 \tUsageRefreshPath     = "${usageRefreshPath}"
 )
@@ -515,6 +542,23 @@ func (client *Client) ${metadataMethod}(ctx context.Context) (${metadataResponse
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 \t\treturn result, response, err
 \t}
+\treturn result, response, nil
+}
+
+func (client *Client) ${projectsMethod}(ctx context.Context) (${projectsResponseType}, *http.Response, error) {
+\tvar result ${projectsResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProjectsPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ProjectsPath, response.StatusCode)
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
 }
 
@@ -605,6 +649,12 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     metadataPath,
     metadataOperationId,
     metadataResponseType,
+    projectIdentityFields,
+    projectIdentityType,
+    projectsOperationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType,
     selectionGetOperationId,
     selectionPath,
     selectionRequestFields,
@@ -634,6 +684,8 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   const metadataLines = metadataFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
+  const projectIdentityLines = projectIdentityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const projectsResponseLines = projectsResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const selectionRequestLines = selectionRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
@@ -663,6 +715,14 @@ ${bootstrapResponseLines}
 
 export interface ${metadataResponseType} {
 ${metadataLines}
+}
+
+export interface ${projectIdentityType} {
+${projectIdentityLines}
+}
+
+export interface ${projectsResponseType} {
+${projectsResponseLines}
 }
 
 export interface ${selectionRequestType} {
@@ -742,6 +802,12 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ${selectionResponseType} } } };
     };
   };
+  "${projectsPath}": {
+    get: {
+      operationId: "${projectsOperationId}";
+      responses: { 200: { content: { "application/json": ${projectsResponseType} } } };
+    };
+  };
   "${usageRefreshPath}": {
     post: {
       operationId: "${usageOperationId}";
@@ -757,6 +823,7 @@ export interface ApiPaths {
 export interface CodexFolioApiClient {
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
+  ${projectsOperationId}(init?: RequestInit): Promise<${projectsResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
   ${usageOperationId}(request: ${usageRequestType}, init?: RequestInit): Promise<${usageResponseType}>;
@@ -796,6 +863,20 @@ export function createCodexFolioApiClient(
         throw new Error("GET ${metadataPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${metadataResponseType};
+    },
+    async ${projectsOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${projectsPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET ${projectsPath} failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ${projectsResponseType};
     },
     async ${selectionGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
