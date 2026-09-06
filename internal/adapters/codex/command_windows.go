@@ -24,16 +24,19 @@ func codexCommand(ctx context.Context, executable string, args ...string) *exec.
 func sameEnvironmentName(left, right string) bool { return strings.EqualFold(left, right) }
 
 func batchCommandLine(executable string, args []string) string {
-	parts := []string{quoteBatchArgument(executable)}
+	parts := []string{quoteBatchArgument(executable, true)}
 	for _, arg := range args {
-		parts = append(parts, quoteBatchArgument(arg))
+		parts = append(parts, quoteBatchArgument(arg, false))
 	}
-	return `/d /v:off /s /c "` + strings.Join(parts, " ") + `"`
+	return `cmd.exe /d /v:off /s /c "` + strings.Join(parts, " ") + `"`
 }
 
-func quoteBatchArgument(value string) string {
+func quoteBatchArgument(value string, always bool) string {
 	value = strings.ReplaceAll(value, "^", "^^")
 	value = strings.ReplaceAll(value, "%", "%%")
 	value = strings.ReplaceAll(value, `"`, `^"`)
+	if !always && value != "" && !strings.ContainsAny(value, " \t&|<>()") {
+		return value
+	}
 	return `"` + value + `"`
 }

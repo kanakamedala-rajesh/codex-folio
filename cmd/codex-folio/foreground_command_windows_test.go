@@ -12,7 +12,7 @@ import (
 
 func TestForegroundCommandInvokesWindowsBatchShimWithoutInterpretingArguments(t *testing.T) {
 	shim := filepath.Join(t.TempDir(), "fake codex.cmd")
-	if err := os.WriteFile(shim, []byte("@echo off\r\necho(%~1\r\necho(%~2\r\n"), 0o600); err != nil {
+	if err := os.WriteFile(shim, []byte("@echo off\r\nif not \"%~1\"==\"hello world\" exit /b 2\r\nif not \"%~2\"==\"a&b\" exit /b 3\r\necho hello world\r\necho a^&b\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	command := foregroundCommand(shim, "hello world", "a&b")

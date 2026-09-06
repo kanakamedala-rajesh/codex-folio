@@ -21,16 +21,19 @@ func foregroundCommand(executable string, args ...string) *exec.Cmd {
 }
 
 func foregroundBatchCommandLine(executable string, args []string) string {
-	parts := []string{quoteForegroundBatchArgument(executable)}
+	parts := []string{quoteForegroundBatchArgument(executable, true)}
 	for _, arg := range args {
-		parts = append(parts, quoteForegroundBatchArgument(arg))
+		parts = append(parts, quoteForegroundBatchArgument(arg, false))
 	}
-	return `/d /v:off /s /c "` + strings.Join(parts, " ") + `"`
+	return `cmd.exe /d /v:off /s /c "` + strings.Join(parts, " ") + `"`
 }
 
-func quoteForegroundBatchArgument(value string) string {
+func quoteForegroundBatchArgument(value string, always bool) string {
 	value = strings.ReplaceAll(value, "^", "^^")
 	value = strings.ReplaceAll(value, "%", "%%")
 	value = strings.ReplaceAll(value, `"`, `^"`)
+	if !always && value != "" && !strings.ContainsAny(value, " \t&|<>()") {
+		return value
+	}
 	return `"` + value + `"`
 }
