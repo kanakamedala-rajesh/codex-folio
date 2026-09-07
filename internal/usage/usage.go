@@ -4,6 +4,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -48,6 +49,9 @@ const (
 	TriggerDashboardRefresh = "dashboard_refresh"
 	TriggerPreLaunch        = "pre_launch"
 	TriggerPostExit         = "post_exit"
+	AggregationSum          = "sum"
+	ScopeSelectedProfile    = "selected_profile"
+	ScopeCombinedIdentity   = "combined_identity"
 
 	freshnessLimit = 10 * time.Minute
 )
@@ -64,6 +68,8 @@ type Metric struct {
 var registry = []Metric{
 	{Key: "codex.primary.used_percent", ValueKind: "percentage", Unit: "percent", SourceClass: ProvenanceProvider, Scope: "provider_quota_window", Aggregation: "none"},
 	{Key: "codex.secondary.used_percent", ValueKind: "percentage", Unit: "percent", SourceClass: ProvenanceProvider, Scope: "provider_quota_window", Aggregation: "none"},
+	{Key: "codex.local.tokens_used", ValueKind: "count", Unit: "tokens", SourceClass: ProvenanceLocal, Scope: "login_identity", Aggregation: AggregationSum},
+	{Key: "codex.local.session_duration", ValueKind: "duration", Unit: "seconds", SourceClass: ProvenanceLocal, Scope: "workspace", Aggregation: AggregationSum},
 }
 
 func Registry() []Metric {
@@ -109,6 +115,103 @@ type Snapshot struct {
 	TriggerReason string               `json:"trigger_reason"`
 	Observations  []Observation        `json:"observations"`
 	Availability  []MetricAvailability `json:"availability"`
+	LoginIdentity string               `json:"-"`
+	Workspace     string               `json:"-"`
+}
+
+type Aggregate struct {
+	Metric       Metric  `json:"metric"`
+	Value        float64 `json:"value"`
+	ProfileCount int     `json:"profile_count"`
+}
+
+type DashboardView struct {
+	Scope                string      `json:"scope"`
+	EligibleProfileCount int         `json:"eligible_profile_count"`
+	Profiles             []Snapshot  `json:"profiles"`
+	Aggregates           []Aggregate `json:"aggregates"`
+	AmbiguousMetricKeys  []string    `json:"ambiguous_metric_keys"`
+}
+
+func Combine(snapshots []Snapshot, eligibleProfileCount int) DashboardView {
+	return combineWithRegistry(snapshots, eligibleProfileCount, Registry())
+}
+
+func combineWithRegistry(snapshots []Snapshot, eligibleProfileCount int, metrics []Metric) DashboardView {
+	view := DashboardView{Scope: ScopeCombinedIdentity, EligibleProfileCount: eligibleProfileCount, Profiles: append([]Snapshot(nil), snapshots...), Aggregates: []Aggregate{}, AmbiguousMetricKeys: []string{}}
+	registry := make(map[string]Metric, len(metrics))
+	for _, metric := range metrics {
+		registry[metric.Key] = metric
+	}
+	type evidence struct {
+		observation Observation
+		scopeKey    string
+	}
+	grouped := make(map[string][]evidence)
+	seen := make(map[string][]evidence)
+	profiles := make(map[string]map[string]bool)
+	ambiguous := make(map[string]bool)
+	for _, snapshot := range snapshots {
+		for _, observation := range snapshot.Observations {
+			metric, ok := registry[observation.Metric.Key]
+			if !ok || metric != observation.Metric || metric.Aggregation != AggregationSum || metric.ValueKind == "percentage" {
+				continue
+			}
+			scopeKey := "profile:" + snapshot.ProfileID
+			switch metric.Scope {
+			case "login_identity":
+				if snapshot.LoginIdentity != "" {
+					scopeKey = "login_identity:" + snapshot.LoginIdentity
+				}
+			case "workspace":
+				if snapshot.Workspace != "" {
+					scopeKey = "workspace:" + snapshot.Workspace
+				}
+			}
+			duplicate := false
+			for _, prior := range seen[metric.Key] {
+				if prior.scopeKey != scopeKey || !windowsOverlap(prior.observation, observation) {
+					continue
+				}
+				if prior.observation.Value != observation.Value {
+					ambiguous[metric.Key] = true
+				}
+				duplicate = true
+			}
+			seen[metric.Key] = append(seen[metric.Key], evidence{observation: observation, scopeKey: scopeKey})
+			if duplicate {
+				continue
+			}
+			grouped[metric.Key] = append(grouped[metric.Key], evidence{observation: observation, scopeKey: scopeKey})
+			if profiles[metric.Key] == nil {
+				profiles[metric.Key] = make(map[string]bool)
+			}
+			profiles[metric.Key][snapshot.ProfileID] = true
+		}
+	}
+	for key, items := range grouped {
+		if ambiguous[key] {
+			view.AmbiguousMetricKeys = append(view.AmbiguousMetricKeys, key)
+			continue
+		}
+		var value float64
+		for _, item := range items {
+			value += item.observation.Value
+		}
+		view.Aggregates = append(view.Aggregates, Aggregate{Metric: registry[key], Value: value, ProfileCount: len(profiles[key])})
+	}
+	sort.Slice(view.Aggregates, func(left, right int) bool {
+		return view.Aggregates[left].Metric.Key < view.Aggregates[right].Metric.Key
+	})
+	sort.Strings(view.AmbiguousMetricKeys)
+	return view
+}
+
+func windowsOverlap(left, right Observation) bool {
+	if left.WindowStart == nil || left.WindowEnd == nil || right.WindowStart == nil || right.WindowEnd == nil {
+		return true
+	}
+	return left.WindowStart.Before(*right.WindowEnd) && right.WindowStart.Before(*left.WindowEnd)
 }
 
 type CollectionRequest struct {
@@ -123,13 +226,18 @@ type Collector interface {
 }
 
 type ProfileTarget struct {
-	ID           string
-	Alias        string
-	IdentityHome string
+	ID            string
+	Alias         string
+	IdentityHome  string
+	LoginIdentity string
+	Workspace     string
+	Selected      bool
+	Eligible      bool
 }
 
 type Store interface {
 	ResolveUsageProfile(context.Context, string) (ProfileTarget, error)
+	ListUsageProfiles(context.Context) ([]ProfileTarget, error)
 	SaveUsageSnapshot(context.Context, ProfileTarget, Snapshot) (Snapshot, error)
 	LatestUsageSnapshot(context.Context, ProfileTarget) (Snapshot, error)
 }
@@ -218,10 +326,67 @@ func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, err
 	return snapshot, nil
 }
 
+func (service *Service) View(ctx context.Context, scope string) (DashboardView, error) {
+	if service == nil || service.store == nil || service.clock == nil || (scope != "" && scope != ScopeSelectedProfile && scope != ScopeCombinedIdentity) {
+		return DashboardView{}, ErrInvalid
+	}
+	profiles, err := service.store.ListUsageProfiles(ctx)
+	if err != nil {
+		return DashboardView{}, err
+	}
+	now := service.clock.Now().UTC()
+	if now.IsZero() {
+		return DashboardView{}, ErrInvalid
+	}
+	eligible := 0
+	for _, target := range profiles {
+		eligible += boolCount(target.Eligible)
+	}
+	if scope == "" || scope == ScopeSelectedProfile {
+		for _, target := range profiles {
+			if !target.Selected {
+				continue
+			}
+			snapshot, err := service.store.LatestUsageSnapshot(ctx, target)
+			if err != nil {
+				return DashboardView{}, err
+			}
+			if err := finalizeSnapshot(&snapshot, now); err != nil {
+				return DashboardView{}, err
+			}
+			return DashboardView{Scope: ScopeSelectedProfile, EligibleProfileCount: eligible, Profiles: []Snapshot{snapshot}, Aggregates: []Aggregate{}, AmbiguousMetricKeys: []string{}}, nil
+		}
+		return DashboardView{}, ErrProfileUnavailable
+	}
+
+	snapshots := make([]Snapshot, 0, len(profiles))
+	for _, target := range profiles {
+		snapshot, err := service.store.LatestUsageSnapshot(ctx, target)
+		if errors.Is(err, ErrProfileUnavailable) {
+			continue
+		}
+		if err != nil {
+			return DashboardView{}, err
+		}
+		if err := finalizeSnapshot(&snapshot, now); err != nil {
+			return DashboardView{}, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return Combine(snapshots, eligible), nil
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func NewUnavailableSnapshot(sourceVersion string, capturedAt time.Time, state, reason string) Snapshot {
 	snapshot := Snapshot{Source: SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt, Status: state, Observations: []Observation{}, Availability: []MetricAvailability{}}
 	for _, metric := range Registry() {
-		snapshot.Availability = append(snapshot.Availability, MetricAvailability{MetricKey: metric.Key, State: state, Reason: reason, CheckedAt: capturedAt, Provenance: ProvenanceProvider})
+		snapshot.Availability = append(snapshot.Availability, MetricAvailability{MetricKey: metric.Key, State: state, Reason: reason, CheckedAt: capturedAt, Provenance: metric.SourceClass})
 	}
 	return snapshot
 }

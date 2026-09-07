@@ -23,13 +23,14 @@ func (store *Store) ResolveUsageProfile(ctx context.Context, alias string) (usag
 	var target usage.ProfileTarget
 	var status string
 	var homeID sql.NullString
-	var ciphertext []byte
-	err := store.db.QueryRowContext(ctx, `SELECT ip.profile_id, a.alias, ip.status, ip.identity_home_id, h.location_ciphertext
+	var ciphertext, loginCiphertext, workspaceCiphertext []byte
+	err := store.db.QueryRowContext(ctx, `SELECT ip.profile_id, a.alias, ip.status, ip.identity_home_id, h.location_ciphertext,
+		h.documented_login_identity_ciphertext, h.documented_workspace_ciphertext
 		FROM identity_profiles ip
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
 		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
 		WHERE a.alias = ? COLLATE NOCASE
-		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)`, alias).Scan(&target.ID, &target.Alias, &status, &homeID, &ciphertext)
+		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)`, alias).Scan(&target.ID, &target.Alias, &status, &homeID, &ciphertext, &loginCiphertext, &workspaceCiphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return usage.ProfileTarget{}, apperrors.New(apperrors.UsageProfileNotFound, usage.ErrProfileNotFound)
 	}
@@ -51,7 +52,56 @@ func (store *Store) ResolveUsageProfile(ctx context.Context, alias string) (usag
 	if !filepath.IsAbs(target.IdentityHome) {
 		return usage.ProfileTarget{}, apperrors.New(apperrors.UsageProfileUnavailable, usage.ErrProfileUnavailable)
 	}
+	if len(loginCiphertext) > 0 {
+		target.LoginIdentity, err = decryptField(ctx, secureVault, loginCiphertext, documentedMetadataAAD(target.ID, "login-identity"))
+		if err != nil {
+			return usage.ProfileTarget{}, err
+		}
+	}
+	if len(workspaceCiphertext) > 0 {
+		target.Workspace, err = decryptField(ctx, secureVault, workspaceCiphertext, documentedMetadataAAD(target.ID, "workspace"))
+		if err != nil {
+			return usage.ProfileTarget{}, err
+		}
+	}
+	target.Eligible = true
 	return target, nil
+}
+
+func (store *Store) ListUsageProfiles(ctx context.Context) ([]usage.ProfileTarget, error) {
+	if store == nil || store.db == nil {
+		return nil, coded(apperrors.StoreReadFailed, usage.ErrPersistenceFailed)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias,
+		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END,
+		CASE WHEN ip.status = 'ready' AND h.location_ciphertext IS NOT NULL AND h.ownership IN ('managed', 'referenced')
+			AND COALESCE((SELECT us.status FROM usage_snapshots us WHERE us.profile_id = ip.profile_id ORDER BY us.captured_at DESC, us.snapshot_id DESC LIMIT 1), '') <> 'reauthentication_required'
+			THEN 1 ELSE 0 END
+		FROM identity_profiles ip
+		JOIN cli_aliases a ON a.profile_id = ip.profile_id
+		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
+		LEFT JOIN selected_profile s ON s.profile_id = ip.profile_id
+		WHERE NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = ip.profile_id)
+		ORDER BY CASE WHEN s.profile_id = ip.profile_id THEN 0 ELSE 1 END, a.alias COLLATE NOCASE`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+	}
+	defer rows.Close()
+	profiles := []usage.ProfileTarget{}
+	for rows.Next() {
+		var target usage.ProfileTarget
+		if err := rows.Scan(&target.ID, &target.Alias, &target.Selected, &target.Eligible); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+		}
+		profiles = append(profiles, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+	}
+	return profiles, nil
 }
 
 func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileTarget, snapshot usage.Snapshot) (usage.Snapshot, error) {
@@ -71,8 +121,26 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 		rollback()
 		return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason)
-		SELECT ?, profile_id, ?, ?, ?, ?, ? FROM identity_profiles WHERE profile_id = ? AND status = 'ready'`, snapshotID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), snapshot.Status, snapshot.TriggerReason, target.ID)
+	var loginCiphertext, workspaceCiphertext []byte
+	if target.LoginIdentity != "" || target.Workspace != "" {
+		secureVault, vaultErr := store.requireVault()
+		if vaultErr != nil {
+			rollback()
+			return usage.Snapshot{}, vaultErr
+		}
+		if target.LoginIdentity != "" {
+			loginCiphertext, err = encryptField(ctx, secureVault, []byte(target.LoginIdentity), usageScopeAAD(snapshotID, "login-identity"))
+		}
+		if err == nil && target.Workspace != "" {
+			workspaceCiphertext, err = encryptField(ctx, secureVault, []byte(target.Workspace), usageScopeAAD(snapshotID, "workspace"))
+		}
+	}
+	if err != nil {
+		rollback()
+		return usage.Snapshot{}, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason, login_identity_ciphertext, workspace_ciphertext)
+		SELECT ?, profile_id, ?, ?, ?, ?, ?, ?, ? FROM identity_profiles WHERE profile_id = ? AND status = 'ready'`, snapshotID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), snapshot.Status, snapshot.TriggerReason, loginCiphertext, workspaceCiphertext, target.ID)
 	if err != nil {
 		rollback()
 		return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
@@ -169,9 +237,10 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 	defer store.operationMu.RUnlock()
 	snapshot := usage.Snapshot{ProfileID: target.ID, Alias: target.Alias, Observations: []usage.Observation{}, Availability: []usage.MetricAvailability{}}
 	var capturedAt string
-	err := store.db.QueryRowContext(ctx, `SELECT snapshot_id, source, source_version, captured_at, status, trigger_reason
+	var loginCiphertext, workspaceCiphertext []byte
+	err := store.db.QueryRowContext(ctx, `SELECT snapshot_id, source, source_version, captured_at, status, trigger_reason, login_identity_ciphertext, workspace_ciphertext
 		FROM usage_snapshots WHERE profile_id = ? ORDER BY captured_at DESC, snapshot_id DESC LIMIT 1`, target.ID).
-		Scan(&snapshot.ID, &snapshot.Source, &snapshot.SourceVersion, &capturedAt, &snapshot.Status, &snapshot.TriggerReason)
+		Scan(&snapshot.ID, &snapshot.Source, &snapshot.SourceVersion, &capturedAt, &snapshot.Status, &snapshot.TriggerReason, &loginCiphertext, &workspaceCiphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageProfileUnavailable, usage.ErrProfileUnavailable)
 	}
@@ -180,6 +249,21 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 	}
 	if snapshot.CapturedAt, err = parseStoredTime(capturedAt); err != nil {
 		return usage.Snapshot{}, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+	}
+	if len(loginCiphertext) > 0 || len(workspaceCiphertext) > 0 {
+		secureVault, vaultErr := store.requireVault()
+		if vaultErr != nil {
+			return usage.Snapshot{}, vaultErr
+		}
+		if len(loginCiphertext) > 0 {
+			snapshot.LoginIdentity, err = decryptField(ctx, secureVault, loginCiphertext, usageScopeAAD(snapshot.ID, "login-identity"))
+		}
+		if err == nil && len(workspaceCiphertext) > 0 {
+			snapshot.Workspace, err = decryptField(ctx, secureVault, workspaceCiphertext, usageScopeAAD(snapshot.ID, "workspace"))
+		}
+	}
+	if err != nil {
+		return usage.Snapshot{}, err
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT a.metric_availability_id, a.metric_key, a.state, a.reason, a.condition, a.checked_at, p.provenance_label
 		FROM metric_availability a JOIN metric_provenance p ON p.provenance_id = a.provenance_id
@@ -341,6 +425,10 @@ func nullableStoredTime(value *time.Time) any {
 		return nil
 	}
 	return formatStoredTime(value.UTC())
+}
+
+func usageScopeAAD(snapshotID, field string) []byte {
+	return []byte("codex-folio/usage-snapshots/" + snapshotID + "/" + field)
 }
 
 var _ usage.Store = (*Store)(nil)

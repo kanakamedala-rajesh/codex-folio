@@ -42,6 +42,7 @@ const (
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
+	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
 	BootstrapPathName                = "/bootstrap"
@@ -421,6 +422,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageLatest(response, request)
+	case CommandAnalyticsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.analytics(response, request)
 	case CommandProjectsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -494,6 +500,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageLatest(response, request)
+	case AnalyticsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.analytics(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return

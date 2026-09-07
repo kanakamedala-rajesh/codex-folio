@@ -140,6 +140,7 @@ function validateContract(contract, productVersion) {
   }
 
   const activityPath = `/api/${apiVersion}/activity`;
+  const analyticsPath = `/api/${apiVersion}/analytics`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const projectsPath = `/api/${apiVersion}/projects`;
@@ -147,7 +148,7 @@ function validateContract(contract, productVersion) {
   const usageLatestPath = `/api/${apiVersion}/usage/latest`;
   const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [activityPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
+  assertExactKeys(contract.paths, [activityPath, analyticsPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -192,6 +193,15 @@ function validateContract(contract, productVersion) {
   }
   const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`);
 
+  const analyticsOperation = contract.paths[analyticsPath]?.get;
+  assertObject(analyticsOperation, `GET ${analyticsPath}`);
+  assertExactKeys(analyticsOperation, ["operationId", "parameters", "responses"], `GET ${analyticsPath}`);
+  assertIdentifier(analyticsOperation.operationId, "analytics operationId");
+  if (!Array.isArray(analyticsOperation.parameters) || analyticsOperation.parameters.length !== 1 || analyticsOperation.parameters[0]?.name !== "scope") {
+    throw new Error(`GET ${analyticsPath} must declare the optional scope query parameter`);
+  }
+  const analyticsResponseReference = responseReference(analyticsOperation, `GET ${analyticsPath}`, ["200", "default"]);
+
   const selectionPathItem = contract.paths[selectionPath];
   assertObject(selectionPathItem, `path ${selectionPath}`);
   assertExactKeys(selectionPathItem, ["get", "put"], `path ${selectionPath}`);
@@ -227,6 +237,7 @@ function validateContract(contract, productVersion) {
   }
   assertEqual(responseReference(usageLatestOperation, `GET ${usageLatestPath}`, ["200", "default"]), usageResponseReference, "latest usage response reference");
   assertEqual(errorResponseReference(usageLatestOperation, `GET ${usageLatestPath}`), usageErrorResponseReference, "latest usage error response reference");
+  assertEqual(errorResponseReference(analyticsOperation, `GET ${analyticsPath}`), usageErrorResponseReference, "analytics error response reference");
 
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
@@ -243,6 +254,9 @@ function validateContract(contract, productVersion) {
     "UsageMetricAvailability",
     "ProjectIdentity",
     "ActivityRecord",
+    schemaNameFromReference(analyticsResponseReference, "analytics response"),
+    "UsageAggregate",
+    "UsageMetricAmbiguity",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -266,6 +280,9 @@ function validateContract(contract, productVersion) {
   const projectIdentityFields = schemaFields(contract.$defs.ProjectIdentity, "ProjectIdentity");
   const activityResponseFields = schemaFields(contract.$defs[schemaNames[9]], schemaNames[9]);
   const activityRecordFields = schemaFields(contract.$defs.ActivityRecord, "ActivityRecord");
+  const analyticsResponseFields = schemaFields(contract.$defs[schemaNames[14]], schemaNames[14]);
+  const usageAggregateFields = schemaFields(contract.$defs.UsageAggregate, "UsageAggregate");
+  const usageMetricAmbiguityFields = schemaFields(contract.$defs.UsageMetricAmbiguity, "UsageMetricAmbiguity");
 
   return {
     apiVersion,
@@ -275,6 +292,10 @@ function validateContract(contract, productVersion) {
     activityRecordType: "ActivityRecord",
     activityResponseFields,
     activityResponseType: schemaNames[9],
+    analyticsOperationId: analyticsOperation.operationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType: schemaNames[14],
     bootstrapPath,
     bootstrapOperationId,
     bootstrapRequestFields,
@@ -300,6 +321,10 @@ function validateContract(contract, productVersion) {
     selectionSetOperationId: setSelectionOperation.operationId,
     usageAvailabilityFields,
     usageAvailabilityType: "UsageMetricAvailability",
+    usageAggregateFields,
+    usageAggregateType: "UsageAggregate",
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType: "UsageMetricAmbiguity",
     usageObservationFields,
     usageObservationType: "UsageObservation",
     usageLatestOperationId: usageLatestOperation.operationId,
@@ -415,6 +440,10 @@ function renderGo(productVersion, sourceHash, contractShape) {
     activityRecordType,
     activityResponseFields,
     activityResponseType,
+    analyticsOperationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType,
     bootstrapOperationId,
     bootstrapPath,
     bootstrapRequestFields,
@@ -440,6 +469,10 @@ function renderGo(productVersion, sourceHash, contractShape) {
     selectionSetOperationId,
     usageAvailabilityFields,
     usageAvailabilityType,
+    usageAggregateFields,
+    usageAggregateType,
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType,
     usageObservationFields,
     usageObservationType,
     usageLatestOperationId,
@@ -454,6 +487,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     usageResponseType,
   } = contractShape;
   const activityMethod = goIdentifier(activityOperationId);
+  const analyticsMethod = goIdentifier(analyticsOperationId);
   const bootstrapMethod = goIdentifier(bootstrapOperationId);
   const metadataMethod = goIdentifier(metadataOperationId);
   const projectsMethod = goIdentifier(projectsOperationId);
@@ -464,6 +498,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const types = [
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
+    renderGoStruct(analyticsResponseType, analyticsResponseFields),
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
@@ -475,6 +510,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     renderGoStruct(usageErrorResponseType, usageErrorResponseFields),
     renderGoStruct(usageObservationType, usageObservationFields),
     renderGoStruct(usageAvailabilityType, usageAvailabilityFields),
+    renderGoStruct(usageAggregateType, usageAggregateFields),
+    renderGoStruct(usageMetricAmbiguityType, usageMetricAmbiguityFields),
     renderGoStruct(usageResponseType, usageResponseFields),
   ].join("\n\n");
 
@@ -496,6 +533,7 @@ import (
 const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
+\tAnalyticsPath        = "${analyticsPath}"
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
@@ -543,6 +581,29 @@ func (client *Client) ${activityMethod}(ctx context.Context, profileAlias, proje
 \tdefer response.Body.Close()
 \tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 \t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ActivityPath, response.StatusCode)
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+
+func (client *Client) ${analyticsMethod}(ctx context.Context, scope string) (${analyticsResponseType}, *http.Response, error) {
+\tvar result ${analyticsResponseType}
+\tpath := AnalyticsPath
+\tif scope != "" { path += "?" + url.Values{"scope": []string{scope}}.Encode() }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", AnalyticsPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
 \t}
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
@@ -735,6 +796,10 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     activityRecordType,
     activityResponseFields,
     activityResponseType,
+    analyticsOperationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType,
     bootstrapOperationId,
     bootstrapPath,
     bootstrapRequestFields,
@@ -760,6 +825,10 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     selectionSetOperationId,
     usageAvailabilityFields,
     usageAvailabilityType,
+    usageAggregateFields,
+    usageAggregateType,
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType,
     usageObservationFields,
     usageObservationType,
     usageLatestOperationId,
@@ -775,6 +844,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   } = contractShape;
   const activityRecordLines = activityRecordFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const activityResponseLines = activityResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const analyticsResponseLines = analyticsResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const bootstrapRequestLines = bootstrapRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
@@ -796,6 +866,8 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   const usageErrorResponseLines = usageErrorResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const usageObservationLines = usageObservationFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const usageAvailabilityLines = usageAvailabilityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageAggregateLines = usageAggregateFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageMetricAmbiguityLines = usageMetricAmbiguityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const usageResponseLines = usageResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
 
   return `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
@@ -811,6 +883,10 @@ ${activityRecordLines}
 
 export interface ${activityResponseType} {
 ${activityResponseLines}
+}
+
+export interface ${analyticsResponseType} {
+${analyticsResponseLines}
 }
 
 export interface ${bootstrapRequestType} {
@@ -869,11 +945,28 @@ export interface ${usageAvailabilityType} {
 ${usageAvailabilityLines}
 }
 
+export interface ${usageAggregateType} {
+${usageAggregateLines}
+}
+
+export interface ${usageMetricAmbiguityType} {
+${usageMetricAmbiguityLines}
+}
+
 export interface ${usageResponseType} {
 ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${analyticsPath}": {
+    get: {
+      operationId: "${analyticsOperationId}";
+      responses: {
+        200: { content: { "application/json": ${analyticsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${activityPath}": {
     get: {
       operationId: "${activityOperationId}";
@@ -944,6 +1037,7 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${analyticsOperationId}(scope?: string, init?: RequestInit): Promise<${analyticsResponseType}>;
   ${activityOperationId}(
     profileAlias?: string,
     projectId?: string,
@@ -963,6 +1057,24 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${analyticsOperationId}(scope = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (scope) query.set("scope", scope);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "${analyticsPath}" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${analyticsResponseType};
+    },
     async ${activityOperationId}(profileAlias = "", projectId = "", init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

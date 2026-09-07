@@ -164,6 +164,30 @@
       "required": ["code", "message"],
       "type": "object"
     },
+    "UsageAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"},
+        "value": {"type": "number"},
+        "unit": {"type": "string"},
+        "value_kind": {"type": "string"},
+        "source_class": {"type": "string"},
+        "scope": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "profile_count": {"type": "integer"}
+      },
+      "required": ["metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "profile_count"],
+      "type": "object"
+    },
+    "UsageMetricAmbiguity": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "required": ["metric_key", "reason"],
+      "type": "object"
+    },
     "UsageMetricAvailability": {
       "additionalProperties": false,
       "properties": {
@@ -221,6 +245,19 @@
       },
       "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "status", "trigger_reason", "observations", "availability"],
       "type": "object"
+    },
+    "AnalyticsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {"enum": ["selected_profile", "combined_identity"], "type": "string"},
+        "eligible_profile_count": {"type": "integer"},
+        "profiles": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
+        "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+      },
+      "required": ["scope", "eligible_profile_count", "profiles", "aggregates", "ambiguities", "activity"],
+      "type": "object"
     }
   },
   "info": {
@@ -230,6 +267,24 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/analytics": {
+      "get": {
+        "operationId": "getAnalytics",
+        "parameters": [
+          {"in": "query", "name": "scope", "required": false, "schema": {"enum": ["selected_profile", "combined_identity"], "type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/AnalyticsResponse"}}},
+            "description": "Returns Selected Profile analytics by default or the explicit Combined Identity View."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when analytics are unavailable."
+          }
+        }
+      }
+    },
     "/api/v1/activity": {
       "get": {
         "operationId": "getActivity",

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/usage"
@@ -20,6 +21,42 @@ import (
 type CommandUsageService interface {
 	Refresh(context.Context, string, string) (usage.Snapshot, error)
 	Latest(context.Context, string) (usage.Snapshot, error)
+	View(context.Context, string) (usage.DashboardView, []activity.TimelineRecord, error)
+}
+
+func (client *CommandClient) Analytics(ctx context.Context, scope string) (AnalyticsResponse, error) {
+	var result AnalyticsResponse
+	query := url.Values{}
+	if scope != "" {
+		query.Set("scope", scope)
+	}
+	path := CommandAnalyticsPath
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.origin+path, nil)
+	if err != nil {
+		return result, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if json.NewDecoder(response.Body).Decode(&failure) == nil && failure.Code != "" {
+			return result, apperrors.New(failure.Code, fmt.Errorf("GET %s returned HTTP %d", CommandAnalyticsPath, response.StatusCode))
+		}
+		return result, fmt.Errorf("GET %s returned HTTP %d", CommandAnalyticsPath, response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (client *CommandClient) LatestUsage(ctx context.Context, alias string) (UsageSnapshotResponse, error) {
@@ -149,6 +186,30 @@ func (server *Server) usageLatest(response http.ResponseWriter, request *http.Re
 	writeJSON(response, http.StatusOK, usageSnapshotResponse(snapshot))
 }
 
+func (server *Server) analytics(response http.ResponseWriter, request *http.Request) {
+	if server.usage == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method != http.MethodGet {
+		server.writeMethodError(response, http.MethodGet)
+		return
+	}
+	query := request.URL.Query()
+	scope := query.Get("scope")
+	values, hasScope := query["scope"]
+	if len(query) > 1 || (len(query) == 1 && (!hasScope || len(values) != 1 || (scope != usage.ScopeSelectedProfile && scope != usage.ScopeCombinedIdentity))) {
+		server.writeUsageError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
+		return
+	}
+	view, records, err := server.usage.View(request.Context(), scope)
+	if err != nil {
+		server.writeUsageServiceError(response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, analyticsResponse(view, records))
+}
+
 func (server *Server) writeUsageServiceError(response http.ResponseWriter, err error) {
 	status := http.StatusConflict
 	code := diagnostics.CodeFor(err, apperrors.UsageRequestInvalid)
@@ -183,6 +244,27 @@ func usageSnapshotResponse(snapshot usage.Snapshot) UsageSnapshotResponse {
 			MetricAvailabilityId: availability.ID, MetricKey: availability.MetricKey, State: availability.State,
 			Reason: availability.Reason, CheckedAt: formatUsageTime(availability.CheckedAt), Provenance: availability.Provenance,
 		})
+	}
+	return result
+}
+
+func analyticsResponse(view usage.DashboardView, records []activity.TimelineRecord) AnalyticsResponse {
+	result := AnalyticsResponse{
+		Scope: view.Scope, EligibleProfileCount: int64(view.EligibleProfileCount), Profiles: []UsageSnapshotResponse{},
+		Aggregates: []UsageAggregate{}, Ambiguities: []UsageMetricAmbiguity{}, Activity: ActivityResponseFor(records).Records,
+	}
+	for _, snapshot := range view.Profiles {
+		result.Profiles = append(result.Profiles, usageSnapshotResponse(snapshot))
+	}
+	for _, aggregate := range view.Aggregates {
+		result.Aggregates = append(result.Aggregates, UsageAggregate{
+			MetricKey: aggregate.Metric.Key, Value: aggregate.Value, Unit: aggregate.Metric.Unit,
+			ValueKind: aggregate.Metric.ValueKind, SourceClass: aggregate.Metric.SourceClass, Scope: aggregate.Metric.Scope,
+			Aggregation: aggregate.Metric.Aggregation, ProfileCount: int64(aggregate.ProfileCount),
+		})
+	}
+	for _, key := range view.AmbiguousMetricKeys {
+		result.Ambiguities = append(result.Ambiguities, UsageMetricAmbiguity{MetricKey: key, Reason: usage.ReasonContradictory})
 	}
 	return result
 }

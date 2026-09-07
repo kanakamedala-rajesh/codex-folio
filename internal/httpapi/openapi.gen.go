@@ -16,8 +16,9 @@ import (
 const (
 	APIVersion           = "v1"
 	ActivityPath         = "/api/v1/activity"
+	AnalyticsPath        = "/api/v1/analytics"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "a1c95d977d6f508d47e44b3dee3f81f7bc9424881c9f840d9a9628359703ed40"
+	ContractSourceSHA256 = "dda320c8a932ec283c003c06d85a69707ddbf268d00e28fc1430209e76f60104"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -52,6 +53,15 @@ type ActivityRecord struct {
 
 type ActivityResponse struct {
 	Records []ActivityRecord `json:"records"`
+}
+
+type AnalyticsResponse struct {
+	Scope                string                  `json:"scope"`
+	EligibleProfileCount int64                   `json:"eligible_profile_count"`
+	Profiles             []UsageSnapshotResponse `json:"profiles"`
+	Aggregates           []UsageAggregate        `json:"aggregates"`
+	Ambiguities          []UsageMetricAmbiguity  `json:"ambiguities"`
+	Activity             []ActivityRecord        `json:"activity"`
 }
 
 type BootstrapRequest struct {
@@ -134,6 +144,22 @@ type UsageMetricAvailability struct {
 	Provenance           string `json:"provenance"`
 }
 
+type UsageAggregate struct {
+	MetricKey    string  `json:"metric_key"`
+	Value        float64 `json:"value"`
+	Unit         string  `json:"unit"`
+	ValueKind    string  `json:"value_kind"`
+	SourceClass  string  `json:"source_class"`
+	Scope        string  `json:"scope"`
+	Aggregation  string  `json:"aggregation"`
+	ProfileCount int64   `json:"profile_count"`
+}
+
+type UsageMetricAmbiguity struct {
+	MetricKey string `json:"metric_key"`
+	Reason    string `json:"reason"`
+}
+
 type UsageSnapshotResponse struct {
 	SnapshotId    string                    `json:"snapshot_id"`
 	ProfileId     string                    `json:"profile_id"`
@@ -194,6 +220,39 @@ func (client *Client) GetActivity(ctx context.Context, profileAlias, projectID s
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return result, response, fmt.Errorf("GET %s returned HTTP %d", ActivityPath, response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return result, response, err
+	}
+	return result, response, nil
+}
+
+func (client *Client) GetAnalytics(ctx context.Context, scope string) (AnalyticsResponse, *http.Response, error) {
+	var result AnalyticsResponse
+	path := AnalyticsPath
+	if scope != "" {
+		path += "?" + url.Values{"scope": []string{scope}}.Encode()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, fmt.Errorf("GET %s returned HTTP %d", AnalyticsPath, response.StatusCode)
+		}
+		return result, response, failure
 	}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return result, response, err

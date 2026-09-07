@@ -219,6 +219,18 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 14,
+			name:    "usage-source-scope",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, column := range []string{"login_identity_ciphertext", "workspace_ciphertext"} {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE usage_snapshots ADD COLUMN "+column+" BLOB CHECK ("+column+" IS NULL OR typeof("+column+") = 'blob')"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -489,7 +501,7 @@ var expectedTables = map[string][]string{
 	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
-	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status", "trigger_reason"},
+	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status", "trigger_reason", "login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 var expectedIndexes = []string{
@@ -522,6 +534,7 @@ var sensitiveColumns = map[string][]string{
 	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
 	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
 	"project_identities": {"canonical_path_ciphertext"},
+	"usage_snapshots":    {"login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 func validateSchema(ctx context.Context, database *sql.DB) error {

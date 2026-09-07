@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "a1c95d977d6f508d47e44b3dee3f81f7bc9424881c9f840d9a9628359703ed40" as const;
+  "dda320c8a932ec283c003c06d85a69707ddbf268d00e28fc1430209e76f60104" as const;
 
 export interface ActivityRecord {
   record_type: string;
@@ -31,6 +31,15 @@ export interface ActivityRecord {
 
 export interface ActivityResponse {
   records: ActivityRecord[];
+}
+
+export interface AnalyticsResponse {
+  scope: string;
+  eligible_profile_count: number;
+  profiles: UsageSnapshotResponse[];
+  aggregates: UsageAggregate[];
+  ambiguities: UsageMetricAmbiguity[];
+  activity: ActivityRecord[];
 }
 
 export interface BootstrapRequest {
@@ -125,6 +134,22 @@ export interface UsageMetricAvailability {
   provenance: string;
 }
 
+export interface UsageAggregate {
+  metric_key: string;
+  value: number;
+  unit: string;
+  value_kind: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+  profile_count: number;
+}
+
+export interface UsageMetricAmbiguity {
+  metric_key: string;
+  reason: string;
+}
+
 export interface UsageSnapshotResponse {
   snapshot_id: string;
   profile_id: string;
@@ -139,6 +164,15 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/analytics": {
+    get: {
+      operationId: "getAnalytics";
+      responses: {
+        200: { content: { "application/json": AnalyticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/activity": {
     get: {
       operationId: "getActivity";
@@ -209,6 +243,7 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
     profileAlias?: string,
     projectId?: string,
@@ -228,6 +263,24 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getAnalytics(scope = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (scope) query.set("scope", scope);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "/api/v1/analytics" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AnalyticsResponse;
+    },
     async getActivity(profileAlias = "", projectId = "", init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

@@ -89,7 +89,11 @@ func normalizeRateLimits(input []byte, sourceVersion string, capturedAt time.Tim
 	snapshot := usage.Snapshot{Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt.UTC(), Observations: []usage.Observation{}, Availability: []usage.MetricAvailability{}}
 	windows := []*rateLimitWindow{response.Result.RateLimits.Primary, response.Result.RateLimits.Secondary}
 	for index, metric := range usage.Registry() {
-		availability := usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityUnsupported, Reason: usage.ReasonUnsupported, CheckedAt: snapshot.CapturedAt, Provenance: usage.ProvenanceProvider}
+		availability := usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityUnsupported, Reason: usage.ReasonUnsupported, CheckedAt: snapshot.CapturedAt, Provenance: metric.SourceClass}
+		if index >= len(windows) {
+			snapshot.Availability = append(snapshot.Availability, availability)
+			continue
+		}
 		window := windows[index]
 		if window != nil {
 			if window.UsedPercent == nil {

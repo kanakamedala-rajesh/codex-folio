@@ -140,6 +140,19 @@ func TestGeneratedClientBuildsLatestUsageRequest(t *testing.T) {
 	}
 }
 
+func TestGeneratedClientBuildsAnalyticsRequest(t *testing.T) {
+	t.Parallel()
+	fixture := []byte(`{"scope":"combined_identity","eligible_profile_count":2,"profiles":[],"aggregates":[],"ambiguities":[],"activity":[]}`)
+	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
+	got, response, err := NewClient("http://127.0.0.1", httpClient).GetAnalytics(context.Background(), "combined_identity")
+	if err != nil || response.StatusCode != http.StatusOK || got.Scope != "combined_identity" || got.EligibleProfileCount != 2 {
+		t.Fatalf("GetAnalytics() = %#v/%v", got, err)
+	}
+	if httpClient.request.Method != http.MethodGet || httpClient.request.URL.Path != AnalyticsPath || httpClient.request.URL.Query().Get("scope") != "combined_identity" {
+		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.String())
+	}
+}
+
 func TestGeneratedUsageClientExposesSafeError(t *testing.T) {
 	t.Parallel()
 	httpClient := &recordingHTTPDoer{response: &http.Response{

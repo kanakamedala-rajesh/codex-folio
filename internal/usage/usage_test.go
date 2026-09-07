@@ -151,11 +151,149 @@ func TestServiceRefreshMarksOldEvidenceStaleWithinAPartialSnapshot(t *testing.T)
 	}
 }
 
+func TestCombinePreservesLimitsAndAggregatesOnlyCompatibleAbsoluteMetrics(t *testing.T) {
+	start := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	percentage := Registry()[0]
+	absolute := Metric{Key: "test.tokens", ValueKind: "count", Unit: "tokens", SourceClass: ProvenanceLocal, Scope: "login_identity", Aggregation: AggregationSum}
+	incompatible := absolute
+	incompatible.Unit = "credits"
+	snapshots := []Snapshot{
+		{ProfileID: "profile-1", Alias: "Personal", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{
+			{Metric: percentage, Value: 25, WindowStart: &start, WindowEnd: &end, Source: SourceCodexAppServer},
+			{Metric: absolute, Value: 10, WindowStart: &start, WindowEnd: &end, Source: SourceLocalMetadata},
+		}},
+		{ProfileID: "profile-2", Alias: "Work", LoginIdentity: "login-2", Workspace: "workspace-2", Observations: []Observation{
+			{Metric: percentage, Value: 50, WindowStart: &start, WindowEnd: &end, Source: SourceCodexAppServer},
+			{Metric: absolute, Value: 20, WindowStart: &start, WindowEnd: &end, Source: SourceLocalMetadata},
+			{Metric: incompatible, Value: 1000, WindowStart: &start, WindowEnd: &end, Source: SourceLocalMetadata},
+		}},
+	}
+
+	view := combineWithRegistry(snapshots, 2, append(Registry(), absolute))
+	if len(view.Profiles) != 2 || view.EligibleProfileCount != 2 {
+		t.Fatalf("combined profiles/count = %#v/%d", view.Profiles, view.EligibleProfileCount)
+	}
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Metric != absolute || view.Aggregates[0].Value != 30 {
+		t.Fatalf("aggregates = %#v, want one 30-token total and no percentage total", view.Aggregates)
+	}
+}
+
+func TestCombineDeduplicatesSharedOverlappingEvidenceAndMarksConflictsAmbiguous(t *testing.T) {
+	start := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	absolute := Metric{Key: "test.tokens", ValueKind: "count", Unit: "tokens", SourceClass: ProvenanceLocal, Scope: "login_identity", Aggregation: AggregationSum}
+	observation := func(value float64) Observation {
+		return Observation{Metric: absolute, Value: value, WindowStart: &start, WindowEnd: &end, Source: SourceLocalMetadata}
+	}
+	snapshots := []Snapshot{
+		{ProfileID: "profile-1", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{observation(10)}},
+		{ProfileID: "profile-2", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{observation(10)}},
+		{ProfileID: "profile-3", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{observation(12)}},
+		{ProfileID: "profile-4", Observations: []Observation{observation(5)}},
+	}
+
+	view := combineWithRegistry(snapshots, 4, append(Registry(), absolute))
+	if len(view.Aggregates) != 0 || len(view.AmbiguousMetricKeys) != 1 || view.AmbiguousMetricKeys[0] != absolute.Key {
+		t.Fatalf("conflicting combined view = %#v", view)
+	}
+
+	view = combineWithRegistry(snapshots[:2], 2, append(Registry(), absolute))
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Value != 10 {
+		t.Fatalf("deduplicated shared evidence = %#v", view.Aggregates)
+	}
+
+	workspaceMetric := absolute
+	workspaceMetric.Scope = "workspace"
+	workspaceSnapshots := []Snapshot{
+		{ProfileID: "profile-1", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{{Metric: workspaceMetric, Value: 10, WindowStart: &start, WindowEnd: &end}}},
+		{ProfileID: "profile-2", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{{Metric: workspaceMetric, Value: 10, WindowStart: &start, WindowEnd: &end}}},
+	}
+	view = combineWithRegistry(workspaceSnapshots, 2, append(Registry(), workspaceMetric))
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Value != 10 {
+		t.Fatalf("deduplicated shared workspace evidence = %#v", view.Aggregates)
+	}
+	workspaceMetric.Scope = "session"
+	for index := range workspaceSnapshots {
+		workspaceSnapshots[index].Observations[0].Metric = workspaceMetric
+	}
+	view = combineWithRegistry(workspaceSnapshots, 2, append(Registry(), workspaceMetric))
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Value != 20 {
+		t.Fatalf("profile-scoped session evidence = %#v", view.Aggregates)
+	}
+
+	missingScopes := []Snapshot{
+		{ProfileID: "profile-1", Observations: []Observation{observation(10)}},
+		{ProfileID: "profile-2", Observations: []Observation{observation(5)}},
+	}
+	view = combineWithRegistry(missingScopes, 2, append(Registry(), absolute))
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Value != 15 {
+		t.Fatalf("missing stable identifiers were deduplicated = %#v", view.Aggregates)
+	}
+
+	disjointStart, disjointEnd := end, end.Add(time.Hour)
+	disjoint := observation(5)
+	disjoint.WindowStart, disjoint.WindowEnd = &disjointStart, &disjointEnd
+	view = combineWithRegistry([]Snapshot{snapshots[0], {ProfileID: "profile-2", LoginIdentity: "login-1", Workspace: "workspace-1", Observations: []Observation{disjoint}}}, 2, append(Registry(), absolute))
+	if len(view.Aggregates) != 1 || view.Aggregates[0].Value != 15 {
+		t.Fatalf("disjoint shared windows = %#v", view.Aggregates)
+	}
+
+	bridgeStart, bridgeEnd := start.Add(30*time.Minute), end.Add(30*time.Minute)
+	conflictStart, conflictEnd := end.Add(15*time.Minute), end.Add(time.Hour)
+	bridge, conflict := observation(10), observation(12)
+	bridge.WindowStart, bridge.WindowEnd = &bridgeStart, &bridgeEnd
+	conflict.WindowStart, conflict.WindowEnd = &conflictStart, &conflictEnd
+	view = combineWithRegistry([]Snapshot{
+		snapshots[0],
+		{ProfileID: "profile-2", LoginIdentity: "login-1", Observations: []Observation{bridge}},
+		{ProfileID: "profile-3", LoginIdentity: "login-1", Observations: []Observation{conflict}},
+	}, 3, append(Registry(), absolute))
+	if len(view.Aggregates) != 0 || len(view.AmbiguousMetricKeys) != 1 {
+		t.Fatalf("transitive overlapping conflict = %#v", view)
+	}
+}
+
+func TestServiceViewDefaultsToSelectedProfileAndCombinesOnlyWhenExplicit(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	profiles := []ProfileTarget{
+		{ID: "profile-1", Alias: "Personal", Selected: true, Eligible: true},
+		{ID: "profile-2", Alias: "Work", Eligible: true},
+	}
+	state := &recordingStore{profiles: profiles, snapshots: map[string]Snapshot{
+		"profile-1": {ID: "snapshot-1", ProfileID: "profile-1", Alias: "Personal", CapturedAt: now, Availability: []MetricAvailability{}},
+		"profile-2": {ID: "snapshot-2", ProfileID: "profile-2", Alias: "Work", CapturedAt: now, Availability: []MetricAvailability{}},
+	}}
+	service, err := NewService(state, &recordingCollector{}, fixedClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	selected, err := service.View(context.Background(), "")
+	if err != nil || selected.Scope != ScopeSelectedProfile || selected.EligibleProfileCount != 2 || len(selected.Profiles) != 1 || selected.Profiles[0].Alias != "Personal" {
+		t.Fatalf("selected view/error = %#v/%v", selected, err)
+	}
+	combined, err := service.View(context.Background(), ScopeCombinedIdentity)
+	if err != nil || combined.Scope != ScopeCombinedIdentity || len(combined.Profiles) != 2 || combined.EligibleProfileCount != 2 {
+		t.Fatalf("combined view/error = %#v/%v", combined, err)
+	}
+	if state.selectionWrites != 0 {
+		t.Fatalf("view changed Selected Profile %d times", state.selectionWrites)
+	}
+}
+
 type recordingStore struct {
-	target    ProfileTarget
-	alias     string
-	snapshot  Snapshot
-	lastKnown []Observation
+	target          ProfileTarget
+	alias           string
+	snapshot        Snapshot
+	lastKnown       []Observation
+	profiles        []ProfileTarget
+	snapshots       map[string]Snapshot
+	selectionWrites int
+}
+
+func (store *recordingStore) ListUsageProfiles(context.Context) ([]ProfileTarget, error) {
+	return append([]ProfileTarget(nil), store.profiles...), nil
 }
 
 func (store *recordingStore) LastUsageObservations(_ context.Context, _ ProfileTarget) ([]Observation, error) {
@@ -163,6 +301,9 @@ func (store *recordingStore) LastUsageObservations(_ context.Context, _ ProfileT
 }
 
 func (store *recordingStore) LatestUsageSnapshot(_ context.Context, target ProfileTarget) (Snapshot, error) {
+	if snapshot, ok := store.snapshots[target.ID]; ok {
+		return snapshot, nil
+	}
 	snapshot := store.snapshot
 	snapshot.ID, snapshot.ProfileID, snapshot.Alias = "saved-snapshot", target.ID, target.Alias
 	snapshot.Observations = append([]Observation(nil), store.lastKnown...)
