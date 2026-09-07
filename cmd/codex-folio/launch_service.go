@@ -11,6 +11,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	usagefeature "venkatasudha.com/codex-folio/internal/usage"
 )
 
 type launchCommandService struct {
@@ -19,14 +20,15 @@ type launchCommandService struct {
 	configurationPacks *configpack.Service
 	authenticator      profile.Authenticator
 	projects           *activity.ProjectService
+	usage              *usageCommandService
 }
 
-func newLaunchCommandService(stateStore *store.Store, configurationPacks *configpack.Service, authenticator profile.Authenticator, projects *activity.ProjectService) (*launchCommandService, error) {
+func newLaunchCommandService(stateStore *store.Store, configurationPacks *configpack.Service, authenticator profile.Authenticator, projects *activity.ProjectService, usage *usageCommandService) (*launchCommandService, error) {
 	workflow, err := launch.NewWorkflow(launch.WorkflowOptions{Repository: stateStore})
 	if err != nil {
 		return nil, err
 	}
-	return &launchCommandService{store: stateStore, workflow: workflow, configurationPacks: configurationPacks, authenticator: authenticator, projects: projects}, nil
+	return &launchCommandService{store: stateStore, workflow: workflow, configurationPacks: configurationPacks, authenticator: authenticator, projects: projects, usage: usage}, nil
 }
 
 func (service *launchCommandService) Prepare(ctx context.Context, request launch.PrepareRequest, version string) (launch.Plan, string, error) {
@@ -66,6 +68,9 @@ func (service *launchCommandService) Prepare(ctx context.Context, request launch
 			request.ProjectID = project.ID
 		}
 	}
+	if service.usage != nil {
+		_, _ = service.usage.RefreshWithCandidate(ctx, request.Alias, request.Executable, version, usagefeature.TriggerPreLaunch)
+	}
 	plan, err := service.workflow.Prepare(ctx, request)
 	if err != nil {
 		return launch.Plan{}, "", err
@@ -81,7 +86,21 @@ func (service *launchCommandService) MarkStarted(ctx context.Context, leaseID st
 }
 
 func (service *launchCommandService) MarkExited(ctx context.Context, leaseID string, exitStatus int) error {
-	return service.workflow.MarkExited(ctx, leaseID, exitStatus)
+	var alias string
+	if service.usage != nil {
+		record, err := service.store.GetManagedLaunch(ctx, leaseID)
+		if err != nil {
+			return err
+		}
+		alias = record.ProfileAlias
+	}
+	if err := service.workflow.MarkExited(ctx, leaseID, exitStatus); err != nil {
+		return err
+	}
+	if service.usage != nil {
+		_, _ = service.usage.Refresh(ctx, alias, usagefeature.TriggerPostExit)
+	}
+	return nil
 }
 
 func (service *launchCommandService) MarkAbandoned(ctx context.Context, leaseID string) error {

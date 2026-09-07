@@ -211,6 +211,14 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 13,
+			name:    "usage-trigger-reason",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE usage_snapshots ADD COLUMN trigger_reason TEXT NOT NULL DEFAULT 'explicit_refresh' CHECK (trigger_reason IN ('explicit_refresh', 'dashboard_open', 'dashboard_refresh', 'pre_launch', 'post_exit'))`)
+				return err
+			},
+		},
 	}
 }
 
@@ -481,7 +489,7 @@ var expectedTables = map[string][]string{
 	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
-	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status"},
+	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status", "trigger_reason"},
 }
 
 var expectedIndexes = []string{

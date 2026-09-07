@@ -187,7 +187,11 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
 		}
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator, projects)
+	usageCommands, err := newUsageCommandService(stateStore, nil)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator, projects, usageCommands)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -195,7 +199,7 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

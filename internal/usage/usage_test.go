@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -15,15 +16,45 @@ func TestServiceRefreshUsesResolvedIdentityHomeAndPersistsNormalizedSnapshot(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4")
+	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", TriggerExplicitRefresh)
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 	if store.alias != "Work" || collector.request.IdentityHome != "/profiles/work" || collector.request.Executable != "/usr/bin/codex" || collector.request.CapturedAt != capturedAt {
 		t.Fatalf("refresh inputs = alias:%q request:%#v", store.alias, collector.request)
 	}
-	if result.ID != "saved-snapshot" || store.snapshot.SourceVersion != "0.153.4" {
+	if result.ID != "saved-snapshot" || store.snapshot.SourceVersion != "0.153.4" || store.snapshot.TriggerReason != TriggerExplicitRefresh {
 		t.Fatalf("result = %#v, persisted = %#v", result, store.snapshot)
+	}
+}
+
+func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	collector := &serialCollector{started: started, release: release}
+	service, err := NewService(&recordingStore{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/profiles/work"}}, collector, fixedClock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var group sync.WaitGroup
+	group.Add(2)
+	for _, trigger := range []string{TriggerDashboardOpen, TriggerDashboardRefresh} {
+		go func() {
+			defer group.Done()
+			_, _ = service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", trigger)
+		}()
+	}
+	<-started
+	select {
+	case <-started:
+		t.Fatal("concurrent collection was not serialized")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	group.Wait()
+	if collector.maxActive != 1 {
+		t.Fatalf("maximum concurrent collections = %d, want 1", collector.maxActive)
 	}
 }
 
@@ -39,7 +70,7 @@ func TestServiceRefreshRecordsTemporaryFailureWithoutReplacingPriorEvidence(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4")
+	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", TriggerExplicitRefresh)
 	if !errors.Is(err, ErrCollectionFailed) {
 		t.Fatalf("Refresh() error = %v", err)
 	}
@@ -58,7 +89,7 @@ func TestServiceRefreshRecordsTemporaryFailureWithoutReplacingPriorEvidence(t *t
 		t.Fatalf("last-known projection = %#v", result.Observations)
 	}
 	collector.err = ErrSourceInvalid
-	result, err = service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4")
+	result, err = service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", TriggerExplicitRefresh)
 	if !errors.Is(err, ErrSourceInvalid) || result.Availability[0].Reason != ReasonMalformedSource {
 		t.Fatalf("malformed-source result = %#v/%v", result, err)
 	}
@@ -83,7 +114,7 @@ func TestServiceRefreshDerivesPartialStaleAndContradictoryEvidence(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4")
+	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", TriggerExplicitRefresh)
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
@@ -111,7 +142,7 @@ func TestServiceRefreshMarksOldEvidenceStaleWithinAPartialSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4")
+	result, err := service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", TriggerExplicitRefresh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +184,29 @@ type recordingCollector struct {
 	request  CollectionRequest
 	snapshot Snapshot
 	err      error
+}
+
+type serialCollector struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (collector *serialCollector) Collect(_ context.Context, request CollectionRequest) (Snapshot, error) {
+	collector.mu.Lock()
+	collector.active++
+	if collector.active > collector.maxActive {
+		collector.maxActive = collector.active
+	}
+	collector.mu.Unlock()
+	collector.started <- struct{}{}
+	<-collector.release
+	collector.mu.Lock()
+	collector.active--
+	collector.mu.Unlock()
+	return NewUnavailableSnapshot(request.SourceVersion, request.CapturedAt, AvailabilityUnsupported, ReasonUnsupported), nil
 }
 
 func (collector *recordingCollector) Collect(_ context.Context, request CollectionRequest) (Snapshot, error) {

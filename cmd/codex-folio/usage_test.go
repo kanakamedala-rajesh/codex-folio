@@ -23,13 +23,14 @@ import (
 func TestWriteUsageSnapshotReportsAvailabilityWithoutSensitivePaths(t *testing.T) {
 	result := httpapi.UsageSnapshotResponse{
 		SnapshotId: "snapshot-1", ProfileId: "profile-1", Alias: "Work", Source: "codex_app_server", SourceVersion: "0.153.4", CapturedAt: "2026-09-06T12:00:00Z", Status: "partial",
-		Observations: []httpapi.UsageObservation{{MetricKey: "codex.primary.used_percent", Value: 0, Unit: "percent", Provenance: "Provider-reported Metric", Freshness: "stale", CaptureAgeSeconds: 900, Availability: "available"}},
-		Availability: []httpapi.UsageMetricAvailability{{MetricKey: "codex.primary.used_percent", State: "available"}, {MetricKey: "codex.secondary.used_percent", State: "unsupported", Reason: "capability_unsupported", CheckedAt: "2026-09-06T12:00:00Z"}},
+		TriggerReason: usage.TriggerExplicitRefresh,
+		Observations:  []httpapi.UsageObservation{{MetricKey: "codex.primary.used_percent", Value: 0, Unit: "percent", Provenance: "Provider-reported Metric", Freshness: "stale", CaptureAgeSeconds: 900, Availability: "available"}},
+		Availability:  []httpapi.UsageMetricAvailability{{MetricKey: "codex.primary.used_percent", State: "available"}, {MetricKey: "codex.secondary.used_percent", State: "unsupported", Reason: "capability_unsupported", CheckedAt: "2026-09-06T12:00:00Z"}},
 	}
 	var output bytes.Buffer
 	writeUsageSnapshot(&output, result)
 	got := output.String()
-	for _, want := range []string{"Usage Snapshot: Work (partial)", "codex.primary.used_percent: 0 percent", "age 900s", "codex.secondary.used_percent: unsupported (capability_unsupported, checked 2026-09-06T12:00:00Z)", "Provider-reported Metric"} {
+	for _, want := range []string{"Usage Snapshot: Work (partial)", "Trigger: explicit_refresh", "codex.primary.used_percent: 0 percent", "age 900s", "codex.secondary.used_percent: unsupported (capability_unsupported, checked 2026-09-06T12:00:00Z)", "Provider-reported Metric"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output = %q, want %q", got, want)
 		}

@@ -32,7 +32,7 @@ func TestUsageSnapshotPersistsAtomicallyWithoutChangingSelection(t *testing.T) {
 	windowStart, windowEnd := capturedAt, capturedAt.Add(5*time.Hour)
 	metric := usage.Registry()[0]
 	snapshot, err := stateStore.SaveUsageSnapshot(context.Background(), target, usage.Snapshot{
-		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial,
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerDashboardOpen,
 		Observations: []usage.Observation{{Metric: metric, Value: 25, ObservedAt: capturedAt, CapturedAt: capturedAt, WindowStart: &windowStart, WindowEnd: &windowEnd, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
 		Availability: []usage.MetricAvailability{
 			{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider},
@@ -42,7 +42,7 @@ func TestUsageSnapshotPersistsAtomicallyWithoutChangingSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveUsageSnapshot() error = %v", err)
 	}
-	if snapshot.ID == "" || snapshot.ProfileID != "profile-2" || snapshot.Alias != "Work" || snapshot.Observations[0].ID == "" || snapshot.Availability[0].ID == "" {
+	if snapshot.ID == "" || snapshot.ProfileID != "profile-2" || snapshot.Alias != "Work" || snapshot.TriggerReason != usage.TriggerDashboardOpen || snapshot.Observations[0].ID == "" || snapshot.Availability[0].ID == "" {
 		t.Fatalf("saved snapshot = %#v", snapshot)
 	}
 
@@ -76,7 +76,7 @@ func TestLastUsageObservationsSurviveFailedRefreshAndRestart(t *testing.T) {
 	windowStart, windowEnd := capturedAt.Add(-5*time.Hour), capturedAt.Add(time.Hour)
 	metric := usage.Registry()[0]
 	_, err = stateStore.SaveUsageSnapshot(context.Background(), target, usage.Snapshot{
-		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial,
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerExplicitRefresh,
 		Observations: []usage.Observation{{Metric: metric, Value: 0, ObservedAt: capturedAt, CapturedAt: capturedAt, WindowStart: &windowStart, WindowEnd: &windowEnd, WindowTimezone: "Asia/Kolkata", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
 		Availability: []usage.MetricAvailability{
 			{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider},
@@ -86,7 +86,9 @@ func TestLastUsageObservationsSurviveFailedRefreshAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = stateStore.SaveUsageSnapshot(context.Background(), target, usage.NewUnavailableSnapshot("0.153.4", capturedAt.Add(15*time.Minute), usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed))
+	failure := usage.NewUnavailableSnapshot("0.153.4", capturedAt.Add(15*time.Minute), usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+	failure.TriggerReason = usage.TriggerPostExit
+	_, err = stateStore.SaveUsageSnapshot(context.Background(), target, failure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +108,7 @@ func TestLastUsageObservationsSurviveFailedRefreshAndRestart(t *testing.T) {
 	if len(observations) != 1 || observations[0].Value != 0 || observations[0].WindowTimezone != "Asia/Kolkata" || observations[0].SourceVersion != "0.153.4" || observations[0].WindowStart == nil || observations[0].WindowEnd == nil {
 		t.Fatalf("last observations = %#v", observations)
 	}
-	if latest.Status != usage.AvailabilityTemporarilyUnavailable || latest.Availability[0].Reason != usage.ReasonCollectionFailed || latest.Availability[0].CheckedAt != capturedAt.Add(15*time.Minute) {
+	if latest.Status != usage.AvailabilityTemporarilyUnavailable || latest.TriggerReason != usage.TriggerPostExit || latest.Availability[0].Reason != usage.ReasonCollectionFailed || latest.Availability[0].CheckedAt != capturedAt.Add(15*time.Minute) {
 		t.Fatalf("latest availability = %#v", latest)
 	}
 }
@@ -125,7 +127,7 @@ func TestContradictoryUsageSourcesRetainProvenanceAcrossRestart(t *testing.T) {
 	capturedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	metric := usage.Registry()[0]
 	snapshot := usage.Snapshot{
-		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityContradictory,
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityContradictory, TriggerReason: usage.TriggerDashboardRefresh,
 		Observations: []usage.Observation{
 			{Metric: metric, Value: 0, ObservedAt: capturedAt, CapturedAt: capturedAt, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityContradictory},
 			{Metric: metric, Value: 10, ObservedAt: capturedAt, CapturedAt: capturedAt, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.3", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityContradictory},
@@ -175,7 +177,7 @@ func TestUsageSnapshotPersistsEveryProvenanceLabel(t *testing.T) {
 		{Metric: metric, Value: 10, ObservedAt: capturedAt, CapturedAt: capturedAt, Source: usage.SourceLocalMetadata, SourceVersion: "v1", Provenance: usage.ProvenanceObserved, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable},
 	}
 	snapshot := usage.Snapshot{
-		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial,
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerExplicitRefresh,
 		Observations: observations,
 		Availability: []usage.MetricAvailability{
 			{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider},

@@ -71,8 +71,8 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 		rollback()
 		return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status)
-		SELECT ?, profile_id, ?, ?, ?, ? FROM identity_profiles WHERE profile_id = ? AND status = 'ready'`, snapshotID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), snapshot.Status, target.ID)
+	result, err := tx.ExecContext(ctx, `INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason)
+		SELECT ?, profile_id, ?, ?, ?, ?, ? FROM identity_profiles WHERE profile_id = ? AND status = 'ready'`, snapshotID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), snapshot.Status, snapshot.TriggerReason, target.ID)
 	if err != nil {
 		rollback()
 		return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
@@ -169,9 +169,9 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 	defer store.operationMu.RUnlock()
 	snapshot := usage.Snapshot{ProfileID: target.ID, Alias: target.Alias, Observations: []usage.Observation{}, Availability: []usage.MetricAvailability{}}
 	var capturedAt string
-	err := store.db.QueryRowContext(ctx, `SELECT snapshot_id, source, source_version, captured_at, status
+	err := store.db.QueryRowContext(ctx, `SELECT snapshot_id, source, source_version, captured_at, status, trigger_reason
 		FROM usage_snapshots WHERE profile_id = ? ORDER BY captured_at DESC, snapshot_id DESC LIMIT 1`, target.ID).
-		Scan(&snapshot.ID, &snapshot.Source, &snapshot.SourceVersion, &capturedAt, &snapshot.Status)
+		Scan(&snapshot.ID, &snapshot.Source, &snapshot.SourceVersion, &capturedAt, &snapshot.Status, &snapshot.TriggerReason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageProfileUnavailable, usage.ErrProfileUnavailable)
 	}
@@ -267,7 +267,7 @@ func (store *Store) lastUsageObservations(ctx context.Context, target usage.Prof
 }
 
 func validUsageSnapshot(target usage.ProfileTarget, snapshot usage.Snapshot) bool {
-	if target.ID == "" || target.Alias == "" || snapshot.Source != usage.SourceCodexAppServer || strings.TrimSpace(snapshot.SourceVersion) == "" || snapshot.CapturedAt.IsZero() || !validSnapshotStatus(snapshot.Status) || len(snapshot.Availability) != len(usage.Registry()) {
+	if target.ID == "" || target.Alias == "" || snapshot.Source != usage.SourceCodexAppServer || strings.TrimSpace(snapshot.SourceVersion) == "" || snapshot.CapturedAt.IsZero() || !validSnapshotStatus(snapshot.Status) || !usage.ValidTriggerReason(snapshot.TriggerReason) || len(snapshot.Availability) != len(usage.Registry()) {
 		return false
 	}
 	registry := make(map[string]usage.Metric, len(usage.Registry()))

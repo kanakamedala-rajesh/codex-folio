@@ -365,16 +365,15 @@ function schemaFields(schema, schemaName) {
   assertEqual(schema.type, "object", `${schemaName} type`);
   assertEqual(schema.additionalProperties, false, `${schemaName} additionalProperties`);
   assertObject(schema.properties, `${schemaName} properties`);
-  assertArrayEqual(
-    schema.required,
-    Object.keys(schema.properties),
-    `${schemaName} required properties`,
-  );
-  const fields = schema.required.map((name) => {
+  if (!Array.isArray(schema.required) || schema.required.some((name) => !Object.hasOwn(schema.properties, name))) {
+    throw new Error(`${schemaName} required properties must name declared properties`);
+  }
+  const required = new Set(schema.required);
+  const fields = Object.keys(schema.properties).map((name) => {
     if (!/^[a-z][a-z0-9_]*$/.test(name)) {
       throw new Error(`${schemaName} property ${JSON.stringify(name)} is not a snake_case field`);
     }
-    return { name, schema: schema.properties[name] };
+    return { name, required: required.has(name), schema: schema.properties[name] };
   });
   return fields;
 }
@@ -720,7 +719,7 @@ func (client *Client) ${usageLatestMethod}(ctx context.Context, alias string) ($
 
 function renderGoStruct(schemaName, fields) {
   const fieldLines = fields
-    .map(({ name, schema }) => `\t${goIdentifier(name)} ${goType(schema)} \`json:"${name}"\``)
+    .map(({ name, required, schema }) => `\t${goIdentifier(name)} ${required ? "" : "*"}${goType(schema)} \`json:"${name}${required ? "" : ",omitempty"}"\``)
     .join("\n");
   return `type ${goIdentifier(schemaName)} struct {
 ${fieldLines}
@@ -793,7 +792,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   const selectionResponseLines = selectionResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
-  const usageRequestLines = usageRequestFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageRequestLines = usageRequestFields.map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n");
   const usageErrorResponseLines = usageErrorResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const usageObservationLines = usageObservationFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const usageAvailabilityLines = usageAvailabilityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");

@@ -323,7 +323,13 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects)
+	usageCommands, err := newUsageCommandService(stateStore, nil)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects, usageCommands)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -335,12 +341,6 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	profileAuthentication, err := newProfileAuthenticationCommandService(paths, stateStore, configurationPacks, codexadapter.NewResolver(codexadapter.ResolverOptions{}), codexadapter.NewAuthenticator())
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	usageCommands, err := newUsageCommandService(stateStore, nil)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()

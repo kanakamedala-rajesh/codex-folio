@@ -49,6 +49,7 @@ func refreshUsageForOutput(ctx context.Context, client *httpapi.CommandClient, a
 
 func writeUsageSnapshot(output io.Writer, snapshot httpapi.UsageSnapshotResponse) {
 	fmt.Fprintf(output, "Usage Snapshot: %s (%s)\n", snapshot.Alias, snapshot.Status)
+	fmt.Fprintf(output, "Trigger: %s\n", snapshot.TriggerReason)
 	fmt.Fprintf(output, "Captured: %s from %s %s\n", snapshot.CapturedAt, snapshot.Source, snapshot.SourceVersion)
 	observations := make(map[string][]httpapi.UsageObservation, len(snapshot.Observations))
 	for _, observation := range snapshot.Observations {

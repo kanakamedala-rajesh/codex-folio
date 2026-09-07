@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "a1b0b0d195d864decf2454b7464f7d1eee55beefc7b89f651ece21eb6caf161c" as const;
+  "a1c95d977d6f508d47e44b3dee3f81f7bc9424881c9f840d9a9628359703ed40" as const;
 
 export interface ActivityRecord {
   record_type: string;
@@ -72,6 +72,7 @@ export interface SelectionResponse {
 
 export interface UsageRefreshRequest {
   alias: string;
+  trigger_reason?: string;
 }
 
 export interface UsageErrorResponse {
@@ -132,6 +133,7 @@ export interface UsageSnapshotResponse {
   source_version: string;
   captured_at: string;
   status: string;
+  trigger_reason: string;
   observations: UsageObservation[];
   availability: UsageMetricAvailability[];
 }

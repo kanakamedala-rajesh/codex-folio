@@ -110,7 +110,8 @@ func TestGeneratedClientBuildsUsageRefreshRequest(t *testing.T) {
 	t.Parallel()
 	fixture := []byte(`{"snapshot_id":"snapshot-1","profile_id":"profile-1","alias":"Work","source":"codex_app_server","source_version":"0.153.4","captured_at":"2026-09-06T12:00:00Z","observations":[],"availability":[]}`)
 	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
-	got, response, err := NewClient("http://127.0.0.1", httpClient).RefreshUsage(context.Background(), UsageRefreshRequest{Alias: "Work"})
+	triggerReason := "dashboard_refresh"
+	got, response, err := NewClient("http://127.0.0.1", httpClient).RefreshUsage(context.Background(), UsageRefreshRequest{Alias: "Work", TriggerReason: &triggerReason})
 	if err != nil {
 		t.Fatalf("RefreshUsage() error: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestGeneratedClientBuildsUsageRefreshRequest(t *testing.T) {
 		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.Path)
 	}
 	body, err := io.ReadAll(httpClient.request.Body)
-	if err != nil || string(body) != `{"alias":"Work"}` {
+	if err != nil || string(body) != `{"alias":"Work","trigger_reason":"dashboard_refresh"}` {
 		t.Fatalf("request body = %q/%v", body, err)
 	}
 }

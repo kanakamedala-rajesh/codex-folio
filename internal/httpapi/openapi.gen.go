@@ -17,7 +17,7 @@ const (
 	APIVersion           = "v1"
 	ActivityPath         = "/api/v1/activity"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "a1b0b0d195d864decf2454b7464f7d1eee55beefc7b89f651ece21eb6caf161c"
+	ContractSourceSHA256 = "a1c95d977d6f508d47e44b3dee3f81f7bc9424881c9f840d9a9628359703ed40"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -92,7 +92,8 @@ type SelectionResponse struct {
 }
 
 type UsageRefreshRequest struct {
-	Alias string `json:"alias"`
+	Alias         string  `json:"alias"`
+	TriggerReason *string `json:"trigger_reason,omitempty"`
 }
 
 type UsageErrorResponse struct {
@@ -141,6 +142,7 @@ type UsageSnapshotResponse struct {
 	SourceVersion string                    `json:"source_version"`
 	CapturedAt    string                    `json:"captured_at"`
 	Status        string                    `json:"status"`
+	TriggerReason string                    `json:"trigger_reason"`
 	Observations  []UsageObservation        `json:"observations"`
 	Availability  []UsageMetricAvailability `json:"availability"`
 }

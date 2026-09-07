@@ -26,12 +26,16 @@ func newUsageCommandService(stateStore *store.Store, resolver launch.ExecutableR
 	return &usageCommandService{workflow: workflow, resolver: resolver}, nil
 }
 
-func (service *usageCommandService) Refresh(ctx context.Context, alias string) (usagefeature.Snapshot, error) {
+func (service *usageCommandService) Refresh(ctx context.Context, alias, triggerReason string) (usagefeature.Snapshot, error) {
 	candidate, err := service.resolver.Resolve("")
 	if err != nil {
 		return usagefeature.Snapshot{}, err
 	}
-	return service.workflow.Refresh(ctx, alias, candidate.Path, candidate.Version)
+	return service.RefreshWithCandidate(ctx, alias, candidate.Path, candidate.Version, triggerReason)
+}
+
+func (service *usageCommandService) RefreshWithCandidate(ctx context.Context, alias, executable, version, triggerReason string) (usagefeature.Snapshot, error) {
+	return service.workflow.Refresh(ctx, alias, executable, version, triggerReason)
 }
 
 func (service *usageCommandService) Latest(ctx context.Context, alias string) (usagefeature.Snapshot, error) {

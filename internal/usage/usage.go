@@ -4,6 +4,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -41,6 +42,12 @@ const (
 	ReasonReauthentication = "reauthentication_required"
 	ReasonStale            = "evidence_older_than_10_minutes"
 	ReasonContradictory    = "supported_sources_disagree"
+
+	TriggerExplicitRefresh  = "explicit_refresh"
+	TriggerDashboardOpen    = "dashboard_open"
+	TriggerDashboardRefresh = "dashboard_refresh"
+	TriggerPreLaunch        = "pre_launch"
+	TriggerPostExit         = "post_exit"
 
 	freshnessLimit = 10 * time.Minute
 )
@@ -99,6 +106,7 @@ type Snapshot struct {
 	SourceVersion string               `json:"source_version"`
 	CapturedAt    time.Time            `json:"captured_at"`
 	Status        string               `json:"status"`
+	TriggerReason string               `json:"trigger_reason"`
 	Observations  []Observation        `json:"observations"`
 	Availability  []MetricAvailability `json:"availability"`
 }
@@ -131,6 +139,7 @@ type Clock interface {
 }
 
 type Service struct {
+	mu        sync.Mutex
 	store     Store
 	collector Collector
 	clock     Clock
@@ -143,10 +152,12 @@ func NewService(store Store, collector Collector, clock Clock) (*Service, error)
 	return &Service{store: store, collector: collector, clock: clock}, nil
 }
 
-func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVersion string) (Snapshot, error) {
-	if service == nil || service.store == nil || service.collector == nil || service.clock == nil || alias == "" || executable == "" || sourceVersion == "" {
+func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVersion, triggerReason string) (Snapshot, error) {
+	if service == nil || service.store == nil || service.collector == nil || service.clock == nil || alias == "" || executable == "" || sourceVersion == "" || !ValidTriggerReason(triggerReason) {
 		return Snapshot{}, ErrInvalid
 	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
 	target, err := service.store.ResolveUsageProfile(ctx, alias)
 	if err != nil {
 		return Snapshot{}, err
@@ -156,6 +167,7 @@ func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVe
 		return Snapshot{}, ErrInvalid
 	}
 	snapshot, err := service.collector.Collect(ctx, CollectionRequest{Executable: executable, IdentityHome: target.IdentityHome, SourceVersion: sourceVersion, CapturedAt: capturedAt})
+	snapshot.TriggerReason = triggerReason
 	if err == nil {
 		err = finalizeSnapshot(&snapshot, capturedAt)
 	}
@@ -164,7 +176,9 @@ func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVe
 		if errors.Is(err, ErrSourceInvalid) {
 			reason = ReasonMalformedSource
 		}
-		_, saveErr := service.store.SaveUsageSnapshot(ctx, target, NewUnavailableSnapshot(sourceVersion, capturedAt, AvailabilityTemporarilyUnavailable, reason))
+		failureSnapshot := NewUnavailableSnapshot(sourceVersion, capturedAt, AvailabilityTemporarilyUnavailable, reason)
+		failureSnapshot.TriggerReason = triggerReason
+		_, saveErr := service.store.SaveUsageSnapshot(ctx, target, failureSnapshot)
 		if saveErr != nil {
 			return Snapshot{}, saveErr
 		}
@@ -176,6 +190,10 @@ func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVe
 		return failure, err
 	}
 	return service.store.SaveUsageSnapshot(ctx, target, snapshot)
+}
+
+func ValidTriggerReason(value string) bool {
+	return value == TriggerExplicitRefresh || value == TriggerDashboardOpen || value == TriggerDashboardRefresh || value == TriggerPreLaunch || value == TriggerPostExit
 }
 
 func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, error) {

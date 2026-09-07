@@ -18,7 +18,7 @@ import (
 )
 
 type CommandUsageService interface {
-	Refresh(context.Context, string) (usage.Snapshot, error)
+	Refresh(context.Context, string, string) (usage.Snapshot, error)
 	Latest(context.Context, string) (usage.Snapshot, error)
 }
 
@@ -108,7 +108,17 @@ func (server *Server) usageRefresh(response http.ResponseWriter, request *http.R
 		server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 		return
 	}
-	snapshot, err := server.usage.Refresh(request.Context(), input.Alias)
+	triggerReason := usage.TriggerDashboardRefresh
+	if request.URL.Path == CommandUsageRefreshPath {
+		triggerReason = usage.TriggerExplicitRefresh
+	} else if input.TriggerReason != nil {
+		triggerReason = *input.TriggerReason
+	}
+	if triggerReason != usage.TriggerExplicitRefresh && triggerReason != usage.TriggerDashboardOpen && triggerReason != usage.TriggerDashboardRefresh {
+		server.writeUsageError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
+		return
+	}
+	snapshot, err := server.usage.Refresh(request.Context(), input.Alias, triggerReason)
 	if err != nil {
 		server.writeUsageServiceError(response, err)
 		return
@@ -155,7 +165,7 @@ func usageSnapshotResponse(snapshot usage.Snapshot) UsageSnapshotResponse {
 	result := UsageSnapshotResponse{
 		SnapshotId: snapshot.ID, ProfileId: snapshot.ProfileID, Alias: snapshot.Alias, Source: snapshot.Source,
 		SourceVersion: snapshot.SourceVersion, CapturedAt: formatUsageTime(snapshot.CapturedAt),
-		Status:       snapshot.Status,
+		Status: snapshot.Status, TriggerReason: snapshot.TriggerReason,
 		Observations: []UsageObservation{}, Availability: []UsageMetricAvailability{},
 	}
 	for _, observation := range snapshot.Observations {

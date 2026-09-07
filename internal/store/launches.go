@@ -256,9 +256,10 @@ func (store *Store) GetManagedLaunch(ctx context.Context, leaseID string) (launc
 	var processID, exitStatus sql.NullInt64
 	var startedAt string
 	var endedAt sql.NullString
-	err := store.db.QueryRowContext(ctx, `SELECT managed_launch_id, profile_id, lease_id, state,
-		process_id, exit_status, started_at, ended_at FROM managed_launches WHERE lease_id = ?`, leaseID).Scan(
-		&record.ID, &record.ProfileID, &record.LeaseID, &state, &processID, &exitStatus, &startedAt, &endedAt)
+	err := store.db.QueryRowContext(ctx, `SELECT ml.managed_launch_id, ml.profile_id, a.alias, ml.lease_id, ml.state,
+		ml.process_id, ml.exit_status, ml.started_at, ml.ended_at FROM managed_launches ml
+		JOIN cli_aliases a ON a.profile_id = ml.profile_id WHERE ml.lease_id = ?`, leaseID).Scan(
+		&record.ID, &record.ProfileID, &record.ProfileAlias, &record.LeaseID, &state, &processID, &exitStatus, &startedAt, &endedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return launch.ManagedLaunch{}, apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
 	}

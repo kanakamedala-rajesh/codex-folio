@@ -38,14 +38,15 @@ type Plan struct {
 }
 
 type ManagedLaunch struct {
-	ID         string     `json:"id"`
-	ProfileID  string     `json:"profile_id"`
-	LeaseID    string     `json:"lease_id"`
-	State      State      `json:"state"`
-	ProcessID  int        `json:"process_id,omitempty"`
-	ExitStatus *int       `json:"exit_status,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	ID           string     `json:"id"`
+	ProfileID    string     `json:"profile_id"`
+	ProfileAlias string     `json:"profile_alias,omitempty"`
+	LeaseID      string     `json:"lease_id"`
+	State        State      `json:"state"`
+	ProcessID    int        `json:"process_id,omitempty"`
+	ExitStatus   *int       `json:"exit_status,omitempty"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
 }
 
 type ProcessInspector interface {

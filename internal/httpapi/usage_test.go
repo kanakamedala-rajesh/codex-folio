@@ -17,8 +17,9 @@ func TestAuthorizedUsageRefreshProjectsNormalizedSnapshot(t *testing.T) {
 	capturedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	service := &recordingUsageService{result: usage.Snapshot{
 		ID: "snapshot-1", ProfileID: "profile-1", Alias: "Work", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial,
-		Observations: []usage.Observation{{ID: "observation-1", Metric: usage.Registry()[0], Value: 25, ObservedAt: capturedAt, CapturedAt: capturedAt, CaptureAgeSeconds: 42, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
-		Availability: []usage.MetricAvailability{{ID: "availability-1", MetricKey: usage.Registry()[0].Key, State: usage.AvailabilityAvailable, Reason: "", CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider}},
+		TriggerReason: usage.TriggerDashboardOpen,
+		Observations:  []usage.Observation{{ID: "observation-1", Metric: usage.Registry()[0], Value: 25, ObservedAt: capturedAt, CapturedAt: capturedAt, CaptureAgeSeconds: 42, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
+		Availability:  []usage.MetricAvailability{{ID: "availability-1", MetricKey: usage.Registry()[0].Key, State: usage.AvailabilityAvailable, Reason: "", CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider}},
 	}}
 	server, _, _ := startTestServer(t, Options{Usage: service})
 	client := testClient(t)
@@ -34,7 +35,7 @@ func TestAuthorizedUsageRefreshProjectsNormalizedSnapshot(t *testing.T) {
 	}
 	_ = exchange.Body.Close()
 
-	response, err := doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, []byte(`{"alias":"Work"}`), bootstrap.CSRFToken)
+	response, err := doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, []byte(`{"alias":"Work","trigger_reason":"dashboard_open"}`), bootstrap.CSRFToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,9 +47,19 @@ func TestAuthorizedUsageRefreshProjectsNormalizedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if service.alias != "Work" || result.SnapshotId != "snapshot-1" || result.Status != usage.AvailabilityPartial || len(result.Observations) != 1 || result.Observations[0].MetricKey != usage.Registry()[0].Key || result.Observations[0].CaptureAgeSeconds != 42 {
+	if service.alias != "Work" || service.triggerReason != usage.TriggerDashboardOpen || result.SnapshotId != "snapshot-1" || result.TriggerReason != usage.TriggerDashboardOpen || result.Status != usage.AvailabilityPartial || len(result.Observations) != 1 || result.Observations[0].MetricKey != usage.Registry()[0].Key || result.Observations[0].CaptureAgeSeconds != 42 {
 		t.Fatalf("service alias = %q, result = %#v", service.alias, result)
 	}
+	response, err = doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, []byte(`{"alias":"Work","trigger_reason":"dashboard_refresh"}`), bootstrap.CSRFToken)
+	if err != nil || response.StatusCode != http.StatusOK || service.triggerReason != usage.TriggerDashboardRefresh {
+		t.Fatalf("dashboard refresh = status:%d trigger:%q error:%v", response.StatusCode, service.triggerReason, err)
+	}
+	_ = response.Body.Close()
+	response, err = doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, []byte(`{"alias":"Work"}`), bootstrap.CSRFToken)
+	if err != nil || response.StatusCode != http.StatusOK || service.triggerReason != usage.TriggerDashboardRefresh {
+		t.Fatalf("legacy dashboard refresh = status:%d trigger:%q error:%v", response.StatusCode, service.triggerReason, err)
+	}
+	_ = response.Body.Close()
 }
 
 func TestUsageRefreshFailureExcludesLastKnownEvidence(t *testing.T) {
@@ -67,13 +78,15 @@ func TestUsageRefreshFailureExcludesLastKnownEvidence(t *testing.T) {
 }
 
 type recordingUsageService struct {
-	alias  string
-	result usage.Snapshot
-	err    error
+	alias         string
+	triggerReason string
+	result        usage.Snapshot
+	err           error
 }
 
-func (service *recordingUsageService) Refresh(_ context.Context, alias string) (usage.Snapshot, error) {
+func (service *recordingUsageService) Refresh(_ context.Context, alias, triggerReason string) (usage.Snapshot, error) {
 	service.alias = alias
+	service.triggerReason = triggerReason
 	return service.result, service.err
 }
 
