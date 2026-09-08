@@ -347,7 +347,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	activities, err := newActivityCommandService(stateStore, projects, nil)
+	activities, err := newActivityCommandService(stateStore, projects)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()

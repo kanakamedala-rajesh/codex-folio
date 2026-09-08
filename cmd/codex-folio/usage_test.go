@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -46,6 +47,61 @@ func TestWriteUsageSnapshotReportsAvailabilityWithoutSensitivePaths(t *testing.T
 		if strings.Contains(got, prohibited) {
 			t.Fatalf("output contains prohibited value %q: %q", prohibited, got)
 		}
+	}
+}
+
+func TestFailedJSONUsageRefreshLeavesStdoutEmpty(t *testing.T) {
+	var output bytes.Buffer
+	err := apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)
+	if got := writeUsageRefreshResult(&output, httpapi.UsageSnapshotResponse{SnapshotId: "last-known"}, true, err); !errors.Is(got, usage.ErrCollectionFailed) || output.Len() != 0 {
+		t.Fatalf("failed JSON refresh = %v/%q", got, output.String())
+	}
+}
+
+func TestFailedUsageRefreshRunsRetentionForPersistedFailureSnapshot(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	clock := &composedUsageClock{now: time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	if _, err := stateStore.SetAnalyticsRetention(context.Background(), "30"); err != nil {
+		t.Fatal(err)
+	}
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAt := clock.now.AddDate(0, 0, -31)
+	metric := usage.Registry()[0]
+	availability := make([]usage.MetricAvailability, 0, len(usage.Registry()))
+	for _, item := range usage.Registry() {
+		state, reason := usage.AvailabilityUnsupported, usage.ReasonUnsupported
+		if item == metric {
+			state, reason = usage.AvailabilityAvailable, ""
+		}
+		availability = append(availability, usage.MetricAvailability{MetricKey: item.Key, State: state, Reason: reason, CheckedAt: oldAt, Provenance: item.SourceClass})
+	}
+	if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, usage.Snapshot{
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: oldAt, Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerExplicitRefresh,
+		Observations: []usage.Observation{{Metric: metric, Value: 20, ObservedAt: oldAt, CapturedAt: oldAt, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
+		Availability: availability,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	collector := &composedUsageCollector{fixtures: []composedUsageFixture{{err: apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)}}}
+	workflow, err := usage.NewService(stateStore, collector, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &usageCommandService{workflow: workflow, store: stateStore}
+	if snapshot, err := service.RefreshWithCandidate(context.Background(), "Work", filepath.Join(paths.Root, "codex"), "0.153.4", usage.TriggerExplicitRefresh); apperrors.Code(err) != apperrors.UsageCollectionFailed || snapshot.ID == "" {
+		t.Fatalf("failed refresh = %#v/%v", snapshot, err)
+	}
+	if result, err := stateStore.RetainAnalytics(context.Background()); err != nil || result.Processed != 0 {
+		t.Fatalf("second retention = %#v/%v", result, err)
 	}
 }
 
@@ -142,7 +198,7 @@ func TestComposedDocumentedProviderRefreshMeetsEngineeringBudget(t *testing.T) {
 	started := time.Now()
 	first, _, err := generated.RefreshUsage(ctx, httpapi.UsageRefreshRequest{Alias: "Work", TriggerReason: &trigger})
 	firstElapsed := time.Since(started)
-	if err != nil || first.Status != usage.AvailabilityPartial || len(first.Observations) != 2 || first.Observations[0].Value != 25 {
+	if err != nil || first.Status != usage.AvailabilityAvailable || len(first.Observations) != len(usage.Registry()) || first.Observations[0].Value != 25 {
 		t.Fatalf("documented provider refresh = %#v/%v", first, err)
 	}
 	if firstElapsed >= 10*time.Second {
@@ -162,13 +218,13 @@ func TestComposedDocumentedProviderRefreshMeetsEngineeringBudget(t *testing.T) {
 	repeatedStarted := time.Now()
 	for attempt := 1; attempt < 25; attempt++ {
 		clock.now = clock.now.Add(time.Second)
-		if result, err := command.RefreshUsage(ctx, "Work"); err != nil || len(result.Observations) != 2 {
+		if result, err := command.RefreshUsage(ctx, "Work"); err != nil || len(result.Observations) != len(usage.Registry()) {
 			t.Fatalf("repeated refresh %d = %#v/%v", attempt+1, result, err)
 		}
 	}
 	repeatedElapsed := time.Since(repeatedStarted)
 	latest, err := command.LatestUsage(ctx, "Work")
-	if err != nil || latest.TriggerReason != usage.TriggerExplicitRefresh || len(latest.Observations) != 2 || requests != 50 {
+	if err != nil || latest.TriggerReason != usage.TriggerExplicitRefresh || len(latest.Observations) != len(usage.Registry()) || requests != 50 {
 		t.Fatalf("repeated persisted refreshes = %#v, requests=%d, error=%v", latest, requests, err)
 	}
 	t.Logf("documented-source refresh=%s; 25 real SQLite/vault writes=%s (local fake source, not a production-provider claim)", firstElapsed, repeatedElapsed)
@@ -330,11 +386,11 @@ func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) 
 
 	clock.now = start.Add(14 * time.Minute)
 	failed, err := refreshUsageForOutput(ctx, client, "Work")
-	if apperrors.Code(err) != apperrors.UsageCollectionFailed || failed.Status != usage.AvailabilityTemporarilyUnavailable || failed.Availability[0].Reason != usage.ReasonCollectionFailed || len(failed.Observations) != 4 {
+	if apperrors.Code(err) != apperrors.UsageCollectionFailed || failed.Status != usage.AvailabilityTemporarilyUnavailable || failed.Availability[0].Reason != usage.ReasonCollectionFailed || len(failed.Observations) != 7 {
 		t.Fatalf("failed-refresh API projection = %#v/%v", failed, err)
 	}
 	generatedLatest, _, err := generatedClient.GetLatestUsage(ctx, "Work")
-	if err != nil || generatedLatest.SnapshotId != failed.SnapshotId || len(generatedLatest.Observations) != 4 {
+	if err != nil || generatedLatest.SnapshotId != failed.SnapshotId || len(generatedLatest.Observations) != 7 {
 		t.Fatalf("generated latest-usage projection = %#v/%v", generatedLatest, err)
 	}
 	profileSnapshot := func(alias string, capturedAt time.Time, observations ...usage.Observation) {
@@ -411,7 +467,7 @@ func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) 
 	commandService.workflow = workflow
 	commandService.store = stateStore
 	restarted, _, err := generatedClient.GetLatestUsage(ctx, "Work")
-	if err != nil || restarted.Status != usage.AvailabilityTemporarilyUnavailable || len(restarted.Observations) != 4 {
+	if err != nil || restarted.Status != usage.AvailabilityTemporarilyUnavailable || len(restarted.Observations) != 7 {
 		t.Fatalf("restart last-known API projection = %#v/%v", restarted, err)
 	}
 	restartedCombined, _, err := generatedClient.GetAnalytics(ctx, usage.ScopeCombinedIdentity)
@@ -646,10 +702,15 @@ type composedUsageFixture struct {
 }
 
 type composedUsageCollector struct {
-	fixtures []composedUsageFixture
+	fixtures  []composedUsageFixture
+	requests  []usage.CollectionRequest
+	deadlines []bool
 }
 
-func (collector *composedUsageCollector) Collect(_ context.Context, request usage.CollectionRequest) (usage.Snapshot, error) {
+func (collector *composedUsageCollector) Collect(ctx context.Context, request usage.CollectionRequest) (usage.Snapshot, error) {
+	_, hasDeadline := ctx.Deadline()
+	collector.requests = append(collector.requests, request)
+	collector.deadlines = append(collector.deadlines, hasDeadline)
 	fixture := collector.fixtures[0]
 	collector.fixtures = collector.fixtures[1:]
 	fixture.snapshot.CapturedAt = request.CapturedAt

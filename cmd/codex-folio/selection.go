@@ -197,7 +197,7 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	activities, err := newActivityCommandService(stateStore, projects, nil)
+	activities, err := newActivityCommandService(stateStore, projects)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

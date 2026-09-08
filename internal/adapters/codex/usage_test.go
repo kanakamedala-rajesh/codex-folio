@@ -3,7 +3,9 @@ package codex
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
@@ -37,6 +40,20 @@ func TestUsageCollectorReadsDocumentedAccountAndRateLimitsThroughIdentityHome(t 
 	}
 	capturedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	home := filepath.Join(t.TempDir(), "identity-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(home, localStateDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, model TEXT, cwd TEXT NOT NULL, tokens_used INTEGER NOT NULL);
+		INSERT INTO threads VALUES ('018f4f70-6f77-7c3f-9b77-93aa087dfc4d', 1788696000000, 1788696300000, 'gpt-5', ?, 42)`, home); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
 	result, err := NewUsageCollectorWithCommandRunner(runner).Collect(context.Background(), usage.CollectionRequest{
 		Executable: filepath.Join(t.TempDir(), "codex"), IdentityHome: home, SourceVersion: "0.153.4", CapturedAt: capturedAt,
 	})
@@ -51,7 +68,7 @@ func TestUsageCollectorReadsDocumentedAccountAndRateLimitsThroughIdentityHome(t 
 			t.Fatalf("environment does not contain intended Identity Home: %v", environment)
 		}
 	}
-	if len(result.Observations) != 2 {
+	if len(result.Observations) != len(usage.Registry()) || result.Observations[2].Metric.Key != "codex.local.tokens_used" || result.Observations[2].Value != 42 || result.Observations[3].Metric.Key != "codex.local.session_duration" || result.Observations[3].Value != 300 {
 		t.Fatalf("observations = %#v", result.Observations)
 	}
 }
@@ -123,6 +140,18 @@ func TestNormalizeRateLimitsRejectsMalformedRegisteredMetric(t *testing.T) {
 	t.Parallel()
 	if _, err := normalizeRateLimits(readUsageFixture(t, "malformed.json"), "0.153.4", time.Now().UTC()); err == nil {
 		t.Fatal("normalizeRateLimits() accepted malformed registered metric")
+	}
+}
+
+func TestNormalizeRateLimitsAcceptsFractionalPercentagesAndClassifiesRPCError(t *testing.T) {
+	capturedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	result, err := normalizeRateLimits([]byte(`{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":25.5}}}}`), "0.153.4", capturedAt)
+	if err != nil || len(result.Observations) != 1 || result.Observations[0].Value != 25.5 {
+		t.Fatalf("fractional percentage = %#v/%v", result, err)
+	}
+	_, err = normalizeRateLimits([]byte(`{"id":3,"error":{"code":-32000,"message":"unavailable"}}`), "0.153.4", capturedAt)
+	if !errors.Is(err, usage.ErrCollectionFailed) || apperrors.Code(err) != apperrors.UsageCollectionFailed {
+		t.Fatalf("JSON-RPC error = %v", err)
 	}
 }
 

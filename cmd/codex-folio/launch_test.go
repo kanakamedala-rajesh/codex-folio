@@ -232,8 +232,11 @@ func TestLaunchLifecycleCollectsBeforePlanAndAfterExitWithoutChangingExitFacts(t
 		t.Fatal(err)
 	}
 	clock.now = clock.now.Add(time.Minute)
-	if err := launches.MarkExited(context.Background(), plan.LeaseID, 23); err != nil {
+	if err := launches.MarkExited(context.Background(), plan.LeaseID, 23, filepath.Join(paths.Root, "codex"), "0.153.4"); err != nil {
 		t.Fatalf("MarkExited() error = %v", err)
+	}
+	if len(collector.requests) != 2 || collector.requests[0].Executable != filepath.Join(paths.Root, "codex") || collector.requests[1].Executable != collector.requests[0].Executable || collector.requests[1].SourceVersion != "0.153.4" || !collector.deadlines[0] || !collector.deadlines[1] {
+		t.Fatalf("lifecycle collection candidates/deadlines = %#v/%v", collector.requests, collector.deadlines)
 	}
 
 	databasePath := stateStore.Path()

@@ -37,8 +37,12 @@ func (store *Store) ExportAnalytics(ctx context.Context, request activity.Export
 				if freshnessErr != nil {
 					return activity.ExportRecords{}, coded(apperrors.StoreReadFailed, freshnessErr)
 				}
+				alias := aliases[aggregate.ProfileID]
+				if alias == "" {
+					alias = aggregate.ProfileID
+				}
 				records = append(records, activity.AggregateExportRecord{
-					ID: aggregate.ID, ProfileID: aggregate.ProfileID, ProfileAlias: aliases[aggregate.ProfileID], ProjectID: aggregate.ProjectID,
+					ID: aggregate.ID, ProfileID: aggregate.ProfileID, ProfileAlias: alias, ProjectID: aggregate.ProjectID,
 					Metric: aggregate.Metric, Value: aggregate.Value, Source: aggregate.Source, SourceVersion: aggregate.SourceVersion,
 					Provenance: aggregate.Provenance, Availability: aggregate.Availability, Freshness: freshness, LoginIdentity: aggregate.LoginIdentity, Workspace: aggregate.Workspace,
 					BucketKind: aggregate.BucketKind, BucketStart: exportTime(aggregate.BucketStart), BucketEnd: exportTime(aggregate.BucketEnd), Timezone: aggregate.Timezone,
@@ -107,12 +111,12 @@ func (store *Store) exportAvailability(ctx context.Context, scope usage.HistoryS
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	where, args := historyWhere(scope, "ma.profile_id", "NULL", "ma.checked_at", "ma.checked_at", false)
-	rows, err := store.db.QueryContext(ctx, `SELECT ma.metric_availability_id, ma.profile_id, ca.alias,
+	rows, err := store.db.QueryContext(ctx, `SELECT ma.metric_availability_id, ma.profile_id, COALESCE(ca.alias, ma.profile_id),
 		m.metric_key, m.value_kind, m.unit, m.source_class, m.scope, m.aggregation,
 		CASE WHEN ma.condition <> '' THEN ma.condition ELSE ma.state END, ma.reason, ma.checked_at,
 		p.source, COALESCE(p.source_version, ''), p.provenance_label, p.freshness,
 		COALESCE(s.snapshot_id, ''), s.login_identity_ciphertext, s.workspace_ciphertext
-		FROM metric_availability ma JOIN cli_aliases ca ON ca.profile_id = ma.profile_id
+		FROM metric_availability ma LEFT JOIN cli_aliases ca ON ca.profile_id = ma.profile_id
 		JOIN usage_metrics m ON m.metric_key = ma.metric_key JOIN metric_provenance p ON p.provenance_id = ma.provenance_id
 		LEFT JOIN usage_snapshots s ON s.snapshot_id = (SELECT candidate.snapshot_id FROM usage_snapshots candidate
 			WHERE candidate.profile_id = ma.profile_id AND candidate.source = p.source
@@ -203,13 +207,13 @@ func (store *Store) exportUsage(ctx context.Context, scope usage.HistoryScope) (
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	where, args := historyWhere(scope, "o.profile_id", "NULL", "o.observed_at", "o.observed_at", false)
-	rows, err := store.db.QueryContext(ctx, `SELECT o.observation_id, o.profile_id, a.alias,
+	rows, err := store.db.QueryContext(ctx, `SELECT o.observation_id, o.profile_id, COALESCE(a.alias, o.profile_id),
 		m.metric_key, m.value_kind, m.unit, m.source_class, m.scope, m.aggregation, o.value,
 		p.source, COALESCE(p.source_version, ''), p.provenance_label, p.freshness,
 		CASE WHEN ma.condition <> '' THEN ma.condition ELSE ma.state END,
 		s.snapshot_id, s.login_identity_ciphertext, s.workspace_ciphertext,
 		o.window_start, o.window_end, o.window_timezone, o.observed_at, p.captured_at, o.assumptions, o.uncertainty
-		FROM usage_observations o JOIN cli_aliases a ON a.profile_id = o.profile_id
+		FROM usage_observations o LEFT JOIN cli_aliases a ON a.profile_id = o.profile_id
 		JOIN usage_metrics m ON m.metric_key = o.metric_key JOIN metric_provenance p ON p.provenance_id = o.provenance_id
 		JOIN metric_availability ma ON ma.metric_availability_id = o.metric_availability_id
 		JOIN usage_snapshots s ON s.snapshot_id = o.snapshot_id WHERE `+where+` ORDER BY rtrim(o.observed_at, 'Z'), o.observation_id`, args...)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
@@ -47,7 +48,47 @@ func (collector *UsageCollector) Collect(ctx context.Context, request usage.Coll
 	if err != nil {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)
 	}
-	return normalizeRateLimits(rateOutput, request.SourceVersion, request.CapturedAt)
+	snapshot, err := normalizeRateLimits(rateOutput, request.SourceVersion, request.CapturedAt)
+	if err != nil {
+		return usage.Snapshot{}, err
+	}
+	collector.addLocalUsage(ctx, request, &snapshot)
+	return snapshot, nil
+}
+
+func (*UsageCollector) addLocalUsage(ctx context.Context, request usage.CollectionRequest, snapshot *usage.Snapshot) {
+	sessions, err := NewLocalActivityReader().Read(contextOrBackground(ctx), activity.ReadRequest{IdentityHome: request.IdentityHome, SourceVersion: LocalActivitySourceVersion})
+	values := map[string]float64{
+		"codex.local.tokens_used":      0,
+		"codex.local.session_duration": 0,
+	}
+	if err == nil {
+		for _, session := range sessions {
+			if session.TokensUsed != nil {
+				values["codex.local.tokens_used"] += float64(*session.TokensUsed)
+			}
+			values["codex.local.session_duration"] += session.LastObservedAt.Sub(session.StartedAt).Seconds()
+		}
+	}
+	for index := range snapshot.Availability {
+		availability := &snapshot.Availability[index]
+		value, local := values[availability.MetricKey]
+		if !local {
+			continue
+		}
+		availability.Provenance = usage.ProvenanceLocal
+		if err != nil {
+			availability.State, availability.Reason = usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed
+			continue
+		}
+		availability.State, availability.Reason = usage.AvailabilityAvailable, ""
+		metric := usage.Registry()[index]
+		snapshot.Observations = append(snapshot.Observations, usage.Observation{
+			Metric: metric, Value: value, ObservedAt: snapshot.CapturedAt, CapturedAt: snapshot.CapturedAt,
+			Source: usage.SourceLocalMetadata, SourceVersion: LocalActivitySourceVersion,
+			Provenance: usage.ProvenanceLocal, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable,
+		})
+	}
 }
 
 func parseUsageAccount(input []byte) (bool, error) {
@@ -73,18 +114,21 @@ type rateLimitsResponse struct {
 }
 
 type rateLimitWindow struct {
-	UsedPercent        *int   `json:"usedPercent"`
-	WindowDurationMins *int64 `json:"windowDurationMins"`
-	ResetsAt           *int64 `json:"resetsAt"`
+	UsedPercent        *float64 `json:"usedPercent"`
+	WindowDurationMins *int64   `json:"windowDurationMins"`
+	ResetsAt           *int64   `json:"resetsAt"`
 }
 
 func normalizeRateLimits(input []byte, sourceVersion string, capturedAt time.Time) (usage.Snapshot, error) {
 	var response rateLimitsResponse
-	if len(input) > 64*1024 || json.Unmarshal(bytes.TrimSpace(input), &response) != nil || !bytes.Equal(bytes.TrimSpace(response.ID), []byte("3")) || response.Result == nil || sourceVersion == "" || capturedAt.IsZero() {
+	if len(input) > 64*1024 || json.Unmarshal(bytes.TrimSpace(input), &response) != nil || !bytes.Equal(bytes.TrimSpace(response.ID), []byte("3")) || sourceVersion == "" || capturedAt.IsZero() {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageSourceInvalid, usage.ErrSourceInvalid)
 	}
 	if len(response.Error) > 0 && !bytes.Equal(bytes.TrimSpace(response.Error), []byte("null")) {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)
+	}
+	if response.Result == nil {
+		return usage.Snapshot{}, apperrors.New(apperrors.UsageSourceInvalid, usage.ErrSourceInvalid)
 	}
 	snapshot := usage.Snapshot{Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt.UTC(), Observations: []usage.Observation{}, Availability: []usage.MetricAvailability{}}
 	windows := []*rateLimitWindow{response.Result.RateLimits.Primary, response.Result.RateLimits.Secondary}
@@ -119,7 +163,7 @@ func normalizeWindow(metric usage.Metric, window *rateLimitWindow, observedAt ti
 	if window.UsedPercent == nil || *window.UsedPercent < 0 || *window.UsedPercent > 100 {
 		return usage.Observation{}, apperrors.New(apperrors.UsageSourceInvalid, usage.ErrSourceInvalid)
 	}
-	observation := usage.Observation{Metric: metric, Value: float64(*window.UsedPercent), ObservedAt: observedAt, CapturedAt: observedAt, Source: usage.SourceCodexAppServer, Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}
+	observation := usage.Observation{Metric: metric, Value: *window.UsedPercent, ObservedAt: observedAt, CapturedAt: observedAt, Source: usage.SourceCodexAppServer, Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}
 	if window.WindowDurationMins == nil && window.ResetsAt == nil {
 		return observation, nil
 	}

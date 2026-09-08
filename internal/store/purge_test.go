@@ -49,7 +49,7 @@ func TestAnalyticsPurgePreviewConfirmationAndProfileIsolation(t *testing.T) {
 	for _, count := range preview.Counts {
 		counts[count.RecordClass] = count.Count
 	}
-	if counts["usage_snapshots"] != 1 || counts["metric_availability"] != 4 || counts["metric_provenance"] != 1 {
+	if counts["usage_snapshots"] != 1 || counts["metric_availability"] != 4 || counts["metric_provenance"] != 2 {
 		t.Fatalf("counts: %v", counts)
 	}
 	if _, err := state.PurgeAnalytics(ctx, scope, "yes"); apperrors.Code(err) != apperrors.AnalyticsConfirmationInvalid {

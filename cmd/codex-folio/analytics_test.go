@@ -261,6 +261,13 @@ func TestAnalyticsCSVEncodesNormalizedDetailAndAggregateSemantics(t *testing.T) 
 	}
 }
 
+func TestAnalyticsCSVNeutralizesSpreadsheetFormulaCells(t *testing.T) {
+	row := spreadsheetSafeCSVRow([]string{"=formula", "+command", "-value", "@reference", "safe"})
+	if !slices.Equal(row, []string{"'=formula", "'+command", "'-value", "'@reference", "safe"}) {
+		t.Fatalf("spreadsheet-safe row = %#v", row)
+	}
+}
+
 func exportFieldsForTest(dataset string) []string {
 	if dataset == "usage" {
 		return append([]string{"observation_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric_key", "value", "value_kind", "unit", "metric_scope", "aggregation", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "window_start", "window_end", "window_timezone", "observed_at", "captured_at", "capture_age_seconds", "assumptions", "uncertainty"}, "canonical_path")

@@ -128,7 +128,7 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 			abandon()
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
 		}
-		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus}); err != nil {
+		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version}); err != nil {
 			_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitStatus

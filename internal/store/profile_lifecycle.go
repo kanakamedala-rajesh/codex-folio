@@ -252,7 +252,6 @@ func deleteProfileRows(ctx context.Context, tx *sql.Tx, profileID string) error 
 		`DELETE FROM correlation_evidence WHERE managed_launch_id IN (SELECT managed_launch_id FROM managed_launches WHERE profile_id = ?)`,
 		`DELETE FROM configuration_pack_overrides WHERE profile_id = ?`,
 		`DELETE FROM configuration_pack_assignments WHERE profile_id = ?`,
-		`UPDATE observed_sessions SET profile_id = NULL WHERE profile_id = ?`,
 		`DELETE FROM managed_launches WHERE profile_id = ?`,
 		`DELETE FROM selected_profile WHERE profile_id = ?`,
 		`DELETE FROM profile_quarantine WHERE profile_id = ?`,

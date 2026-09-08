@@ -187,6 +187,7 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 		rollback()
 		return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
+	availabilityProvenance := map[string]string{usage.ProvenanceProvider: provenanceID}
 	snapshot.ID, snapshot.ProfileID, snapshot.Alias = snapshotID, target.ID, target.Alias
 	availabilityIDs := make(map[string]string, len(snapshot.Availability))
 	for index := range snapshot.Availability {
@@ -197,7 +198,19 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 			return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 		}
 		availabilityIDs[item.MetricKey] = item.ID
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id, reason, condition) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, target.ID, item.MetricKey, storedAvailabilityState(item.State), formatStoredTime(item.CheckedAt.UTC()), provenanceID, item.Reason, storedAvailabilityCondition(item.State)); err != nil {
+		itemProvenanceID := availabilityProvenance[item.Provenance]
+		if itemProvenanceID == "" {
+			itemProvenanceID, err = newStoreIdentifier("provenance")
+			if err == nil {
+				_, err = tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label) VALUES (?, ?, ?, ?, ?, ?, ?)`, itemProvenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, storedAvailabilityState(item.State), item.Provenance)
+			}
+			if err != nil {
+				rollback()
+				return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
+			}
+			availabilityProvenance[item.Provenance] = itemProvenanceID
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id, reason, condition) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, target.ID, item.MetricKey, storedAvailabilityState(item.State), formatStoredTime(item.CheckedAt.UTC()), itemProvenanceID, item.Reason, storedAvailabilityCondition(item.State)); err != nil {
 			rollback()
 			return usage.Snapshot{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 		}
@@ -313,18 +326,18 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 }
 
 func (store *Store) lastUsageObservations(ctx context.Context, target usage.ProfileTarget) ([]usage.Observation, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT o.metric_key, o.value, o.observed_at, o.window_start, o.window_end,
+	rows, err := store.db.QueryContext(ctx, `SELECT o.observation_id, o.metric_key, o.value, o.observed_at, o.window_start, o.window_end,
 		o.window_timezone, o.assumptions, o.uncertainty, p.source, COALESCE(p.source_version, ''), p.captured_at, p.provenance_label, p.freshness, a.condition
 		FROM usage_observations o JOIN metric_provenance p ON p.provenance_id = o.provenance_id
 		JOIN metric_availability a ON a.metric_availability_id = o.metric_availability_id
 		WHERE o.profile_id = ?
- UNION ALL SELECT g.metric_key, g.value, g.last_observed_at,
+ UNION ALL SELECT g.aggregate_id, g.metric_key, g.value, g.last_observed_at,
  CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_start ELSE NULL END,
  CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_end ELSE NULL END,
  g.timezone, g.assumptions, g.uncertainty, g.source, g.source_version, g.last_captured_at, g.provenance_label, 'stale',
  CASE WHEN g.availability = 'contradictory' THEN g.availability ELSE '' END
  FROM usage_aggregates g WHERE g.profile_id = ?
- ORDER BY 11 DESC`, target.ID, target.ID)
+ ORDER BY 12 DESC`, target.ID, target.ID)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
@@ -339,7 +352,7 @@ func (store *Store) lastUsageObservations(ctx context.Context, target usage.Prof
 		var item usage.Observation
 		var key, observedAt, capturedAt, condition string
 		var windowStart, windowEnd sql.NullString
-		if err := rows.Scan(&key, &item.Value, &observedAt, &windowStart, &windowEnd, &item.WindowTimezone, &item.Assumptions, &item.Uncertainty, &item.Source, &item.SourceVersion, &capturedAt, &item.Provenance, &item.Freshness, &condition); err != nil {
+		if err := rows.Scan(&item.ID, &key, &item.Value, &observedAt, &windowStart, &windowEnd, &item.WindowTimezone, &item.Assumptions, &item.Uncertainty, &item.Source, &item.SourceVersion, &capturedAt, &item.Provenance, &item.Freshness, &condition); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 		}
 		item.Metric = registry[key]
@@ -350,10 +363,11 @@ func (store *Store) lastUsageObservations(ctx context.Context, target usage.Prof
 		if err != nil {
 			return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 		}
-		if previous, ok := latest[key]; ok && previous != item.CapturedAt {
+		evidenceKey := strings.Join([]string{key, item.Source, item.SourceVersion, item.Provenance}, "\x00")
+		if previous, ok := latest[evidenceKey]; ok && previous != item.CapturedAt {
 			continue
 		}
-		latest[key] = item.CapturedAt
+		latest[evidenceKey] = item.CapturedAt
 		if item.WindowStart, err = parseNullableUsageTime(windowStart); err == nil {
 			item.WindowEnd, err = parseNullableUsageTime(windowEnd)
 		}

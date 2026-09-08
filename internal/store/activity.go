@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strings"
 
@@ -51,15 +52,19 @@ func (store *Store) SaveObservedSessions(ctx context.Context, records []activity
 		) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(profile_id, source, source_session_id) WHERE source_session_id IS NOT NULL DO UPDATE SET
 			source_version = excluded.source_version,
-			project_identity_id = excluded.project_identity_id,
+			project_identity_id = COALESCE(excluded.project_identity_id, observed_sessions.project_identity_id),
 			started_at = excluded.started_at,
 			last_observed_at = excluded.last_observed_at,
 			model = excluded.model,
 			tokens_used = excluded.tokens_used,
 			correlation_state = excluded.correlation_state
+		WHERE rtrim(excluded.last_observed_at, 'Z') >= rtrim(observed_sessions.last_observed_at, 'Z')
 		RETURNING observed_session_id`, observedID, record.ProfileID, record.Source, formatStoredTime(record.StartedAt.UTC()),
 			record.SourceSessionID, record.SourceVersion, nullableString(record.ProjectID), formatStoredTime(record.LastObservedAt.UTC()),
 			nullableString(record.Model), record.TokensUsed, state).Scan(&observedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			rollback()
 			return coded(apperrors.StoreWriteFailed, activity.ErrActivityUnavailable)
@@ -88,7 +93,7 @@ func (store *Store) SaveObservedSessions(ctx context.Context, records []activity
 }
 
 func observedCorrelation(ctx context.Context, tx *sql.Tx, record activity.ObservedSessionRecord) (string, string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT managed_launch_id, profile_id FROM managed_launches WHERE expected_session_id = ?`, record.SourceSessionID)
+	rows, err := tx.QueryContext(ctx, `SELECT managed_launch_id, profile_id FROM managed_launches WHERE expected_session_id = ? AND state IN ('running', 'exited')`, record.SourceSessionID)
 	if err != nil {
 		return "", "", err
 	}
@@ -137,6 +142,19 @@ func (store *Store) ListActivity(ctx context.Context, filters activity.Filters) 
 		return nil, err
 	}
 	records = append(records, launches...)
+	policy, err := readAnalyticsRetention(ctx, store.db)
+	if err != nil {
+		return nil, err
+	}
+	if cutoff := policy.Cutoff(store.clock.Now()); cutoff != nil {
+		kept := records[:0]
+		for _, record := range records {
+			if record.RecordType != activity.RecordTypeObservedSession || !record.LastObservedAt.Before(*cutoff) {
+				kept = append(kept, record)
+			}
+		}
+		records = kept
+	}
 	sort.SliceStable(records, func(left, right int) bool {
 		if records[left].StartedAt.Equal(records[right].StartedAt) {
 			return records[left].RecordType == activity.RecordTypeObservedSession && records[right].RecordType != activity.RecordTypeObservedSession
@@ -147,12 +165,12 @@ func (store *Store) ListActivity(ctx context.Context, filters activity.Filters) 
 }
 
 func (store *Store) listObservedSessions(ctx context.Context, filters activity.Filters) ([]activity.TimelineRecord, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT os.observed_session_id, os.source_session_id, os.profile_id, a.alias,
+	rows, err := store.db.QueryContext(ctx, `SELECT os.observed_session_id, os.source_session_id, COALESCE(os.profile_id, ''), COALESCE(a.alias, os.profile_id, 'deregistered'),
 		COALESCE(p.project_identity_id, ''), COALESCE(p.project_alias, ''), COALESCE(p.repository_basename, ''),
 		os.source, os.source_version, os.started_at, os.last_observed_at, COALESCE(os.model, ''), os.tokens_used,
 		os.correlation_state, ce.managed_launch_id, ce.evidence_type, ce.confidence
 		FROM observed_sessions os
-		JOIN cli_aliases a ON a.profile_id = os.profile_id
+		LEFT JOIN cli_aliases a ON a.profile_id = os.profile_id
 		LEFT JOIN project_identities p ON p.project_identity_id = os.project_identity_id
 		LEFT JOIN correlation_evidence ce ON ce.observed_session_id = os.observed_session_id
 		WHERE (? = '' OR a.alias = ? COLLATE NOCASE) AND (? = '' OR os.project_identity_id = ?)`,

@@ -12,7 +12,6 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/httpapi"
-	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
 )
@@ -79,7 +78,7 @@ func TestActivityServiceComposesSupportedReaderProjectAndStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := newActivityCommandService(stateStore, projects, launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(home, "codex"), Version: "0.150.1"}})
+	service, err := newActivityCommandService(stateStore, projects)
 	if err != nil {
 		t.Fatal(err)
 	}

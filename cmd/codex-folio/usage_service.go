@@ -38,8 +38,11 @@ func (service *usageCommandService) Refresh(ctx context.Context, alias, triggerR
 
 func (service *usageCommandService) RefreshWithCandidate(ctx context.Context, alias, executable, version, triggerReason string) (usagefeature.Snapshot, error) {
 	snapshot, err := service.workflow.Refresh(ctx, alias, executable, version, triggerReason)
-	if err == nil {
-		_, err = service.store.RetainAnalytics(ctx)
+	if snapshot.ID != "" {
+		_, retentionErr := service.store.RetainAnalytics(ctx)
+		if err == nil {
+			err = retentionErr
+		}
 	}
 	return snapshot, err
 }

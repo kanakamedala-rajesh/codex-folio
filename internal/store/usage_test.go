@@ -83,7 +83,7 @@ func TestUsageSnapshotPersistsAtomicallyWithoutChangingSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if snapshots != 1 || observations != 1 || availability != len(usage.Registry()) || provenance != 1 {
+	if snapshots != 1 || observations != 1 || availability != len(usage.Registry()) || provenance != 2 {
 		t.Fatalf("persisted counts = snapshots:%d observations:%d availability:%d provenance:%d", snapshots, observations, availability, provenance)
 	}
 	profiles, err := stateStore.ListProfiles(context.Background())
@@ -106,7 +106,7 @@ func TestLastUsageObservationsSurviveFailedRefreshAndRestart(t *testing.T) {
 	capturedAt := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	windowStart, windowEnd := capturedAt.Add(-5*time.Hour), capturedAt.Add(time.Hour)
 	metric := usage.Registry()[0]
-	_, err = stateStore.SaveUsageSnapshot(context.Background(), target, usage.Snapshot{
+	saved, err := stateStore.SaveUsageSnapshot(context.Background(), target, usage.Snapshot{
 		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerExplicitRefresh,
 		Observations: []usage.Observation{{Metric: metric, Value: 0, ObservedAt: capturedAt, CapturedAt: capturedAt, WindowStart: &windowStart, WindowEnd: &windowEnd, WindowTimezone: "Asia/Kolkata", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}},
 		Availability: completeUsageAvailability(capturedAt, []usage.MetricAvailability{
@@ -136,7 +136,7 @@ func TestLastUsageObservationsSurviveFailedRefreshAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	observations := latest.Observations
-	if len(observations) != 1 || observations[0].Value != 0 || observations[0].WindowTimezone != "Asia/Kolkata" || observations[0].SourceVersion != "0.153.4" || observations[0].WindowStart == nil || observations[0].WindowEnd == nil {
+	if len(observations) != 1 || observations[0].ID != saved.Observations[0].ID || observations[0].Value != 0 || observations[0].WindowTimezone != "Asia/Kolkata" || observations[0].SourceVersion != "0.153.4" || observations[0].WindowStart == nil || observations[0].WindowEnd == nil {
 		t.Fatalf("last observations = %#v", observations)
 	}
 	if latest.Status != usage.AvailabilityTemporarilyUnavailable || latest.TriggerReason != usage.TriggerPostExit || latest.Availability[0].Reason != usage.ReasonCollectionFailed || latest.Availability[0].CheckedAt != capturedAt.Add(15*time.Minute) {
@@ -231,10 +231,51 @@ func TestUsageSnapshotPersistsEveryProvenanceLabel(t *testing.T) {
 			t.Fatalf("stored provenance = %v, missing %q", labels, want)
 		}
 	}
+	latest, err := stateStore.LatestUsageSnapshot(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	availabilityLabels := map[string]string{}
+	for _, item := range latest.Availability {
+		availabilityLabels[item.MetricKey] = item.Provenance
+	}
+	if availabilityLabels[usage.Registry()[2].Key] != usage.ProvenanceLocal || availabilityLabels[usage.Registry()[3].Key] != usage.ProvenanceLocal {
+		t.Fatalf("availability provenance = %#v", availabilityLabels)
+	}
 
 	snapshot.Observations[2].Uncertainty = ""
 	if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); !errors.Is(err, usage.ErrInvalid) {
 		t.Fatalf("SaveUsageSnapshot() estimated without uncertainty error = %v", err)
+	}
+}
+
+func TestLastUsageObservationsRetainsLatestEvidencePerSource(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturedAt := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	metric := usage.Registry()[0]
+	snapshot := usage.Snapshot{
+		Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt, Status: usage.AvailabilityAvailable, TriggerReason: usage.TriggerExplicitRefresh,
+		Observations: []usage.Observation{
+			{Metric: metric, Value: 25, ObservedAt: capturedAt, CapturedAt: capturedAt, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable},
+			{Metric: metric, Value: 20, ObservedAt: capturedAt.Add(-time.Minute), CapturedAt: capturedAt.Add(-time.Minute), Source: usage.SourceLocalMetadata, SourceVersion: "state_5", Provenance: usage.ProvenanceLocal, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable},
+		},
+		Availability: completeUsageAvailability(capturedAt, []usage.MetricAvailability{{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider}}),
+	}
+	if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	observations, err := stateStore.LastUsageObservations(context.Background(), target)
+	if err != nil || len(observations) != 2 {
+		t.Fatalf("observations = %#v/%v", observations, err)
 	}
 }
 

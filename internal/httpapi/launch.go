@@ -21,7 +21,7 @@ const maxLaunchBodySize = 1024 * 1024
 type CommandLaunchService interface {
 	Prepare(context.Context, launch.PrepareRequest, string) (launch.Plan, string, error)
 	MarkStarted(context.Context, string, int) error
-	MarkExited(context.Context, string, int) error
+	MarkExited(context.Context, string, int, string, string) error
 	MarkAbandoned(context.Context, string) error
 }
 
@@ -117,7 +117,7 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 	case "started":
 		err = server.launches.MarkStarted(request.Context(), input.LeaseID, input.ProcessID)
 	case "exited":
-		err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus)
+		err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
 	case "abandoned":
 		err = server.launches.MarkAbandoned(request.Context(), input.LeaseID)
 	default:

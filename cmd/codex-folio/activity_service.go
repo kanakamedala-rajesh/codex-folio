@@ -7,35 +7,29 @@ import (
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
-	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/store"
 )
 
 type activityCommandService struct {
 	workflow *activity.Service
-	resolver launch.ExecutableResolver
 	store    *store.Store
 }
 
-func newActivityCommandService(stateStore *store.Store, projects *activity.ProjectService, resolver launch.ExecutableResolver) (*activityCommandService, error) {
+func newActivityCommandService(stateStore *store.Store, projects *activity.ProjectService) (*activityCommandService, error) {
 	workflow, err := activity.NewService(activity.ServiceOptions{Repository: stateStore, Reader: codexadapter.NewLocalActivityReader(), Projects: projects})
 	if err != nil {
 		return nil, err
 	}
-	if resolver == nil {
-		resolver = codexadapter.NewResolver(codexadapter.ResolverOptions{})
-	}
-	return &activityCommandService{workflow: workflow, resolver: resolver, store: stateStore}, nil
+	return &activityCommandService{workflow: workflow, store: stateStore}, nil
 }
 
 func (service *activityCommandService) Refresh(ctx context.Context, alias string) ([]activity.TimelineRecord, error) {
-	candidate, err := service.resolver.Resolve("")
-	if err != nil {
-		return nil, err
-	}
-	records, err := service.workflow.Refresh(ctx, alias, candidate.Version)
+	records, err := service.workflow.Refresh(ctx, alias, codexadapter.LocalActivitySourceVersion)
 	if err == nil {
 		_, err = service.store.RetainAnalytics(ctx)
+		if err == nil {
+			records, err = service.workflow.List(ctx, activity.Filters{ProfileAlias: alias})
+		}
 	}
 	if errors.Is(err, activity.ErrActivityInvalid) {
 		return nil, apperrors.New(apperrors.ActivityRequestInvalid, err)

@@ -36,15 +36,25 @@ func runUsage(args []string, stdout, stderr io.Writer, resolvePaths servicePathR
 			return nil
 		}
 		result, err := refreshUsageForOutput(context.Background(), client, alias)
-		if result.SnapshotId != "" && options.json {
-			if err := writeServiceJSON(stdout, result); err != nil {
-				return apperrors.New(apperrors.CLIInternal, err)
-			}
-		} else if result.SnapshotId != "" {
-			writeUsageSnapshot(stdout, result)
-		}
-		return err
+		return writeUsageRefreshResult(stdout, result, options.json, err)
 	})
+}
+
+func writeUsageRefreshResult(output io.Writer, result httpapi.UsageSnapshotResponse, jsonOutput bool, refreshErr error) error {
+	if jsonOutput && refreshErr != nil {
+		return refreshErr
+	}
+	if result.SnapshotId == "" {
+		return refreshErr
+	}
+	if jsonOutput {
+		if err := writeServiceJSON(output, result); err != nil {
+			return apperrors.New(apperrors.CLIInternal, err)
+		}
+	} else {
+		writeUsageSnapshot(output, result)
+	}
+	return refreshErr
 }
 
 func writeUsageCommandUsage(stderr io.Writer, diagnosticSink diagnostics.Sink) int {

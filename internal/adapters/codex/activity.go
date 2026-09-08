@@ -16,7 +16,10 @@ import (
 	"venkatasudha.com/codex-folio/internal/activity"
 )
 
-const localStateDatabase = "state_5.sqlite"
+const (
+	localStateDatabase         = "state_5.sqlite"
+	LocalActivitySourceVersion = "state_5"
+)
 
 type LocalActivityReader struct{}
 

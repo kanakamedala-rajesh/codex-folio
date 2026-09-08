@@ -270,7 +270,7 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 				if result.Filters.IncludePaths {
 					row = append(row, optionalString(record.CanonicalPath))
 				}
-				if err := writer.Write(row); err != nil {
+				if err := writer.Write(spreadsheetSafeCSVRow(row)); err != nil {
 					return nil, err
 				}
 			}
@@ -285,7 +285,7 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 				if result.Filters.IncludePaths {
 					row = append(row, optionalString(record.CanonicalPath))
 				}
-				if err := writer.Write(row); err != nil {
+				if err := writer.Write(spreadsheetSafeCSVRow(row)); err != nil {
 					return nil, err
 				}
 			}
@@ -301,7 +301,7 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 				if result.Filters.IncludePaths {
 					row = append(row, optionalString(record.CanonicalPath))
 				}
-				if err := writer.Write(row); err != nil {
+				if err := writer.Write(spreadsheetSafeCSVRow(row)); err != nil {
 					return nil, err
 				}
 			}
@@ -316,7 +316,7 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 				if result.Filters.IncludePaths {
 					row = append(row, optionalString(record.CanonicalPath))
 				}
-				if err := writer.Write(row); err != nil {
+				if err := writer.Write(spreadsheetSafeCSVRow(row)); err != nil {
 					return nil, err
 				}
 			}
@@ -326,6 +326,15 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 	}
 	writer.Flush()
 	return []byte(output.String()), writer.Error()
+}
+
+func spreadsheetSafeCSVRow(row []string) []string {
+	for index, cell := range row {
+		if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+			row[index] = "'" + cell
+		}
+	}
+	return row
 }
 
 func writeAnalyticsExport(path string, contents []byte) (err error) {

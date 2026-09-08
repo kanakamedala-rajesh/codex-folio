@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -13,6 +14,8 @@ import (
 	"venkatasudha.com/codex-folio/internal/store"
 	usagefeature "venkatasudha.com/codex-folio/internal/usage"
 )
+
+const usageRefreshTimeout = 10 * time.Second
 
 type launchCommandService struct {
 	store              *store.Store
@@ -69,7 +72,9 @@ func (service *launchCommandService) Prepare(ctx context.Context, request launch
 		}
 	}
 	if service.usage != nil {
-		_, _ = service.usage.RefreshWithCandidate(ctx, request.Alias, request.Executable, version, usagefeature.TriggerPreLaunch)
+		refreshCtx, cancel := context.WithTimeout(ctx, usageRefreshTimeout)
+		_, _ = service.usage.RefreshWithCandidate(refreshCtx, request.Alias, request.Executable, version, usagefeature.TriggerPreLaunch)
+		cancel()
 	}
 	plan, err := service.workflow.Prepare(ctx, request)
 	if err != nil {
@@ -85,7 +90,7 @@ func (service *launchCommandService) MarkStarted(ctx context.Context, leaseID st
 	return service.workflow.MarkStarted(ctx, leaseID, processID)
 }
 
-func (service *launchCommandService) MarkExited(ctx context.Context, leaseID string, exitStatus int) error {
+func (service *launchCommandService) MarkExited(ctx context.Context, leaseID string, exitStatus int, executable, version string) error {
 	var alias string
 	if service.usage != nil {
 		record, err := service.store.GetManagedLaunch(ctx, leaseID)
@@ -98,7 +103,9 @@ func (service *launchCommandService) MarkExited(ctx context.Context, leaseID str
 		return err
 	}
 	if service.usage != nil {
-		_, _ = service.usage.Refresh(ctx, alias, usagefeature.TriggerPostExit)
+		refreshCtx, cancel := context.WithTimeout(ctx, usageRefreshTimeout)
+		_, _ = service.usage.RefreshWithCandidate(refreshCtx, alias, executable, version, usagefeature.TriggerPostExit)
+		cancel()
 	}
 	return nil
 }
