@@ -308,6 +308,30 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_CONTINUATION_CHECKPOINT_INVALID",
+      "owner": "continuation",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONTINUATION_CHECKPOINT_NOT_FOUND",
+      "owner": "continuation",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONTINUATION_CHECKPOINT_OVERSIZE",
+      "owner": "continuation",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONTINUATION_REPOSITORY_INSPECTION_FAILED",
+      "owner": "continuation",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_DIAGNOSTICS_CONFIGURATION_INVALID",
       "owner": "diagnostics",
       "lifecycle": "active",

@@ -47,11 +47,13 @@ const (
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
 	CommandHistoryPath               = "/api/v1/command/analytics-history"
+	CommandCheckpointPath            = "/api/v1/command/checkpoint"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
 	maxSelectionBodySize             = 4096
 	maxConfigPackBodySize            = 9 * 1024 * 1024
+	maxCheckpointBodySize            = 64 * 1024
 	randomTokenSize                  = 32
 )
 
@@ -90,6 +92,7 @@ type Options struct {
 	Activities            CommandActivityService
 	History               *usage.HistoryService
 	Exports               *activity.ExportService
+	Checkpoints           CommandCheckpointService
 	CommandToken          string
 }
 
@@ -120,6 +123,7 @@ type Server struct {
 	activities            CommandActivityService
 	historyService        *usage.HistoryService
 	exportService         *activity.ExportService
+	checkpoints           CommandCheckpointService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -197,6 +201,7 @@ func NewServer(options Options) (*Server, error) {
 		activities:            options.Activities,
 		historyService:        options.History,
 		exportService:         options.Exports,
+		checkpoints:           options.Checkpoints,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -385,6 +390,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandCheckpointPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandCheckpoint(response, request)
 	case CommandHistoryPath:
 		if !server.authorizeCommand(response, request) {
 			return

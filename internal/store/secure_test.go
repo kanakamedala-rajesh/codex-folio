@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
@@ -100,6 +101,38 @@ func TestSensitiveRecordsRoundTripOnlyThroughTheVaultBoundary(t *testing.T) {
 	records, err := reopened.ListProjectRecords(context.Background())
 	if err != nil || len(records) != 1 || records[0].ID != project.ProjectIdentityID || records[0].Alias != project.ProjectAlias || records[0].CanonicalPath != project.CanonicalPath {
 		t.Fatalf("ListProjectRecords() after restart = %#v, %v", records, err)
+	}
+}
+
+func TestContinuationCheckpointMetadataUsesEncryptedCheckpointStorage(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "continuation.sqlite3")
+	secureVault, err := vault.NewMemoryVault(vault.MemoryVaultOptions{Key: bytes.Repeat([]byte{0x4c}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundation, err := OpenWithOptions(Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	metadata := `{"goal":"checkpoint metadata sentinel"}`
+	record := continuation.CheckpointRecord{ID: "checkpoint-1", Status: continuation.StatusDraft, Metadata: metadata, CreatedAt: now}
+	if err := foundation.SaveCheckpoint(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := foundation.LoadCheckpoint(context.Background(), record.ID)
+	if err != nil || got.Metadata != metadata {
+		t.Fatalf("LoadCheckpoint() = %#v, %v", got, err)
+	}
+	if err := foundation.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(database, []byte("checkpoint metadata sentinel")) {
+		t.Fatal("database contains continuation metadata in plaintext")
 	}
 }
 

@@ -353,13 +353,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	checkpoints, err := newCheckpointService(stateStore, projects)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -667,6 +673,9 @@ func serviceDiagnosticState(code string) string {
 		apperrors.ProjectIdentityInvalid,
 		apperrors.ProjectIdentityNotFound,
 		apperrors.ProjectPathCollision,
+		apperrors.ContinuationCheckpointInvalid,
+		apperrors.ContinuationCheckpointNotFound,
+		apperrors.ContinuationCheckpointOversize,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -703,6 +712,7 @@ func serviceDiagnosticState(code string) string {
 		apperrors.LaunchProfileUnavailable,
 		apperrors.ProfileAuthenticationUnavailable,
 		apperrors.ActivitySourceUnavailable,
+		apperrors.ContinuationRepositoryInspectionFailed,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -781,6 +791,14 @@ func serviceRemediation(code string) string {
 		return "the repository location is inaccessible or is not a directory"
 	case apperrors.ProjectPathCollision:
 		return "the repository location belongs to another Project Identity; the prior identity was preserved"
+	case apperrors.ContinuationCheckpointInvalid:
+		return "the checkpoint request or stored checkpoint is invalid"
+	case apperrors.ContinuationCheckpointNotFound:
+		return "the checkpoint was not found"
+	case apperrors.ContinuationCheckpointOversize:
+		return "the checkpoint exceeds 16 KiB; redact or shorten it before review"
+	case apperrors.ContinuationRepositoryInspectionFailed:
+		return "repository metadata could not be inspected; the repository was not changed"
 	case apperrors.ConfigurationPackInvalid:
 		return "the configuration pack or its reviewed files are invalid"
 	case apperrors.ConfigurationPackNotFound:
