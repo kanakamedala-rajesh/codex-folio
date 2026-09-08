@@ -26,7 +26,7 @@ func TestAnalyticsExportFiltersNormalizedEvidenceAndDisclosesPathsExplicitly(t *
 	}
 	project := ProjectIdentity{
 		ProjectIdentityID: "project-1", ProjectAlias: "Ledger", RepositoryBasename: "ledger",
-		CanonicalPath: filepath.Join(t.TempDir(), "private", "work", "ledger"), CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		CanonicalPath: filepath.Join(t.TempDir(), "private", "work", `ledger\archive`), CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 	}
 	if err := stateStore.PutProjectIdentity(ctx, project); err != nil {
 		t.Fatal(err)
@@ -105,8 +105,12 @@ func TestAnalyticsExportFiltersNormalizedEvidenceAndDisclosesPathsExplicitly(t *
 		t.Fatalf("explicit paths = %q/%q", (*records.Aggregates)[0].CanonicalPath, (*records.Activity)[0].CanonicalPath)
 	}
 	encoded, err = json.Marshal(records)
-	if err != nil || !strings.Contains(string(encoded), project.CanonicalPath) {
+	var decoded activity.ExportRecords
+	if err != nil {
 		t.Fatalf("explicit path export = %s/%v", encoded, err)
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil || (*decoded.Aggregates)[0].CanonicalPath != project.CanonicalPath || (*decoded.Activity)[0].CanonicalPath != project.CanonicalPath {
+		t.Fatalf("explicit path export = %#v/%v", decoded, err)
 	}
 	request.ProjectID = "none"
 	records, err = stateStore.ExportAnalytics(ctx, request)
