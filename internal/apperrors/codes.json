@@ -218,6 +218,24 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_USAGE_ANALYTICS_REQUEST_INVALID",
+      "owner": "usage",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID",
+      "owner": "usage",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE",
+      "owner": "usage",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_USAGE_REQUEST_INVALID",
       "owner": "usage",
       "lifecycle": "active",

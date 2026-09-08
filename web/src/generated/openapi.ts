@@ -3,7 +3,81 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "30b084325efc41daec629764389aa87035dd0154dd4fe34da85fbf52de052515" as const;
+  "641014443ed1e23d36dbe87b81fa3338396a2ebec773ae74ec9134b5d3a705fd" as const;
+
+export interface HistoryScope {
+  profile_id: string;
+  project_id: string;
+  from: string;
+  to: string;
+  classes: string[];
+}
+
+export interface HistoryRequest {
+  action: string;
+  setting?: string;
+  run?: boolean;
+  scope?: HistoryScope;
+  confirmation?: string;
+}
+
+export interface HistoryResponse {
+  retention?: RetentionResult;
+  purge?: PurgeResult;
+  aggregates?: HistoryAggregate[];
+}
+
+export interface RetentionResult {
+  setting: string;
+  processed: number;
+  more: boolean;
+}
+
+export interface PurgeResult {
+  scope: HistoryScope;
+  counts: HistoryRecordCount[];
+  confirmation: string;
+  record_limit: number;
+  executable: boolean;
+  applied: boolean;
+}
+
+export interface HistoryRecordCount {
+  record_class: string;
+  count: number;
+}
+
+export interface HistoryMetric {
+  metric_key: string;
+  value_kind: string;
+  unit: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+}
+
+export interface HistoryAggregate {
+  id: string;
+  profile_id: string;
+  project_id: string;
+  metric: HistoryMetric;
+  value: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  availability: string;
+  assumptions: string;
+  uncertainty: string;
+  bucket_kind: string;
+  bucket_start: string;
+  bucket_end: string;
+  timezone: string;
+  first_observed_at: string;
+  last_observed_at: string;
+  first_captured_at: string;
+  last_captured_at: string;
+  samples: number;
+}
 
 export interface ActivityRecord {
   record_type: string;
@@ -173,6 +247,16 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/analytics/history": {
+    post: {
+      operationId: "manageAnalyticsHistory";
+      requestBody: HistoryRequest;
+      responses: {
+        200: { content: { "application/json": HistoryResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/analytics": {
     get: {
       operationId: "getAnalytics";
@@ -252,6 +336,7 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
   getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
     profileAlias?: string,
@@ -272,6 +357,23 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async manageAnalyticsHistory(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/analytics/history", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HistoryResponse;
+    },
     async getAnalytics(scope = "", init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

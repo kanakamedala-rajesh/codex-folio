@@ -24,6 +24,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 type serviceOptions struct {
@@ -358,7 +359,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -766,6 +767,12 @@ func serviceRemediation(code string) string {
 		return "the requested Identity Profile is not available for usage refresh"
 	case apperrors.UsageRequestInvalid:
 		return "the usage refresh request is invalid"
+	case apperrors.AnalyticsRequestInvalid:
+		return "specify a valid retention setting or every analytics scope dimension"
+	case apperrors.AnalyticsConfirmationInvalid:
+		return "purge requires --confirm with the exact token from the scoped preview"
+	case apperrors.AnalyticsScopeTooLarge:
+		return "purge exceeds the atomic record limit; narrow the date, profile, project, or record classes"
 	case apperrors.ProjectIdentityNotFound:
 		return "the Project Identity was not found"
 	case apperrors.ProjectPathInvalid:

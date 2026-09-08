@@ -54,6 +54,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"selected_profile",
 		"service_ownership",
 		"settings",
+		"usage_aggregates",
 		"usage_metrics",
 		"usage_observations",
 		"usage_snapshots",

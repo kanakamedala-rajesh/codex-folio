@@ -25,6 +25,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 const (
@@ -45,6 +46,7 @@ const (
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
+	CommandHistoryPath               = "/api/v1/command/analytics-history"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
@@ -86,6 +88,7 @@ type Options struct {
 	Usage                 CommandUsageService
 	Projects              *activity.ProjectService
 	Activities            CommandActivityService
+	History               *usage.HistoryService
 	CommandToken          string
 }
 
@@ -114,6 +117,7 @@ type Server struct {
 	usage                 CommandUsageService
 	projects              *activity.ProjectService
 	activities            CommandActivityService
+	historyService        *usage.HistoryService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -189,6 +193,7 @@ func NewServer(options Options) (*Server, error) {
 		usage:                 options.Usage,
 		projects:              options.Projects,
 		activities:            options.Activities,
+		historyService:        options.History,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -377,6 +382,20 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandHistoryPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.history(response, request)
+	case HistoryPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.history(response, request)
 	case CommandActivityPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -1133,6 +1152,12 @@ func safeMessage(code string) string {
 		return "The requested Identity Profile is unavailable for usage refresh."
 	case apperrors.UsageRequestInvalid:
 		return "The usage refresh request is invalid."
+	case apperrors.AnalyticsRequestInvalid:
+		return "Specify a valid retention setting or every analytics scope dimension."
+	case apperrors.AnalyticsConfirmationInvalid:
+		return "Purge requires the exact confirmation token from the scoped preview."
+	case apperrors.AnalyticsScopeTooLarge:
+		return "Purge exceeds the atomic record limit. Narrow the date, profile, project, or record classes."
 	default:
 		return "The local dashboard could not complete the request."
 	}

@@ -14,6 +14,7 @@ import (
 type activityCommandService struct {
 	workflow *activity.Service
 	resolver launch.ExecutableResolver
+	store    *store.Store
 }
 
 func newActivityCommandService(stateStore *store.Store, projects *activity.ProjectService, resolver launch.ExecutableResolver) (*activityCommandService, error) {
@@ -24,7 +25,7 @@ func newActivityCommandService(stateStore *store.Store, projects *activity.Proje
 	if resolver == nil {
 		resolver = codexadapter.NewResolver(codexadapter.ResolverOptions{})
 	}
-	return &activityCommandService{workflow: workflow, resolver: resolver}, nil
+	return &activityCommandService{workflow: workflow, resolver: resolver, store: stateStore}, nil
 }
 
 func (service *activityCommandService) Refresh(ctx context.Context, alias string) ([]activity.TimelineRecord, error) {
@@ -33,6 +34,9 @@ func (service *activityCommandService) Refresh(ctx context.Context, alias string
 		return nil, err
 	}
 	records, err := service.workflow.Refresh(ctx, alias, candidate.Version)
+	if err == nil {
+		_, err = service.store.RetainAnalytics(ctx)
+	}
 	if errors.Is(err, activity.ErrActivityInvalid) {
 		return nil, apperrors.New(apperrors.ActivityRequestInvalid, err)
 	}

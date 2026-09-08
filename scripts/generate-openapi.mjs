@@ -141,6 +141,7 @@ function validateContract(contract, productVersion) {
 
   const activityPath = `/api/${apiVersion}/activity`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
+  const historyPath = `/api/${apiVersion}/analytics/history`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const projectsPath = `/api/${apiVersion}/projects`;
@@ -148,7 +149,7 @@ function validateContract(contract, productVersion) {
   const usageLatestPath = `/api/${apiVersion}/usage/latest`;
   const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [activityPath, analyticsPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
+  assertExactKeys(contract.paths, [activityPath, analyticsPath, historyPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -239,6 +240,15 @@ function validateContract(contract, productVersion) {
   assertEqual(errorResponseReference(usageLatestOperation, `GET ${usageLatestPath}`), usageErrorResponseReference, "latest usage error response reference");
   assertEqual(errorResponseReference(analyticsOperation, `GET ${analyticsPath}`), usageErrorResponseReference, "analytics error response reference");
 
+  const historyOperation = contract.paths[historyPath]?.post;
+  assertObject(historyOperation, `POST ${historyPath}`);
+  assertExactKeys(contract.paths[historyPath], ["post"], `path ${historyPath}`);
+  assertExactKeys(historyOperation, ["operationId", "requestBody", "responses"], `POST ${historyPath}`);
+  assertEqual(historyOperation.operationId, "manageAnalyticsHistory", "history operationId");
+  assertEqual(requestReference(historyOperation.requestBody, "history request body"), "#/$defs/HistoryRequest", "history request");
+  assertEqual(responseReference(historyOperation, "history response", ["200", "default"]), "#/$defs/HistoryResponse", "history response");
+  assertEqual(errorResponseReference(historyOperation, "history error"), usageErrorResponseReference, "history error response");
+  const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate"];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -258,6 +268,7 @@ function validateContract(contract, productVersion) {
     "UsageAggregate",
     "UsageMetricAmbiguity",
     "UsageCandidate",
+    ...historySchemaNames,
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -287,6 +298,8 @@ function validateContract(contract, productVersion) {
   const usageCandidateFields = schemaFields(contract.$defs.UsageCandidate, "UsageCandidate");
 
   return {
+    historyPath,
+    historySchemas: historySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     apiVersion,
     activityOperationId: activityOperation.operationId,
     activityPath,
@@ -500,6 +513,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const usageLatestMethod = goIdentifier(usageLatestOperationId);
   const usageMethod = goIdentifier(usageOperationId);
   const types = [
+    ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
@@ -539,6 +553,7 @@ const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
 \tAnalyticsPath        = "${analyticsPath}"
+\tHistoryPath          = "${contractShape.historyPath}"
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
@@ -567,6 +582,28 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 \t\tbaseURL:    strings.TrimRight(baseURL, "/"),
 \t\thttpClient: httpClient,
 \t}
+}
+
+func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryRequest) (HistoryResponse, *http.Response, error) {
+\tvar result HistoryResponse
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
 }
 
 func (client *Client) ${activityMethod}(ctx context.Context, profileAlias, projectID string) (${activityResponseType}, *http.Response, error) {
@@ -884,6 +921,8 @@ export const CONTRACT_VERSION = "${productVersion}" as const;
 export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
 
+${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
 export interface ${activityRecordType} {
 ${activityRecordLines}
 }
@@ -969,6 +1008,16 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${contractShape.historyPath}": {
+    post: {
+      operationId: "manageAnalyticsHistory";
+      requestBody: HistoryRequest;
+      responses: {
+        200: { content: { "application/json": HistoryResponse } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${analyticsPath}": {
     get: {
       operationId: "${analyticsOperationId}";
@@ -1048,6 +1097,7 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
   ${analyticsOperationId}(scope?: string, init?: RequestInit): Promise<${analyticsResponseType}>;
   ${activityOperationId}(
     profileAlias?: string,
@@ -1068,6 +1118,23 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async manageAnalyticsHistory(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.historyPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HistoryResponse;
+    },
     async ${analyticsOperationId}(scope = "", init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -1308,6 +1375,7 @@ function goIdentifier(name) {
 }
 
 function goType(schema) {
+  if (schema.type === "array" && schema.items?.type === "string") return "[]string";
   if (schema.type === "boolean") return "bool";
   if (typeof schema.$ref === "string") {
     return goIdentifier(schemaNameFromReference(schema.$ref, "field"));
@@ -1328,6 +1396,7 @@ function goType(schema) {
 }
 
 function typescriptType(schema) {
+  if (schema.type === "array" && schema.items?.type === "string") return "string[]";
   if (schema.type === "boolean") return "boolean";
   if (typeof schema.$ref === "string") {
     return schemaNameFromReference(schema.$ref, "field");

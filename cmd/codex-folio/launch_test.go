@@ -211,7 +211,7 @@ func TestLaunchLifecycleCollectsBeforePlanAndAfterExitWithoutChangingExitFacts(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	usageCommands := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}}
+	usageCommands := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}, store: stateStore}
 	launches, err := newLaunchCommandService(stateStore, nil, nil, nil, usageCommands)
 	if err != nil {
 		t.Fatal(err)

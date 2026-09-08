@@ -37,7 +37,11 @@ func (service *usageCommandService) Refresh(ctx context.Context, alias, triggerR
 }
 
 func (service *usageCommandService) RefreshWithCandidate(ctx context.Context, alias, executable, version, triggerReason string) (usagefeature.Snapshot, error) {
-	return service.workflow.Refresh(ctx, alias, executable, version, triggerReason)
+	snapshot, err := service.workflow.Refresh(ctx, alias, executable, version, triggerReason)
+	if err == nil {
+		_, err = service.store.RetainAnalytics(ctx)
+	}
+	return snapshot, err
 }
 
 func (service *usageCommandService) Latest(ctx context.Context, alias string) (usagefeature.Snapshot, error) {

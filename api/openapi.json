@@ -1,5 +1,69 @@
 {
   "$defs": {
+    "HistoryScope": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "from": {"type": "string"}, "to": {"type": "string"},
+        "classes": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["profile_id", "project_id", "from", "to", "classes"]
+    },
+    "HistoryRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "action": {"type": "string", "enum": ["retention", "purge", "aggregates"]},
+        "setting": {"type": "string"}, "run": {"type": "boolean"},
+        "scope": {"$ref": "#/$defs/HistoryScope"}, "confirmation": {"type": "string"}
+      }, "required": ["action"]
+    },
+    "HistoryResponse": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "retention": {"$ref": "#/$defs/RetentionResult"},
+        "purge": {"$ref": "#/$defs/PurgeResult"},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}}
+      }, "required": []
+    },
+    "RetentionResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"setting": {"type": "string"}, "processed": {"type": "integer"}, "more": {"type": "boolean"}},
+      "required": ["setting", "processed", "more"]
+    },
+    "PurgeResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "scope": {"$ref": "#/$defs/HistoryScope"},
+        "counts": {"type": "array", "items": {"$ref": "#/$defs/HistoryRecordCount"}},
+        "confirmation": {"type": "string"}, "record_limit": {"type": "integer"},
+        "executable": {"type": "boolean"}, "applied": {"type": "boolean"}
+      }, "required": ["scope", "counts", "confirmation", "record_limit", "executable", "applied"]
+    },
+    "HistoryRecordCount": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"record_class": {"type": "string"}, "count": {"type": "integer"}},
+      "required": ["record_class", "count"]
+    },
+    "HistoryMetric": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"}, "value_kind": {"type": "string"}, "unit": {"type": "string"},
+        "source_class": {"type": "string"}, "scope": {"type": "string"}, "aggregation": {"type": "string"}
+      }, "required": ["metric_key", "value_kind", "unit", "source_class", "scope", "aggregation"]
+    },
+    "HistoryAggregate": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "value": {"type": "number"},
+        "source": {"type": "string"}, "source_version": {"type": "string"}, "provenance": {"type": "string"},
+        "availability": {"type": "string"}, "assumptions": {"type": "string"}, "uncertainty": {"type": "string"},
+        "bucket_kind": {"type": "string"}, "bucket_start": {"type": "string"}, "bucket_end": {"type": "string"},
+        "timezone": {"type": "string"}, "first_observed_at": {"type": "string"}, "last_observed_at": {"type": "string"},
+        "first_captured_at": {"type": "string"}, "last_captured_at": {"type": "string"}, "samples": {"type": "integer"}
+      },
+      "required": ["id", "profile_id", "project_id", "metric", "value", "source", "source_version", "provenance", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples"]
+    },
     "ActivityRecord": {
       "additionalProperties": false,
       "properties": {
@@ -280,6 +344,24 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/analytics/history": {
+      "post": {
+        "operationId": "manageAnalyticsHistory",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/HistoryRequest"}}}, "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/HistoryResponse"}}},
+            "description": "Reads/configures retention, runs one bounded maintenance batch, lists up to 1000 complete aggregate buckets, or previews/applies a fully scoped confirmed purge."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
     "/api/v1/analytics": {
       "get": {
         "operationId": "getAnalytics",

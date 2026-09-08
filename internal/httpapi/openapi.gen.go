@@ -17,8 +17,9 @@ const (
 	APIVersion           = "v1"
 	ActivityPath         = "/api/v1/activity"
 	AnalyticsPath        = "/api/v1/analytics"
+	HistoryPath          = "/api/v1/analytics/history"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "30b084325efc41daec629764389aa87035dd0154dd4fe34da85fbf52de052515"
+	ContractSourceSHA256 = "641014443ed1e23d36dbe87b81fa3338396a2ebec773ae74ec9134b5d3a705fd"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -26,6 +27,80 @@ const (
 	UsageLatestPath      = "/api/v1/usage/latest"
 	UsageRefreshPath     = "/api/v1/usage/refresh"
 )
+
+type HistoryScope struct {
+	ProfileId string   `json:"profile_id"`
+	ProjectId string   `json:"project_id"`
+	From      string   `json:"from"`
+	To        string   `json:"to"`
+	Classes   []string `json:"classes"`
+}
+
+type HistoryRequest struct {
+	Action       string        `json:"action"`
+	Setting      *string       `json:"setting,omitempty"`
+	Run          *bool         `json:"run,omitempty"`
+	Scope        *HistoryScope `json:"scope,omitempty"`
+	Confirmation *string       `json:"confirmation,omitempty"`
+}
+
+type HistoryResponse struct {
+	Retention  *RetentionResult    `json:"retention,omitempty"`
+	Purge      *PurgeResult        `json:"purge,omitempty"`
+	Aggregates *[]HistoryAggregate `json:"aggregates,omitempty"`
+}
+
+type RetentionResult struct {
+	Setting   string `json:"setting"`
+	Processed int64  `json:"processed"`
+	More      bool   `json:"more"`
+}
+
+type PurgeResult struct {
+	Scope        HistoryScope         `json:"scope"`
+	Counts       []HistoryRecordCount `json:"counts"`
+	Confirmation string               `json:"confirmation"`
+	RecordLimit  int64                `json:"record_limit"`
+	Executable   bool                 `json:"executable"`
+	Applied      bool                 `json:"applied"`
+}
+
+type HistoryRecordCount struct {
+	RecordClass string `json:"record_class"`
+	Count       int64  `json:"count"`
+}
+
+type HistoryMetric struct {
+	MetricKey   string `json:"metric_key"`
+	ValueKind   string `json:"value_kind"`
+	Unit        string `json:"unit"`
+	SourceClass string `json:"source_class"`
+	Scope       string `json:"scope"`
+	Aggregation string `json:"aggregation"`
+}
+
+type HistoryAggregate struct {
+	Id              string        `json:"id"`
+	ProfileId       string        `json:"profile_id"`
+	ProjectId       string        `json:"project_id"`
+	Metric          HistoryMetric `json:"metric"`
+	Value           float64       `json:"value"`
+	Source          string        `json:"source"`
+	SourceVersion   string        `json:"source_version"`
+	Provenance      string        `json:"provenance"`
+	Availability    string        `json:"availability"`
+	Assumptions     string        `json:"assumptions"`
+	Uncertainty     string        `json:"uncertainty"`
+	BucketKind      string        `json:"bucket_kind"`
+	BucketStart     string        `json:"bucket_start"`
+	BucketEnd       string        `json:"bucket_end"`
+	Timezone        string        `json:"timezone"`
+	FirstObservedAt string        `json:"first_observed_at"`
+	LastObservedAt  string        `json:"last_observed_at"`
+	FirstCapturedAt string        `json:"first_captured_at"`
+	LastCapturedAt  string        `json:"last_captured_at"`
+	Samples         int64         `json:"samples"`
+}
 
 type ActivityRecord struct {
 	RecordType                 string `json:"record_type"`
@@ -198,6 +273,38 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: httpClient,
 	}
+}
+
+func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryRequest) (HistoryResponse, *http.Response, error) {
+	var result HistoryResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) GetActivity(ctx context.Context, profileAlias, projectID string) (ActivityResponse, *http.Response, error) {

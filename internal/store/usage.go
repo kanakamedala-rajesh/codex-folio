@@ -317,7 +317,14 @@ func (store *Store) lastUsageObservations(ctx context.Context, target usage.Prof
 		o.window_timezone, o.assumptions, o.uncertainty, p.source, COALESCE(p.source_version, ''), p.captured_at, p.provenance_label, p.freshness, a.condition
 		FROM usage_observations o JOIN metric_provenance p ON p.provenance_id = o.provenance_id
 		JOIN metric_availability a ON a.metric_availability_id = o.metric_availability_id
-		WHERE o.profile_id = ? ORDER BY p.captured_at DESC, o.observation_id`, target.ID)
+		WHERE o.profile_id = ?
+ UNION ALL SELECT g.metric_key, g.value, g.last_observed_at,
+ CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_start ELSE NULL END,
+ CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_end ELSE NULL END,
+ g.timezone, g.assumptions, g.uncertainty, g.source, g.source_version, g.last_captured_at, g.provenance_label, 'stale',
+ CASE WHEN g.availability = 'contradictory' THEN g.availability ELSE '' END
+ FROM usage_aggregates g WHERE g.profile_id = ?
+ ORDER BY 11 DESC`, target.ID, target.ID)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}

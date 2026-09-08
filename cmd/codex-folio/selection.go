@@ -15,6 +15,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 type selectionOptions struct{ serviceOptions }
@@ -204,7 +205,7 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Usage: usageCommands, Projects: projects, Activities: activities, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

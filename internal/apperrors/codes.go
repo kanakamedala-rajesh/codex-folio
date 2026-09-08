@@ -40,6 +40,9 @@ const (
 	ConfigurationPackAssignmentInvalid       = "CF_CONFIGPACK_ASSIGNMENT_INVALID"
 	ConfigurationPackProjectionFailed        = "CF_CONFIGPACK_PROJECTION_FAILED"
 	ConfigurationPackPromotionReviewRequired = "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED"
+	AnalyticsRequestInvalid                  = "CF_USAGE_ANALYTICS_REQUEST_INVALID"
+	AnalyticsConfirmationInvalid             = "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID"
+	AnalyticsScopeTooLarge                   = "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE"
 	UsageRequestInvalid                      = "CF_USAGE_REQUEST_INVALID"
 	UsageProfileNotFound                     = "CF_USAGE_PROFILE_NOT_FOUND"
 	UsageProfileUnavailable                  = "CF_USAGE_PROFILE_UNAVAILABLE"
@@ -160,6 +163,9 @@ func IsRegistered(code string) bool {
 		ConfigurationPackAssignmentInvalid,
 		ConfigurationPackProjectionFailed,
 		ConfigurationPackPromotionReviewRequired,
+		AnalyticsRequestInvalid,
+		AnalyticsConfirmationInvalid,
+		AnalyticsScopeTooLarge,
 		UsageRequestInvalid,
 		UsageProfileNotFound,
 		UsageProfileUnavailable,

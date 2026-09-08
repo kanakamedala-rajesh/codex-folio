@@ -231,6 +231,53 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 15,
+			name:    "analytics-history-retention",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN analytics_retention_mode TEXT NOT NULL DEFAULT 'default' CHECK (analytics_retention_mode IN ('default', 'days', 'unlimited'))`,
+					`UPDATE settings SET analytics_retention_mode = 'days' WHERE analytics_retention_days IS NOT NULL`,
+					`CREATE TABLE usage_aggregates (
+						aggregate_id TEXT PRIMARY KEY NOT NULL,
+						group_key TEXT NOT NULL,
+						profile_id TEXT NOT NULL REFERENCES identity_profiles(profile_id),
+						project_identity_id TEXT REFERENCES project_identities(project_identity_id),
+						metric_key TEXT NOT NULL REFERENCES usage_metrics(metric_key),
+						value REAL NOT NULL,
+						unit TEXT NOT NULL,
+						source TEXT NOT NULL,
+						source_version TEXT NOT NULL,
+						provenance_label TEXT NOT NULL,
+						availability TEXT NOT NULL,
+						assumptions TEXT NOT NULL,
+						uncertainty TEXT NOT NULL,
+						bucket_kind TEXT NOT NULL CHECK (bucket_kind IN ('source_window', 'calendar_day')),
+						bucket_start TEXT NOT NULL,
+						bucket_end TEXT NOT NULL,
+						timezone TEXT NOT NULL,
+						first_observed_at TEXT NOT NULL,
+						last_observed_at TEXT NOT NULL,
+						first_captured_at TEXT NOT NULL,
+						last_captured_at TEXT NOT NULL,
+						samples INTEGER NOT NULL CHECK (samples > 0),
+						source_scope_ciphertext BLOB NOT NULL CHECK (typeof(source_scope_ciphertext) = 'blob')
+					)`,
+					`CREATE INDEX idx_usage_aggregates_group ON usage_aggregates(group_key)`,
+					`CREATE INDEX idx_usage_aggregates_profile_time ON usage_aggregates(profile_id, bucket_start)`,
+					`CREATE INDEX idx_usage_observations_expiry ON usage_observations(rtrim(observed_at, 'Z'))`,
+					`CREATE INDEX idx_usage_observations_availability ON usage_observations(metric_availability_id)`,
+					`CREATE INDEX idx_usage_observations_provenance ON usage_observations(provenance_id)`,
+					`CREATE INDEX idx_metric_availability_provenance ON metric_availability(provenance_id)`,
+					`CREATE INDEX idx_correlation_evidence_session ON correlation_evidence(observed_session_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -498,13 +545,22 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
+	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
 	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status", "trigger_reason", "login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 var expectedIndexes = []string{
+	"idx_usage_aggregates_group",
+	"idx_usage_aggregates_profile_time",
+	"idx_usage_observations_expiry",
+	"idx_usage_observations_availability",
+	"idx_usage_observations_provenance",
+	"idx_metric_availability_provenance",
+	"idx_correlation_evidence_session",
+
 	"idx_alerts_profile_state",
 	"idx_checkpoints_project_time",
 	"idx_cli_aliases_profile",
@@ -531,6 +587,7 @@ var expectedIndexes = []string{
 }
 
 var sensitiveColumns = map[string][]string{
+	"usage_aggregates":   {"source_scope_ciphertext"},
 	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
 	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
 	"project_identities": {"canonical_path_ciphertext"},
