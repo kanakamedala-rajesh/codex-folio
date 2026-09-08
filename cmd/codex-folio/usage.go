@@ -136,6 +136,13 @@ func writeUsageSnapshot(output io.Writer, snapshot httpapi.UsageSnapshotResponse
 func writeAnalytics(output io.Writer, result httpapi.AnalyticsResponse) {
 	fmt.Fprintf(output, "Dashboard Scope: %s\n", result.Scope)
 	fmt.Fprintf(output, "Eligible Profile Count: %d\n", result.EligibleProfileCount)
+	for _, candidate := range result.Candidates {
+		label := candidate.CapacityState
+		if candidate.ProfileId == result.RecommendedProfileId {
+			label = "Recommended"
+		}
+		fmt.Fprintf(output, "Identity Profile: %s (%s; launch eligible: %t)\n", candidate.Alias, label, candidate.Eligible)
+	}
 	for _, snapshot := range result.Profiles {
 		writeUsageSnapshot(output, snapshot)
 	}

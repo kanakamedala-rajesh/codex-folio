@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "dda320c8a932ec283c003c06d85a69707ddbf268d00e28fc1430209e76f60104" as const;
+  "30b084325efc41daec629764389aa87035dd0154dd4fe34da85fbf52de052515" as const;
 
 export interface ActivityRecord {
   record_type: string;
@@ -36,6 +36,8 @@ export interface ActivityResponse {
 export interface AnalyticsResponse {
   scope: string;
   eligible_profile_count: number;
+  recommended_profile_id: string;
+  candidates: UsageCandidate[];
   profiles: UsageSnapshotResponse[];
   aggregates: UsageAggregate[];
   ambiguities: UsageMetricAmbiguity[];
@@ -148,6 +150,13 @@ export interface UsageAggregate {
 export interface UsageMetricAmbiguity {
   metric_key: string;
   reason: string;
+}
+
+export interface UsageCandidate {
+  profile_id: string;
+  alias: string;
+  eligible: boolean;
+  capacity_state: string;
 }
 
 export interface UsageSnapshotResponse {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -78,8 +79,8 @@ func (store *Store) ListUsageProfiles(ctx context.Context) ([]usage.ProfileTarge
 	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END,
 		CASE WHEN ip.status = 'ready' AND h.location_ciphertext IS NOT NULL AND h.ownership IN ('managed', 'referenced')
-			AND COALESCE((SELECT us.status FROM usage_snapshots us WHERE us.profile_id = ip.profile_id ORDER BY us.captured_at DESC, us.snapshot_id DESC LIMIT 1), '') <> 'reauthentication_required'
-			THEN 1 ELSE 0 END
+			AND COALESCE((SELECT us.status FROM usage_snapshots us WHERE us.profile_id = ip.profile_id AND us.status <> 'temporarily_unavailable' ORDER BY us.captured_at DESC, us.snapshot_id DESC LIMIT 1), '') <> 'reauthentication_required'
+			THEN 1 ELSE 0 END, h.identity_home_id, h.location_ciphertext
 		FROM identity_profiles ip
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
 		LEFT JOIN identity_homes h ON h.identity_home_id = ip.identity_home_id
@@ -93,8 +94,22 @@ func (store *Store) ListUsageProfiles(ctx context.Context) ([]usage.ProfileTarge
 	profiles := []usage.ProfileTarget{}
 	for rows.Next() {
 		var target usage.ProfileTarget
-		if err := rows.Scan(&target.ID, &target.Alias, &target.Selected, &target.Eligible); err != nil {
+		var homeID sql.NullString
+		var ciphertext []byte
+		if err := rows.Scan(&target.ID, &target.Alias, &target.Selected, &target.Eligible, &homeID, &ciphertext); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+		}
+		if target.Eligible {
+			secureVault, err := store.requireVault()
+			if err != nil {
+				return nil, err
+			}
+			home, err := decryptField(ctx, secureVault, ciphertext, identityHomeAAD(homeID.String))
+			if err != nil {
+				return nil, err
+			}
+			info, statErr := os.Stat(filepath.Clean(home))
+			target.Eligible = filepath.IsAbs(home) && statErr == nil && info.IsDir()
 		}
 		profiles = append(profiles, target)
 	}

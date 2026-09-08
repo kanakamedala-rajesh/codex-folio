@@ -269,11 +269,11 @@ func TestServiceViewDefaultsToSelectedProfileAndCombinesOnlyWhenExplicit(t *test
 		t.Fatal(err)
 	}
 
-	selected, err := service.View(context.Background(), "")
+	selected, err := service.View(context.Background(), "", true)
 	if err != nil || selected.Scope != ScopeSelectedProfile || selected.EligibleProfileCount != 2 || len(selected.Profiles) != 1 || selected.Profiles[0].Alias != "Personal" {
 		t.Fatalf("selected view/error = %#v/%v", selected, err)
 	}
-	combined, err := service.View(context.Background(), ScopeCombinedIdentity)
+	combined, err := service.View(context.Background(), ScopeCombinedIdentity, true)
 	if err != nil || combined.Scope != ScopeCombinedIdentity || len(combined.Profiles) != 2 || combined.EligibleProfileCount != 2 {
 		t.Fatalf("combined view/error = %#v/%v", combined, err)
 	}

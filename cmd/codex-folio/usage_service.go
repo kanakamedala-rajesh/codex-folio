@@ -48,13 +48,14 @@ func (service *usageCommandService) View(ctx context.Context, scope string) (usa
 	if service == nil || service.workflow == nil || service.store == nil {
 		return usagefeature.DashboardView{}, nil, usagefeature.ErrInvalid
 	}
-	view, err := service.workflow.View(ctx, scope)
+	discovery, discoveryErr := launch.Discover(service.resolver, "")
+	view, err := service.workflow.View(ctx, scope, discoveryErr == nil && discovery.Capabilities.TransparentLaunch == launch.CapabilitySupported)
 	if err != nil {
 		return usagefeature.DashboardView{}, nil, err
 	}
 	filters := activity.Filters{}
-	if view.Scope == usagefeature.ScopeSelectedProfile && len(view.Profiles) == 1 {
-		filters.ProfileAlias = view.Profiles[0].Alias
+	if view.Scope == usagefeature.ScopeSelectedProfile && len(view.Candidates) == 1 {
+		filters.ProfileAlias = view.Candidates[0].Alias
 	}
 	records, err := service.store.ListActivity(ctx, filters)
 	return view, records, err

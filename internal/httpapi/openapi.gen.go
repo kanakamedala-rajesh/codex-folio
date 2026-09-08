@@ -18,7 +18,7 @@ const (
 	ActivityPath         = "/api/v1/activity"
 	AnalyticsPath        = "/api/v1/analytics"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "dda320c8a932ec283c003c06d85a69707ddbf268d00e28fc1430209e76f60104"
+	ContractSourceSHA256 = "30b084325efc41daec629764389aa87035dd0154dd4fe34da85fbf52de052515"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -58,6 +58,8 @@ type ActivityResponse struct {
 type AnalyticsResponse struct {
 	Scope                string                  `json:"scope"`
 	EligibleProfileCount int64                   `json:"eligible_profile_count"`
+	RecommendedProfileId string                  `json:"recommended_profile_id"`
+	Candidates           []UsageCandidate        `json:"candidates"`
 	Profiles             []UsageSnapshotResponse `json:"profiles"`
 	Aggregates           []UsageAggregate        `json:"aggregates"`
 	Ambiguities          []UsageMetricAmbiguity  `json:"ambiguities"`
@@ -158,6 +160,13 @@ type UsageAggregate struct {
 type UsageMetricAmbiguity struct {
 	MetricKey string `json:"metric_key"`
 	Reason    string `json:"reason"`
+}
+
+type UsageCandidate struct {
+	ProfileId     string `json:"profile_id"`
+	Alias         string `json:"alias"`
+	Eligible      bool   `json:"eligible"`
+	CapacityState string `json:"capacity_state"`
 }
 
 type UsageSnapshotResponse struct {

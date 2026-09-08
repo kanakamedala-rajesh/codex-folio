@@ -246,17 +246,30 @@
       "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "status", "trigger_reason", "observations", "availability"],
       "type": "object"
     },
+    "UsageCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "eligible": {"type": "boolean"},
+        "capacity_state": {"enum": ["fresh", "stale", "partial", "contradictory", "incompatible", "ineligible"], "type": "string"}
+      },
+      "required": ["profile_id", "alias", "eligible", "capacity_state"],
+      "type": "object"
+    },
     "AnalyticsResponse": {
       "additionalProperties": false,
       "properties": {
         "scope": {"enum": ["selected_profile", "combined_identity"], "type": "string"},
         "eligible_profile_count": {"type": "integer"},
+        "recommended_profile_id": {"type": "string", "description": "Empty unless a unique eligible profile has comparable provider capacity captured no more than ten minutes ago. This evaluates companion-observable facts only, not model, tool, repository, workspace-policy, or task suitability."},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/UsageCandidate"}},
         "profiles": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}},
         "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
         "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
         "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
       },
-      "required": ["scope", "eligible_profile_count", "profiles", "aggregates", "ambiguities", "activity"],
+      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity"],
       "type": "object"
     }
   },

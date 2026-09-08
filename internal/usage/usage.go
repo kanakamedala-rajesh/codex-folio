@@ -131,6 +131,8 @@ type DashboardView struct {
 	Profiles             []Snapshot  `json:"profiles"`
 	Aggregates           []Aggregate `json:"aggregates"`
 	AmbiguousMetricKeys  []string    `json:"ambiguous_metric_keys"`
+	Candidates           []Candidate `json:"candidates"`
+	RecommendedProfileID string      `json:"recommended_profile_id"`
 }
 
 func Combine(snapshots []Snapshot, eligibleProfileCount int) DashboardView {
@@ -326,7 +328,7 @@ func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, err
 	return snapshot, nil
 }
 
-func (service *Service) View(ctx context.Context, scope string) (DashboardView, error) {
+func (service *Service) View(ctx context.Context, scope string, capabilityCompatible bool) (DashboardView, error) {
 	if service == nil || service.store == nil || service.clock == nil || (scope != "" && scope != ScopeSelectedProfile && scope != ScopeCombinedIdentity) {
 		return DashboardView{}, ErrInvalid
 	}
@@ -338,27 +340,6 @@ func (service *Service) View(ctx context.Context, scope string) (DashboardView, 
 	if now.IsZero() {
 		return DashboardView{}, ErrInvalid
 	}
-	eligible := 0
-	for _, target := range profiles {
-		eligible += boolCount(target.Eligible)
-	}
-	if scope == "" || scope == ScopeSelectedProfile {
-		for _, target := range profiles {
-			if !target.Selected {
-				continue
-			}
-			snapshot, err := service.store.LatestUsageSnapshot(ctx, target)
-			if err != nil {
-				return DashboardView{}, err
-			}
-			if err := finalizeSnapshot(&snapshot, now); err != nil {
-				return DashboardView{}, err
-			}
-			return DashboardView{Scope: ScopeSelectedProfile, EligibleProfileCount: eligible, Profiles: []Snapshot{snapshot}, Aggregates: []Aggregate{}, AmbiguousMetricKeys: []string{}}, nil
-		}
-		return DashboardView{}, ErrProfileUnavailable
-	}
-
 	snapshots := make([]Snapshot, 0, len(profiles))
 	for _, target := range profiles {
 		snapshot, err := service.store.LatestUsageSnapshot(ctx, target)
@@ -373,14 +354,39 @@ func (service *Service) View(ctx context.Context, scope string) (DashboardView, 
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	return Combine(snapshots, eligible), nil
-}
-
-func boolCount(value bool) int {
-	if value {
-		return 1
+	candidates, recommended := Rank(profiles, snapshots, now, capabilityCompatible)
+	eligible := 0
+	order := make(map[string]int, len(candidates))
+	for index, candidate := range candidates {
+		order[candidate.ProfileID] = index
+		if candidate.Eligible {
+			eligible++
+		}
 	}
-	return 0
+	sort.Slice(snapshots, func(left, right int) bool {
+		return order[snapshots[left].ProfileID] < order[snapshots[right].ProfileID]
+	})
+	if scope == ScopeCombinedIdentity {
+		view := Combine(snapshots, eligible)
+		view.Candidates, view.RecommendedProfileID = candidates, recommended
+		return view, nil
+	}
+	for _, target := range profiles {
+		if !target.Selected {
+			continue
+		}
+		view := DashboardView{Scope: ScopeSelectedProfile, EligibleProfileCount: eligible, Profiles: []Snapshot{}, Aggregates: []Aggregate{}, AmbiguousMetricKeys: []string{}, Candidates: []Candidate{candidates[order[target.ID]]}}
+		for _, snapshot := range snapshots {
+			if snapshot.ProfileID == target.ID {
+				view.Profiles = append(view.Profiles, snapshot)
+			}
+		}
+		if recommended == target.ID {
+			view.RecommendedProfileID = recommended
+		}
+		return view, nil
+	}
+	return DashboardView{}, ErrProfileUnavailable
 }
 
 func NewUnavailableSnapshot(sourceVersion string, capturedAt time.Time, state, reason string) Snapshot {

@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +87,7 @@ func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(t.TempDir(), "profile-1")
+	home := t.TempDir()
 	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-1", Alias: "Work", DisplayName: "Work"}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +109,7 @@ func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) 
 		if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: id, Alias: alias, DisplayName: alias}); err != nil {
 			t.Fatal(err)
 		}
-		if err := stateStore.SetManagedHome(ctx, id, "home-"+id, filepath.Join(t.TempDir(), id)); err != nil {
+		if err := stateStore.SetManagedHome(ctx, id, "home-"+id, t.TempDir()); err != nil {
 			t.Fatal(err)
 		}
 		for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
@@ -319,6 +323,222 @@ func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) 
 	profiles, err := stateStore.ListEligibleProfiles(ctx)
 	if err != nil || len(profiles) != 4 || !profiles[0].Selected || profiles[0].Alias != "Work" {
 		t.Fatalf("Selected Profile after combined view = %#v/%v", profiles, err)
+	}
+}
+
+func TestComposedRecommendationsUseTheSamePolicyInHumanJSONAndGeneratedAPI(t *testing.T) {
+	for _, test := range []struct {
+		name                                                                                         string
+		age, otherAge                                                                                time.Duration
+		change                                                                                       func(*usage.Snapshot)
+		missingHome, missingCapacity, incompatibleCapability, failedRefresh, reauthenticationRefresh bool
+		authStatus                                                                                   profile.Status
+		winner                                                                                       string
+		eligible                                                                                     int64
+	}{
+		{name: "unique winner", winner: "profile-1", eligible: 2},
+		{name: "exact freshness boundary", age: 10 * time.Minute, winner: "profile-1", eligible: 2},
+		{name: "stale higher capacity", age: 10*time.Minute + time.Second, winner: "profile-2", eligible: 2},
+		{name: "stale only", age: 11 * time.Minute, otherAge: 11 * time.Minute, eligible: 2},
+		{name: "tie", change: func(s *usage.Snapshot) { s.Observations[0].Value, s.Observations[1].Value = 30, 40 }, eligible: 2},
+		{name: "crossed capacity", change: func(s *usage.Snapshot) { s.Observations[1].Value = 50 }, eligible: 2},
+		{name: "partial provider evidence", change: func(s *usage.Snapshot) {
+			s.Observations = s.Observations[:1]
+			s.Availability[1].State = usage.AvailabilityUnsupported
+		}, eligible: 2},
+		{name: "mixed provenance", change: func(s *usage.Snapshot) { s.Observations[0].Provenance = usage.ProvenanceLocal }, eligible: 2},
+		{name: "contradictory provider evidence", change: func(s *usage.Snapshot) {
+			other := s.Observations[0]
+			other.Value = 90
+			s.Observations = append(s.Observations, other)
+		}, eligible: 2},
+		{name: "incompatible windows", change: func(s *usage.Snapshot) {
+			start := s.Observations[0].WindowStart.Add(time.Hour)
+			s.Observations[0].WindowStart = &start
+		}, eligible: 2},
+		{name: "missing capacity", missingCapacity: true, eligible: 2},
+		{name: "failed refresh", failedRefresh: true, eligible: 2},
+		{name: "reauthentication survives failed refresh", failedRefresh: true, reauthenticationRefresh: true, winner: "profile-2", eligible: 1},
+		{name: "missing home", missingHome: true, winner: "profile-2", eligible: 1},
+		{name: "unusable authentication", authStatus: profile.StatusNeedsReauthentication, winner: "profile-2", eligible: 1},
+		{name: "unavailable lifecycle", authStatus: profile.StatusUnavailable, winner: "profile-2", eligible: 1},
+		{name: "incompatible capability", incompatibleCapability: true, eligible: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			paths := launchTestPaths(t)
+			secureVault := seedReadyLaunchProfile(t, paths)
+			seedReferencedReadyProfile(t, paths, secureVault)
+			stateStore, err := store.OpenWithVault(paths.DatabaseFile, secureVault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = stateStore.Close() }()
+			// Pending profiles have neither authenticated homes nor launch eligibility.
+			if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "pending", Alias: "Pending", DisplayName: "Pending"}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+			makeSnapshot := func(age time.Duration, values ...float64) usage.Snapshot {
+				snapshot := usage.NewUnavailableSnapshot("0.153.4", now, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+				for index, value := range values {
+					start, end := now.Add(-12*time.Hour), now.Add(time.Duration(index+1)*24*time.Hour)
+					metric := usage.Registry()[index]
+					snapshot.Observations = append(snapshot.Observations, usage.Observation{Metric: metric, Value: value, CapturedAt: now.Add(-age), ObservedAt: now.Add(-age), WindowStart: &start, WindowEnd: &end, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Availability: usage.AvailabilityAvailable})
+					snapshot.Availability[index].State, snapshot.Availability[index].Reason = usage.AvailabilityAvailable, ""
+				}
+				return snapshot
+			}
+			first, second := makeSnapshot(test.age, 10, 20), makeSnapshot(test.otherAge, 30, 40)
+			if test.change != nil {
+				test.change(&first)
+			}
+			fixtures := []composedUsageFixture{{snapshot: first}, {snapshot: second}}
+			if test.reauthenticationRefresh {
+				fixtures[0].snapshot = usage.NewUnavailableSnapshot("0.153.4", now, usage.AvailabilityReauthenticationRequired, usage.ReasonReauthentication)
+			}
+			if test.missingCapacity {
+				fixtures = fixtures[1:]
+			}
+			collector := &composedUsageCollector{fixtures: fixtures}
+			clock := &composedUsageClock{now: now}
+			workflow, err := usage.NewService(stateStore, collector, clock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate := launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}
+			commandService := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: candidate}, store: stateStore}
+			launches, err := newLaunchCommandService(stateStore, nil, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			server, err := httpapi.NewServer(httpapi.Options{Usage: commandService, Launches: launches, CommandToken: "ranking-test-token"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener, err := server.Listen()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = server.Close() }()
+			go func() { _ = server.Serve(listener) }()
+			client := httpapi.NewCommandClient(server.Origin(), "ranking-test-token", nil)
+			jar, err := cookiejar.New(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bootstrap, err := url.Parse(server.BootstrapURL())
+			if err != nil {
+				t.Fatal(err)
+			}
+			generated := httpapi.NewClient(server.Origin(), &composedBrowserDoer{client: &http.Client{Jar: jar}, origin: server.Origin()})
+			if _, _, err := generated.ExchangeBootstrap(ctx, httpapi.BootstrapRequest{BootstrapToken: bootstrap.Query().Get("bootstrap")}); err != nil {
+				t.Fatal(err)
+			}
+			if !test.missingCapacity {
+				if _, err := client.RefreshUsage(ctx, "Work"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := client.RefreshUsage(ctx, "Personal"); err != nil {
+				t.Fatal(err)
+			}
+			if test.failedRefresh {
+				clock.now = now.Add(time.Second)
+				collector.fixtures = []composedUsageFixture{{err: apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)}}
+				if _, err := client.RefreshUsage(ctx, "Work"); apperrors.Code(err) != apperrors.UsageCollectionFailed {
+					t.Fatalf("failed refresh = %v", err)
+				}
+			}
+			if test.missingHome {
+				if err := os.Rename(filepath.Join(paths.Root, "managed-home"), filepath.Join(paths.Root, "moved-home")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.authStatus != "" {
+				if err := stateStore.SetAuthenticationState(ctx, "profile-1", test.authStatus, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.incompatibleCapability {
+				commandService.resolver = launchTestResolver{}
+			}
+			for _, scope := range []string{"", usage.ScopeCombinedIdentity} {
+				result, err := client.Analytics(ctx, scope)
+				if err != nil {
+					t.Fatal(err)
+				}
+				winner := test.winner
+				if scope == "" && winner != "profile-1" {
+					winner = ""
+				}
+				if result.RecommendedProfileId != winner || result.EligibleProfileCount != test.eligible {
+					t.Fatalf("scope %q recommendation/count = %q/%d, want %q/%d", scope, result.RecommendedProfileId, result.EligibleProfileCount, winner, test.eligible)
+				}
+				browser, _, err := generated.GetAnalytics(ctx, scope)
+				if err != nil || !reflect.DeepEqual(result, browser) {
+					t.Fatalf("CLI/generated API mismatch: %#v/%#v/%v", result, browser, err)
+				}
+				var encoded, human bytes.Buffer
+				if err := writeServiceJSON(&encoded, result); err != nil {
+					t.Fatal(err)
+				}
+				var decoded httpapi.AnalyticsResponse
+				if err := json.Unmarshal(encoded.Bytes(), &decoded); err != nil || !reflect.DeepEqual(result, decoded) {
+					t.Fatalf("JSON policy mismatch: %#v/%v", decoded, err)
+				}
+				writeAnalytics(&human, result)
+				if strings.Contains(human.String(), "Recommended") != (winner != "") {
+					t.Fatalf("human recommendation = %q", human.String())
+				}
+				if test.age > 10*time.Minute && !strings.Contains(human.String(), "age "+strconv.FormatInt(int64(test.age/time.Second), 10)+"s") {
+					t.Fatalf("stale exact age missing: %s", human.String())
+				}
+				for _, prohibited := range []string{paths.Root, "CODEX_HOME", "shared-login", "shared-workspace"} {
+					if strings.Contains(encoded.String(), prohibited) || strings.Contains(human.String(), prohibited) {
+						t.Fatalf("projection leaked %q", prohibited)
+					}
+				}
+				if scope == usage.ScopeCombinedIdentity && (len(result.Candidates) != 3 || (test.age > 10*time.Minute && test.otherAge == 0 && result.Candidates[0].ProfileId != "profile-2")) {
+					t.Fatalf("candidate visibility/order = %#v", result.Candidates)
+				}
+			}
+			if test.name == "stale higher capacity" {
+				prepared, err := client.Launch(ctx, httpapi.CommandLaunchRequest{Action: "prepare", Alias: "Work", Executable: candidate.Path, Version: candidate.Version, WorkingDirectory: paths.Root})
+				if err != nil || prepared.Plan == nil {
+					t.Fatalf("stale eligible launch blocked: %#v/%v", prepared, err)
+				}
+				collector.fixtures = []composedUsageFixture{{snapshot: makeSnapshot(0, 10, 20)}}
+				clock.now = now.Add(time.Second)
+				if _, err := client.RefreshUsage(ctx, "Work"); err != nil {
+					t.Fatal(err)
+				}
+				result, err := client.Analytics(ctx, usage.ScopeCombinedIdentity)
+				if err != nil || result.RecommendedProfileId != "profile-1" {
+					t.Fatalf("manual refresh did not restore ranking: %#v/%v", result, err)
+				}
+			}
+			if test.reauthenticationRefresh {
+				collector.fixtures = []composedUsageFixture{{snapshot: first}}
+				clock.now = now.Add(2 * time.Second)
+				if _, err := client.RefreshUsage(ctx, "Work"); err != nil {
+					t.Fatal(err)
+				}
+				result, err := client.Analytics(ctx, usage.ScopeCombinedIdentity)
+				if err != nil || result.RecommendedProfileId != "profile-1" || result.EligibleProfileCount != 2 {
+					t.Fatalf("successful authentication evidence did not restore ranking: %#v/%v", result, err)
+				}
+			}
+			selected, err := stateStore.ListEligibleProfiles(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, item := range selected {
+				if item.Selected && item.Alias != "Work" {
+					t.Fatalf("ranking changed selection: %#v", selected)
+				}
+			}
+		})
 	}
 }
 

@@ -251,7 +251,11 @@ func usageSnapshotResponse(snapshot usage.Snapshot) UsageSnapshotResponse {
 func analyticsResponse(view usage.DashboardView, records []activity.TimelineRecord) AnalyticsResponse {
 	result := AnalyticsResponse{
 		Scope: view.Scope, EligibleProfileCount: int64(view.EligibleProfileCount), Profiles: []UsageSnapshotResponse{},
+		RecommendedProfileId: view.RecommendedProfileID, Candidates: []UsageCandidate{},
 		Aggregates: []UsageAggregate{}, Ambiguities: []UsageMetricAmbiguity{}, Activity: ActivityResponseFor(records).Records,
+	}
+	for _, candidate := range view.Candidates {
+		result.Candidates = append(result.Candidates, UsageCandidate{ProfileId: candidate.ProfileID, Alias: candidate.Alias, Eligible: candidate.Eligible, CapacityState: candidate.CapacityState})
 	}
 	for _, snapshot := range view.Profiles {
 		result.Profiles = append(result.Profiles, usageSnapshotResponse(snapshot))

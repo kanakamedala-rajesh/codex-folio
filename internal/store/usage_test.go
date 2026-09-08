@@ -4,12 +4,41 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
+
+func TestUsageEligibilityRequiresAnExistingHome(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	missing := addReadyProfile(t, stateStore, "profile-1", "Missing")
+	existing := addReadyProfile(t, stateStore, "profile-2", "Existing")
+	if err := os.MkdirAll(existing, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("missing-home fixture: %v", err)
+	}
+	profiles, err := stateStore.ListUsageProfiles(context.Background())
+	if err != nil || len(profiles) != 2 || !profiles[0].Eligible || profiles[1].Eligible {
+		t.Fatalf("existing/missing home eligibility = %#v/%v", profiles, err)
+	}
+	if err := os.Rename(existing, filepath.Join(filepath.Dir(existing), "moved-home")); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err = stateStore.ListUsageProfiles(context.Background())
+	if err != nil || profiles[0].Eligible {
+		t.Fatalf("moved home remained eligible: %#v/%v", profiles, err)
+	}
+}
 
 func TestUsageSnapshotPersistsAtomicallyWithoutChangingSelection(t *testing.T) {
 	stateStore, err := openProfileTestStore(t)
@@ -227,7 +256,10 @@ func TestUsageProfilesAndSnapshotScopeSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addReadyProfile(t, stateStore, "profile-1", "Personal")
+	home := addReadyProfile(t, stateStore, "profile-1", "Personal")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	addReadyProfile(t, stateStore, "profile-2", "Work")
 	if _, err := stateStore.SelectProfile(context.Background(), "Personal"); err != nil {
 		t.Fatal(err)
