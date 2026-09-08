@@ -236,6 +236,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_USAGE_ANALYTICS_EXPORT_FAILED",
+      "owner": "usage",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_USAGE_REQUEST_INVALID",
       "owner": "usage",
       "lifecycle": "active",

@@ -12,9 +12,10 @@
     "HistoryRequest": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "action": {"type": "string", "enum": ["retention", "purge", "aggregates"]},
+        "action": {"type": "string", "enum": ["retention", "purge", "aggregates", "export"]},
         "setting": {"type": "string"}, "run": {"type": "boolean"},
-        "scope": {"$ref": "#/$defs/HistoryScope"}, "confirmation": {"type": "string"}
+        "scope": {"$ref": "#/$defs/HistoryScope"}, "confirmation": {"type": "string"},
+        "export": {"$ref": "#/$defs/AnalyticsExportRequest"}
       }, "required": ["action"]
     },
     "HistoryResponse": {
@@ -22,7 +23,8 @@
       "properties": {
         "retention": {"$ref": "#/$defs/RetentionResult"},
         "purge": {"$ref": "#/$defs/PurgeResult"},
-        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}}
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}},
+        "export": {"$ref": "#/$defs/AnalyticsExportResult"}
       }, "required": []
     },
     "RetentionResult": {
@@ -60,9 +62,94 @@
         "availability": {"type": "string"}, "assumptions": {"type": "string"}, "uncertainty": {"type": "string"},
         "bucket_kind": {"type": "string"}, "bucket_start": {"type": "string"}, "bucket_end": {"type": "string"},
         "timezone": {"type": "string"}, "first_observed_at": {"type": "string"}, "last_observed_at": {"type": "string"},
-        "first_captured_at": {"type": "string"}, "last_captured_at": {"type": "string"}, "samples": {"type": "integer"}
+        "first_captured_at": {"type": "string"}, "last_captured_at": {"type": "string"}, "samples": {"type": "integer"},
+        "profile_alias": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "login_identity": {"type": "string"}, "workspace": {"type": "string"}, "freshness": {"type": "string"}, "canonical_path": {"type": "string"}
       },
       "required": ["id", "profile_id", "project_id", "metric", "value", "source", "source_version", "provenance", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples"]
+    },
+    "AnalyticsExportRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "format": {"type": "string", "enum": ["json", "csv"]},
+        "datasets": {"type": "array", "items": {"type": "string"}},
+        "scope": {"type": "string", "enum": ["selected_profile", "combined_identity"]},
+        "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "from": {"type": "string"}, "to": {"type": "string"}, "include_paths": {"type": "boolean"}
+      },
+      "required": ["format", "datasets", "scope", "profile_id", "project_id", "from", "to", "include_paths"]
+    },
+    "AnalyticsExportDatasetPreview": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "dataset": {"type": "string"}, "fields": {"type": "array", "items": {"type": "string"}}, "record_count": {"type": "integer"}
+      },
+      "required": ["dataset", "fields", "record_count"]
+    },
+    "UsageExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "observation_id": {"type": "string"}, "profile_id": {"type": "string"}, "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "value": {"type": "number"}, "source": {"type": "string"},
+        "source_version": {"type": "string"}, "provenance": {"type": "string"}, "freshness": {"type": "string"},
+        "availability": {"type": "string"}, "login_identity": {"type": "string"}, "workspace": {"type": "string"},
+        "window_start": {"type": "string"}, "window_end": {"type": "string"}, "window_timezone": {"type": "string"},
+        "observed_at": {"type": "string"}, "captured_at": {"type": "string"}, "capture_age_seconds": {"type": "integer"},
+        "assumptions": {"type": "string"}, "uncertainty": {"type": "string"}, "canonical_path": {"type": "string"}
+      },
+      "required": ["observation_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "value", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "window_start", "window_end", "window_timezone", "observed_at", "captured_at", "capture_age_seconds", "assumptions", "uncertainty"]
+    },
+    "AnalyticsExportRecords": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "usage": {"type": "array", "items": {"$ref": "#/$defs/UsageExportRecord"}},
+        "availability": {"type": "array", "items": {"$ref": "#/$defs/AvailabilityExportRecord"}},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}},
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityExportRecord"}}
+      },
+      "required": []
+    },
+    "AvailabilityExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "metric_availability_id": {"type": "string"}, "profile_id": {"type": "string"}, "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "state": {"type": "string"}, "reason": {"type": "string"},
+        "checked_at": {"type": "string"}, "source": {"type": "string"}, "source_version": {"type": "string"},
+        "provenance": {"type": "string"}, "freshness": {"type": "string"}, "capture_age_seconds": {"type": "integer"},
+        "login_identity": {"type": "string"}, "workspace": {"type": "string"}, "canonical_path": {"type": "string"}
+      },
+      "required": ["metric_availability_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "state", "reason", "checked_at", "source", "source_version", "provenance", "freshness", "capture_age_seconds", "login_identity", "workspace"]
+    },
+    "AnalyticsExportResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "schema_version": {"type": "string"}, "filters": {"$ref": "#/$defs/AnalyticsExportRequest"},
+        "preview": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsExportDatasetPreview"}},
+        "records": {"$ref": "#/$defs/AnalyticsExportRecords"}
+      },
+      "required": ["schema_version", "filters", "preview", "records"]
+    },
+    "ActivityExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "record_type": {"type": "string"}, "id": {"type": "string"}, "source_session_id": {"type": "string"},
+        "profile_id": {"type": "string"}, "profile_alias": {"type": "string"}, "project_id": {"type": "string"},
+        "project_alias": {"type": "string"}, "project_basename": {"type": "string"}, "source": {"type": "string"},
+        "source_version": {"type": "string"}, "provenance": {"type": "string"}, "started_at": {"type": "string"},
+        "last_observed_at": {"type": "string"}, "lifecycle": {"type": "string"}, "exit_status": {"type": "integer"},
+        "model": {"type": "string"}, "tokens_used": {"type": "integer"}, "correlation": {"$ref": "#/$defs/ActivityCorrelation"},
+        "canonical_path": {"type": "string"}
+      },
+      "required": ["record_type", "id", "profile_id", "profile_alias", "source", "provenance", "started_at", "last_observed_at", "correlation"]
+    },
+    "ActivityCorrelation": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "state": {"type": "string"}, "managed_launch_id": {"type": "string"}, "evidence_type": {"type": "string"}, "confidence": {"type": "string"}
+      },
+      "required": ["state"]
     },
     "ActivityRecord": {
       "additionalProperties": false,
@@ -87,7 +174,8 @@
         "correlation_state": {"type": "string"},
         "correlation_managed_launch_id": {"type": "string"},
         "correlation_evidence_type": {"type": "string"},
-        "correlation_confidence": {"type": "string"}
+        "correlation_confidence": {"type": "string"},
+        "canonical_path": {"type": "string"}
       },
       "required": ["record_type", "id", "source_session_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"],
       "type": "object"
@@ -353,7 +441,7 @@
         "responses": {
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/HistoryResponse"}}},
-            "description": "Reads/configures retention, runs one bounded maintenance batch, lists up to 1000 complete aggregate buckets, or previews/applies a fully scoped confirmed purge."
+            "description": "Reads/configures retention, runs one bounded maintenance batch, lists up to 1000 complete aggregate buckets, previews/applies a fully scoped confirmed purge, or returns a previewed normalized analytics export."
           },
           "default": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},

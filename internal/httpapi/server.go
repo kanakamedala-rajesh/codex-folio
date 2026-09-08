@@ -89,6 +89,7 @@ type Options struct {
 	Projects              *activity.ProjectService
 	Activities            CommandActivityService
 	History               *usage.HistoryService
+	Exports               *activity.ExportService
 	CommandToken          string
 }
 
@@ -118,6 +119,7 @@ type Server struct {
 	projects              *activity.ProjectService
 	activities            CommandActivityService
 	historyService        *usage.HistoryService
+	exportService         *activity.ExportService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -194,6 +196,7 @@ func NewServer(options Options) (*Server, error) {
 		projects:              options.Projects,
 		activities:            options.Activities,
 		historyService:        options.History,
+		exportService:         options.Exports,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -1158,6 +1161,8 @@ func safeMessage(code string) string {
 		return "Purge requires the exact confirmation token from the scoped preview."
 	case apperrors.AnalyticsScopeTooLarge:
 		return "Purge exceeds the atomic record limit. Narrow the date, profile, project, or record classes."
+	case apperrors.AnalyticsExportFailed:
+		return "Analytics export could not be written. The destination was preserved."
 	default:
 		return "The local dashboard could not complete the request."
 	}

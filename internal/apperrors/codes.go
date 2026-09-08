@@ -43,6 +43,7 @@ const (
 	AnalyticsRequestInvalid                  = "CF_USAGE_ANALYTICS_REQUEST_INVALID"
 	AnalyticsConfirmationInvalid             = "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID"
 	AnalyticsScopeTooLarge                   = "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE"
+	AnalyticsExportFailed                    = "CF_USAGE_ANALYTICS_EXPORT_FAILED"
 	UsageRequestInvalid                      = "CF_USAGE_REQUEST_INVALID"
 	UsageProfileNotFound                     = "CF_USAGE_PROFILE_NOT_FOUND"
 	UsageProfileUnavailable                  = "CF_USAGE_PROFILE_UNAVAILABLE"
@@ -166,6 +167,7 @@ func IsRegistered(code string) bool {
 		AnalyticsRequestInvalid,
 		AnalyticsConfirmationInvalid,
 		AnalyticsScopeTooLarge,
+		AnalyticsExportFailed,
 		UsageRequestInvalid,
 		UsageProfileNotFound,
 		UsageProfileUnavailable,

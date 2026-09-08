@@ -248,7 +248,7 @@ function validateContract(contract, productVersion) {
   assertEqual(requestReference(historyOperation.requestBody, "history request body"), "#/$defs/HistoryRequest", "history request");
   assertEqual(responseReference(historyOperation, "history response", ["200", "default"]), "#/$defs/HistoryResponse", "history response");
   assertEqual(errorResponseReference(historyOperation, "history error"), usageErrorResponseReference, "history error response");
-  const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate"];
+  const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate", "AnalyticsExportRequest", "AnalyticsExportDatasetPreview", "UsageExportRecord", "AvailabilityExportRecord", "AnalyticsExportRecords", "AnalyticsExportResult", "ActivityExportRecord", "ActivityCorrelation"];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -885,7 +885,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     usageResponseFields,
     usageResponseType,
   } = contractShape;
-  const activityRecordLines = activityRecordFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const activityRecordLines = activityRecordFields.map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n");
   const activityResponseLines = activityResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const analyticsResponseLines = analyticsResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const bootstrapRequestLines = bootstrapRequestFields

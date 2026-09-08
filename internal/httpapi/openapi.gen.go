@@ -19,7 +19,7 @@ const (
 	AnalyticsPath        = "/api/v1/analytics"
 	HistoryPath          = "/api/v1/analytics/history"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "641014443ed1e23d36dbe87b81fa3338396a2ebec773ae74ec9134b5d3a705fd"
+	ContractSourceSHA256 = "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -37,17 +37,19 @@ type HistoryScope struct {
 }
 
 type HistoryRequest struct {
-	Action       string        `json:"action"`
-	Setting      *string       `json:"setting,omitempty"`
-	Run          *bool         `json:"run,omitempty"`
-	Scope        *HistoryScope `json:"scope,omitempty"`
-	Confirmation *string       `json:"confirmation,omitempty"`
+	Action       string                  `json:"action"`
+	Setting      *string                 `json:"setting,omitempty"`
+	Run          *bool                   `json:"run,omitempty"`
+	Scope        *HistoryScope           `json:"scope,omitempty"`
+	Confirmation *string                 `json:"confirmation,omitempty"`
+	Export       *AnalyticsExportRequest `json:"export,omitempty"`
 }
 
 type HistoryResponse struct {
-	Retention  *RetentionResult    `json:"retention,omitempty"`
-	Purge      *PurgeResult        `json:"purge,omitempty"`
-	Aggregates *[]HistoryAggregate `json:"aggregates,omitempty"`
+	Retention  *RetentionResult       `json:"retention,omitempty"`
+	Purge      *PurgeResult           `json:"purge,omitempty"`
+	Aggregates *[]HistoryAggregate    `json:"aggregates,omitempty"`
+	Export     *AnalyticsExportResult `json:"export,omitempty"`
 }
 
 type RetentionResult struct {
@@ -100,30 +102,146 @@ type HistoryAggregate struct {
 	FirstCapturedAt string        `json:"first_captured_at"`
 	LastCapturedAt  string        `json:"last_captured_at"`
 	Samples         int64         `json:"samples"`
+	ProfileAlias    *string       `json:"profile_alias,omitempty"`
+	ProjectAlias    *string       `json:"project_alias,omitempty"`
+	ProjectBasename *string       `json:"project_basename,omitempty"`
+	LoginIdentity   *string       `json:"login_identity,omitempty"`
+	Workspace       *string       `json:"workspace,omitempty"`
+	Freshness       *string       `json:"freshness,omitempty"`
+	CanonicalPath   *string       `json:"canonical_path,omitempty"`
+}
+
+type AnalyticsExportRequest struct {
+	Format       string   `json:"format"`
+	Datasets     []string `json:"datasets"`
+	Scope        string   `json:"scope"`
+	ProfileId    string   `json:"profile_id"`
+	ProjectId    string   `json:"project_id"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	IncludePaths bool     `json:"include_paths"`
+}
+
+type AnalyticsExportDatasetPreview struct {
+	Dataset     string   `json:"dataset"`
+	Fields      []string `json:"fields"`
+	RecordCount int64    `json:"record_count"`
+}
+
+type UsageExportRecord struct {
+	ObservationId     string        `json:"observation_id"`
+	ProfileId         string        `json:"profile_id"`
+	ProfileAlias      string        `json:"profile_alias"`
+	ProjectId         string        `json:"project_id"`
+	ProjectAlias      string        `json:"project_alias"`
+	ProjectBasename   string        `json:"project_basename"`
+	Metric            HistoryMetric `json:"metric"`
+	Value             float64       `json:"value"`
+	Source            string        `json:"source"`
+	SourceVersion     string        `json:"source_version"`
+	Provenance        string        `json:"provenance"`
+	Freshness         string        `json:"freshness"`
+	Availability      string        `json:"availability"`
+	LoginIdentity     string        `json:"login_identity"`
+	Workspace         string        `json:"workspace"`
+	WindowStart       string        `json:"window_start"`
+	WindowEnd         string        `json:"window_end"`
+	WindowTimezone    string        `json:"window_timezone"`
+	ObservedAt        string        `json:"observed_at"`
+	CapturedAt        string        `json:"captured_at"`
+	CaptureAgeSeconds int64         `json:"capture_age_seconds"`
+	Assumptions       string        `json:"assumptions"`
+	Uncertainty       string        `json:"uncertainty"`
+	CanonicalPath     *string       `json:"canonical_path,omitempty"`
+}
+
+type AvailabilityExportRecord struct {
+	MetricAvailabilityId string        `json:"metric_availability_id"`
+	ProfileId            string        `json:"profile_id"`
+	ProfileAlias         string        `json:"profile_alias"`
+	ProjectId            string        `json:"project_id"`
+	ProjectAlias         string        `json:"project_alias"`
+	ProjectBasename      string        `json:"project_basename"`
+	Metric               HistoryMetric `json:"metric"`
+	State                string        `json:"state"`
+	Reason               string        `json:"reason"`
+	CheckedAt            string        `json:"checked_at"`
+	Source               string        `json:"source"`
+	SourceVersion        string        `json:"source_version"`
+	Provenance           string        `json:"provenance"`
+	Freshness            string        `json:"freshness"`
+	CaptureAgeSeconds    int64         `json:"capture_age_seconds"`
+	LoginIdentity        string        `json:"login_identity"`
+	Workspace            string        `json:"workspace"`
+	CanonicalPath        *string       `json:"canonical_path,omitempty"`
+}
+
+type AnalyticsExportRecords struct {
+	Usage        *[]UsageExportRecord        `json:"usage,omitempty"`
+	Availability *[]AvailabilityExportRecord `json:"availability,omitempty"`
+	Aggregates   *[]HistoryAggregate         `json:"aggregates,omitempty"`
+	Activity     *[]ActivityExportRecord     `json:"activity,omitempty"`
+}
+
+type AnalyticsExportResult struct {
+	SchemaVersion string                          `json:"schema_version"`
+	Filters       AnalyticsExportRequest          `json:"filters"`
+	Preview       []AnalyticsExportDatasetPreview `json:"preview"`
+	Records       AnalyticsExportRecords          `json:"records"`
+}
+
+type ActivityExportRecord struct {
+	RecordType      string              `json:"record_type"`
+	Id              string              `json:"id"`
+	SourceSessionId *string             `json:"source_session_id,omitempty"`
+	ProfileId       string              `json:"profile_id"`
+	ProfileAlias    string              `json:"profile_alias"`
+	ProjectId       *string             `json:"project_id,omitempty"`
+	ProjectAlias    *string             `json:"project_alias,omitempty"`
+	ProjectBasename *string             `json:"project_basename,omitempty"`
+	Source          string              `json:"source"`
+	SourceVersion   *string             `json:"source_version,omitempty"`
+	Provenance      string              `json:"provenance"`
+	StartedAt       string              `json:"started_at"`
+	LastObservedAt  string              `json:"last_observed_at"`
+	Lifecycle       *string             `json:"lifecycle,omitempty"`
+	ExitStatus      *int64              `json:"exit_status,omitempty"`
+	Model           *string             `json:"model,omitempty"`
+	TokensUsed      *int64              `json:"tokens_used,omitempty"`
+	Correlation     ActivityCorrelation `json:"correlation"`
+	CanonicalPath   *string             `json:"canonical_path,omitempty"`
+}
+
+type ActivityCorrelation struct {
+	State           string  `json:"state"`
+	ManagedLaunchId *string `json:"managed_launch_id,omitempty"`
+	EvidenceType    *string `json:"evidence_type,omitempty"`
+	Confidence      *string `json:"confidence,omitempty"`
 }
 
 type ActivityRecord struct {
-	RecordType                 string `json:"record_type"`
-	Id                         string `json:"id"`
-	SourceSessionId            string `json:"source_session_id"`
-	ProfileId                  string `json:"profile_id"`
-	ProfileAlias               string `json:"profile_alias"`
-	ProjectId                  string `json:"project_id"`
-	ProjectAlias               string `json:"project_alias"`
-	ProjectBasename            string `json:"project_basename"`
-	Source                     string `json:"source"`
-	SourceVersion              string `json:"source_version"`
-	Provenance                 string `json:"provenance"`
-	StartedAt                  string `json:"started_at"`
-	LastObservedAt             string `json:"last_observed_at"`
-	Lifecycle                  string `json:"lifecycle"`
-	ExitStatus                 string `json:"exit_status"`
-	Model                      string `json:"model"`
-	TokensUsed                 string `json:"tokens_used"`
-	CorrelationState           string `json:"correlation_state"`
-	CorrelationManagedLaunchId string `json:"correlation_managed_launch_id"`
-	CorrelationEvidenceType    string `json:"correlation_evidence_type"`
-	CorrelationConfidence      string `json:"correlation_confidence"`
+	RecordType                 string  `json:"record_type"`
+	Id                         string  `json:"id"`
+	SourceSessionId            string  `json:"source_session_id"`
+	ProfileId                  string  `json:"profile_id"`
+	ProfileAlias               string  `json:"profile_alias"`
+	ProjectId                  string  `json:"project_id"`
+	ProjectAlias               string  `json:"project_alias"`
+	ProjectBasename            string  `json:"project_basename"`
+	Source                     string  `json:"source"`
+	SourceVersion              string  `json:"source_version"`
+	Provenance                 string  `json:"provenance"`
+	StartedAt                  string  `json:"started_at"`
+	LastObservedAt             string  `json:"last_observed_at"`
+	Lifecycle                  string  `json:"lifecycle"`
+	ExitStatus                 string  `json:"exit_status"`
+	Model                      string  `json:"model"`
+	TokensUsed                 string  `json:"tokens_used"`
+	CorrelationState           string  `json:"correlation_state"`
+	CorrelationManagedLaunchId string  `json:"correlation_managed_launch_id"`
+	CorrelationEvidenceType    string  `json:"correlation_evidence_type"`
+	CorrelationConfidence      string  `json:"correlation_confidence"`
+	CanonicalPath              *string `json:"canonical_path,omitempty"`
 }
 
 type ActivityResponse struct {

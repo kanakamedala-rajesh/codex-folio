@@ -288,6 +288,27 @@ packs, quarantine, vault keys, projects, or checkpoints outside the explicit
 checkpoint scope. Aggregate listing returns at most 1000 buckets; narrow dates
 or profile scope for larger histories.
 
+## Analytics export
+
+Preview or write normalized usage, availability, aggregate, or activity data
+through the same generated analytics-history contract:
+
+```sh
+codex-folio analytics export --format json --datasets usage,availability,activity --dry-run --json
+codex-folio analytics export --format json --datasets usage,aggregates --output analytics.json
+codex-folio analytics export --format csv --datasets activity --output activity.csv
+```
+
+The default scope is the Selected Profile with all projects and dates. Combined
+Identity View requires `--scope combined_identity --profile '*'`; CSV accepts
+one dataset. Add `--project`, `--from`, or `--to` to narrow the result. The
+preview reports the exact fields and record counts. Exports contain normalized
+evidence only and use Project Alias and basename by default; `--include-paths`
+explicitly adds canonical project paths. Identity Home paths, credentials, raw
+source responses, Codex content, commands, tool payloads, diffs, transcripts,
+vault material, and diagnostics are never export fields. Destination creation
+is exclusive: an existing file is preserved and the export fails safely.
+
 ## Current limitations
 
 Phase 0 proves a native development build on the host, compile-only builds for

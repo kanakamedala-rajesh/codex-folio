@@ -76,6 +76,18 @@ func Registry() []Metric {
 	return append([]Metric(nil), registry...)
 }
 
+func FreshnessAt(capturedAt, now time.Time) (string, int64, error) {
+	age := now.UTC().Sub(capturedAt.UTC())
+	if age < 0 {
+		return "", 0, ErrSourceInvalid
+	}
+	freshness := FreshnessFresh
+	if age > freshnessLimit {
+		freshness = FreshnessStale
+	}
+	return freshness, int64(age / time.Second), nil
+}
+
 type Observation struct {
 	ID                string     `json:"observation_id,omitempty"`
 	Metric            Metric     `json:"metric"`
@@ -137,6 +149,51 @@ type DashboardView struct {
 
 func Combine(snapshots []Snapshot, eligibleProfileCount int) DashboardView {
 	return combineWithRegistry(snapshots, eligibleProfileCount, Registry())
+}
+
+// DeduplicateCombinedEvidence applies the same stable identity/workspace and
+// overlapping-window rule used by Combined Identity View while retaining
+// per-profile limits and conflicting facts as separate evidence.
+func DeduplicateCombinedEvidence(snapshots []Snapshot) []Snapshot {
+	metricsByKey := make(map[string]Metric, len(registry))
+	for _, metric := range Registry() {
+		metricsByKey[metric.Key] = metric
+	}
+	type evidence struct {
+		observation Observation
+		scopeKey    string
+	}
+	seen := make(map[string][]evidence)
+	result := make([]Snapshot, len(snapshots))
+	for index, snapshot := range snapshots {
+		result[index] = snapshot
+		result[index].Observations = nil
+		for _, observation := range snapshot.Observations {
+			metric, ok := metricsByKey[observation.Metric.Key]
+			if !ok || metric != observation.Metric || metric.Aggregation != AggregationSum || metric.ValueKind == "percentage" {
+				result[index].Observations = append(result[index].Observations, observation)
+				continue
+			}
+			scopeKey := "profile:" + snapshot.ProfileID
+			if metric.Scope == "login_identity" && snapshot.LoginIdentity != "" {
+				scopeKey = "login_identity:" + snapshot.LoginIdentity
+			} else if metric.Scope == "workspace" && snapshot.Workspace != "" {
+				scopeKey = "workspace:" + snapshot.Workspace
+			}
+			duplicate := false
+			for _, prior := range seen[metric.Key] {
+				if prior.scopeKey == scopeKey && prior.observation.Value == observation.Value && windowsOverlap(prior.observation, observation) {
+					duplicate = true
+					break
+				}
+			}
+			seen[metric.Key] = append(seen[metric.Key], evidence{observation: observation, scopeKey: scopeKey})
+			if !duplicate {
+				result[index].Observations = append(result[index].Observations, observation)
+			}
+		}
+	}
+	return result
 }
 
 func combineWithRegistry(snapshots []Snapshot, eligibleProfileCount int, metrics []Metric) DashboardView {
@@ -420,15 +477,13 @@ func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
 		if item.CapturedAt.IsZero() {
 			item.CapturedAt = item.ObservedAt
 		}
-		age := now.Sub(item.CapturedAt)
-		if age < 0 || (item.Provenance == ProvenanceEstimated && item.Assumptions == "" && item.Uncertainty == "") {
+		freshness, age, err := FreshnessAt(item.CapturedAt, now)
+		if err != nil || (item.Provenance == ProvenanceEstimated && item.Assumptions == "" && item.Uncertainty == "") {
 			return ErrSourceInvalid
 		}
-		item.CaptureAgeSeconds = int64(age / time.Second)
-		item.Freshness = FreshnessFresh
-		if age > freshnessLimit {
-			item.Freshness = FreshnessStale
-		} else {
+		item.CaptureAgeSeconds = age
+		item.Freshness = freshness
+		if freshness == FreshnessFresh {
 			fresh[item.Metric.Key] = true
 		}
 		if item.Source == "" {

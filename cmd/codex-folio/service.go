@@ -359,7 +359,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -773,6 +773,8 @@ func serviceRemediation(code string) string {
 		return "purge requires --confirm with the exact token from the scoped preview"
 	case apperrors.AnalyticsScopeTooLarge:
 		return "purge exceeds the atomic record limit; narrow the date, profile, project, or record classes"
+	case apperrors.AnalyticsExportFailed:
+		return "analytics export could not be written; the destination was preserved"
 	case apperrors.ProjectIdentityNotFound:
 		return "the Project Identity was not found"
 	case apperrors.ProjectPathInvalid:

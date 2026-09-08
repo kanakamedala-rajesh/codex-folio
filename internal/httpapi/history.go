@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/usage"
@@ -76,10 +77,11 @@ func (server *Server) history(response http.ResponseWriter, request *http.Reques
 		Retention  *usage.RetentionResult    `json:"retention,omitempty"`
 		Purge      *usage.PurgeResult        `json:"purge,omitempty"`
 		Aggregates *[]usage.HistoryAggregate `json:"aggregates,omitempty"`
+		Export     *activity.ExportResult    `json:"export,omitempty"`
 	}
 	switch input.Action {
 	case "retention":
-		if input.Scope != nil || input.Confirmation != nil || (input.Setting != nil && *input.Setting == "") {
+		if input.Scope != nil || input.Confirmation != nil || input.Export != nil || (input.Setting != nil && *input.Setting == "") {
 			err = usage.ErrInvalid
 			break
 		}
@@ -90,7 +92,7 @@ func (server *Server) history(response http.ResponseWriter, request *http.Reques
 		value, requestErr := server.historyService.Retention(request.Context(), setting, input.Run != nil && *input.Run)
 		result.Retention, err = &value, requestErr
 	case "purge", "aggregates":
-		if input.Scope == nil || input.Setting != nil || input.Run != nil || (input.Confirmation != nil && (input.Action != "purge" || *input.Confirmation == "")) {
+		if input.Scope == nil || input.Setting != nil || input.Run != nil || input.Export != nil || (input.Confirmation != nil && (input.Action != "purge" || *input.Confirmation == "")) {
 			err = usage.ErrInvalid
 			break
 		}
@@ -110,6 +112,21 @@ func (server *Server) history(response http.ResponseWriter, request *http.Reques
 			value, requestErr := server.historyService.Aggregates(request.Context(), scope)
 			result.Aggregates, err = &value, requestErr
 		}
+	case "export":
+		if server.exportService == nil {
+			server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+			return
+		}
+		if input.Export == nil || input.Scope != nil || input.Setting != nil || input.Run != nil || input.Confirmation != nil {
+			err = usage.ErrInvalid
+			break
+		}
+		value, requestErr := server.exportService.Export(request.Context(), activity.ExportRequest{
+			Format: input.Export.Format, Datasets: input.Export.Datasets, Scope: input.Export.Scope,
+			ProfileID: input.Export.ProfileId, ProjectID: input.Export.ProjectId, From: input.Export.From,
+			To: input.Export.To, IncludePaths: input.Export.IncludePaths,
+		})
+		result.Export, err = &value, requestErr
 	default:
 		err = usage.ErrInvalid
 	}

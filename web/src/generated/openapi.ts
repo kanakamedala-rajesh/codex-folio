@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "641014443ed1e23d36dbe87b81fa3338396a2ebec773ae74ec9134b5d3a705fd" as const;
+  "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -19,12 +19,14 @@ export interface HistoryRequest {
   run?: boolean;
   scope?: HistoryScope;
   confirmation?: string;
+  export?: AnalyticsExportRequest;
 }
 
 export interface HistoryResponse {
   retention?: RetentionResult;
   purge?: PurgeResult;
   aggregates?: HistoryAggregate[];
+  export?: AnalyticsExportResult;
 }
 
 export interface RetentionResult {
@@ -77,6 +79,121 @@ export interface HistoryAggregate {
   first_captured_at: string;
   last_captured_at: string;
   samples: number;
+  profile_alias?: string;
+  project_alias?: string;
+  project_basename?: string;
+  login_identity?: string;
+  workspace?: string;
+  freshness?: string;
+  canonical_path?: string;
+}
+
+export interface AnalyticsExportRequest {
+  format: string;
+  datasets: string[];
+  scope: string;
+  profile_id: string;
+  project_id: string;
+  from: string;
+  to: string;
+  include_paths: boolean;
+}
+
+export interface AnalyticsExportDatasetPreview {
+  dataset: string;
+  fields: string[];
+  record_count: number;
+}
+
+export interface UsageExportRecord {
+  observation_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  metric: HistoryMetric;
+  value: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  freshness: string;
+  availability: string;
+  login_identity: string;
+  workspace: string;
+  window_start: string;
+  window_end: string;
+  window_timezone: string;
+  observed_at: string;
+  captured_at: string;
+  capture_age_seconds: number;
+  assumptions: string;
+  uncertainty: string;
+  canonical_path?: string;
+}
+
+export interface AvailabilityExportRecord {
+  metric_availability_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  metric: HistoryMetric;
+  state: string;
+  reason: string;
+  checked_at: string;
+  source: string;
+  source_version: string;
+  provenance: string;
+  freshness: string;
+  capture_age_seconds: number;
+  login_identity: string;
+  workspace: string;
+  canonical_path?: string;
+}
+
+export interface AnalyticsExportRecords {
+  usage?: UsageExportRecord[];
+  availability?: AvailabilityExportRecord[];
+  aggregates?: HistoryAggregate[];
+  activity?: ActivityExportRecord[];
+}
+
+export interface AnalyticsExportResult {
+  schema_version: string;
+  filters: AnalyticsExportRequest;
+  preview: AnalyticsExportDatasetPreview[];
+  records: AnalyticsExportRecords;
+}
+
+export interface ActivityExportRecord {
+  record_type: string;
+  id: string;
+  source_session_id?: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id?: string;
+  project_alias?: string;
+  project_basename?: string;
+  source: string;
+  source_version?: string;
+  provenance: string;
+  started_at: string;
+  last_observed_at: string;
+  lifecycle?: string;
+  exit_status?: number;
+  model?: string;
+  tokens_used?: number;
+  correlation: ActivityCorrelation;
+  canonical_path?: string;
+}
+
+export interface ActivityCorrelation {
+  state: string;
+  managed_launch_id?: string;
+  evidence_type?: string;
+  confidence?: string;
 }
 
 export interface ActivityRecord {
@@ -101,6 +218,7 @@ export interface ActivityRecord {
   correlation_managed_launch_id: string;
   correlation_evidence_type: string;
   correlation_confidence: string;
+  canonical_path?: string;
 }
 
 export interface ActivityResponse {

@@ -96,6 +96,10 @@ func aggregateScopeAAD(id string) []byte {
 }
 
 func (store *Store) ListUsageAggregates(ctx context.Context, scope usage.HistoryScope) ([]usage.HistoryAggregate, error) {
+	return store.listUsageAggregates(ctx, scope, true)
+}
+
+func (store *Store) listUsageAggregates(ctx context.Context, scope usage.HistoryScope, limited bool) ([]usage.HistoryAggregate, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, apperrors.New(apperrors.AnalyticsRequestInvalid, err)
 	}
@@ -103,12 +107,16 @@ func (store *Store) ListUsageAggregates(ctx context.Context, scope usage.History
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	where, args := historyWhere(scope, "g.profile_id", "g.project_identity_id", "g.bucket_start", "g.bucket_end", true)
-	rows, err := store.db.QueryContext(ctx, `SELECT g.aggregate_id, g.profile_id, COALESCE(g.project_identity_id, ''),
+	query := `SELECT g.aggregate_id, g.profile_id, COALESCE(g.project_identity_id, ''),
  g.metric_key, g.value, g.unit, m.value_kind, m.source_class, m.scope, m.aggregation,
  g.source, g.source_version, g.provenance_label, g.availability, g.assumptions, g.uncertainty,
  g.bucket_kind, g.bucket_start, g.bucket_end, g.timezone, g.first_observed_at, g.last_observed_at,
- g.first_captured_at, g.last_captured_at, g.samples, g.source_scope_ciphertext
- FROM usage_aggregates g JOIN usage_metrics m ON m.metric_key = g.metric_key WHERE `+where+` ORDER BY g.bucket_start DESC, g.aggregate_id LIMIT 1000`, args...)
+	 g.first_captured_at, g.last_captured_at, g.samples, g.source_scope_ciphertext
+	 FROM usage_aggregates g JOIN usage_metrics m ON m.metric_key = g.metric_key WHERE ` + where + ` ORDER BY g.bucket_start DESC, g.aggregate_id`
+	if limited {
+		query += " LIMIT 1000"
+	}
+	rows, err := store.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, err)
 	}
