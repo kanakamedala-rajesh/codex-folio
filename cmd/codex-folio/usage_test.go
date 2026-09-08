@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
+	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -74,6 +76,102 @@ func TestWriteAnalyticsPreservesPerProfileUsageAndActivityEvidence(t *testing.T)
 			t.Fatalf("analytics output = %q, want %q", output.String(), want)
 		}
 	}
+}
+
+func TestComposedDocumentedProviderRefreshMeetsEngineeringBudget(t *testing.T) {
+	ctx := context.Background()
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	stateStore, err := store.OpenWithVault(paths.DatabaseFile, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	supported, err := os.ReadFile(filepath.Join("..", "..", "internal", "adapters", "codex", "testdata", "app-server", "v2", "supported.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	collector := codexadapter.NewUsageCollectorWithCommandRunner(func(_ context.Context, _ string, _ []string, _ []string, stdin io.Reader, stdout, _ io.Writer) error {
+		input, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		requests++
+		if bytes.Contains(input, []byte(`"method":"account/read"`)) {
+			_, err = io.WriteString(stdout, `{"id":2,"result":{"account":{"type":"chatgpt"}}}`)
+		} else {
+			_, err = stdout.Write(supported)
+		}
+		return err
+	})
+	clock := &composedUsageClock{now: time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)}
+	workflow, err := usage.NewService(stateStore, collector, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandService := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}, store: stateStore}
+	server, err := httpapi.NewServer(httpapi.Options{Usage: commandService, CommandToken: "exit-gate-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doer := &historyBrowserDoer{composedBrowserDoer: composedBrowserDoer{client: &http.Client{Jar: jar}, origin: server.Origin()}}
+	generated := httpapi.NewClient(server.Origin(), doer)
+	bootstrapURL, err := url.Parse(server.BootstrapURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, _, err := generated.ExchangeBootstrap(ctx, httpapi.BootstrapRequest{BootstrapToken: bootstrapURL.Query().Get("bootstrap")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doer.csrf = bootstrap.CSRFToken
+
+	trigger := usage.TriggerDashboardOpen
+	started := time.Now()
+	first, _, err := generated.RefreshUsage(ctx, httpapi.UsageRefreshRequest{Alias: "Work", TriggerReason: &trigger})
+	firstElapsed := time.Since(started)
+	if err != nil || first.Status != usage.AvailabilityPartial || len(first.Observations) != 2 || first.Observations[0].Value != 25 {
+		t.Fatalf("documented provider refresh = %#v/%v", first, err)
+	}
+	if firstElapsed >= 10*time.Second {
+		t.Fatalf("normal fixture-driven provider refresh exceeded engineering budget: %s", firstElapsed)
+	}
+	encoded, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prohibited := range []string{"must-not-survive", "futurePromptField", "cookie"} {
+		if bytes.Contains(encoded, []byte(prohibited)) {
+			t.Fatalf("provider refresh retained unknown source field %q: %s", prohibited, encoded)
+		}
+	}
+
+	command := httpapi.NewCommandClient(server.Origin(), "exit-gate-token", nil)
+	repeatedStarted := time.Now()
+	for attempt := 1; attempt < 25; attempt++ {
+		clock.now = clock.now.Add(time.Second)
+		if result, err := command.RefreshUsage(ctx, "Work"); err != nil || len(result.Observations) != 2 {
+			t.Fatalf("repeated refresh %d = %#v/%v", attempt+1, result, err)
+		}
+	}
+	repeatedElapsed := time.Since(repeatedStarted)
+	latest, err := command.LatestUsage(ctx, "Work")
+	if err != nil || latest.TriggerReason != usage.TriggerExplicitRefresh || len(latest.Observations) != 2 || requests != 50 {
+		t.Fatalf("repeated persisted refreshes = %#v, requests=%d, error=%v", latest, requests, err)
+	}
+	t.Logf("documented-source refresh=%s; 25 real SQLite/vault writes=%s (local fake source, not a production-provider claim)", firstElapsed, repeatedElapsed)
 }
 
 func TestComposedUsageFixturesPreserveHonestEvidenceAcrossRestart(t *testing.T) {
