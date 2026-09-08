@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -19,6 +20,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/usage"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
@@ -145,7 +147,7 @@ func TestLaunchCLIUsesRunningServiceForLaunchLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newConfigurationPackService() error = %v", err)
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, &cliProfileAuthenticator{})
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, &cliProfileAuthenticator{}, nil, nil)
 	if err != nil {
 		t.Fatalf("newLaunchCommandService() error = %v", err)
 	}
@@ -190,6 +192,69 @@ func TestLaunchCLIUsesRunningServiceForLaunchLifecycle(t *testing.T) {
 	}
 	if record.State != launch.StateExited || record.ProcessID != 7890 || record.ExitStatus == nil || *record.ExitStatus != 23 {
 		t.Fatalf("record = %#v, want service-owned exited lifecycle", record)
+	}
+}
+
+func TestLaunchLifecycleCollectsBeforePlanAndAfterExitWithoutChangingExitFacts(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &composedUsageClock{now: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}
+	collector := &composedUsageCollector{fixtures: []composedUsageFixture{
+		{snapshot: usage.NewUnavailableSnapshot("0.153.4", clock.now, usage.AvailabilityUnsupported, usage.ReasonUnsupported)},
+		{err: apperrors.New(apperrors.UsageCollectionFailed, usage.ErrCollectionFailed)},
+	}}
+	workflow, err := usage.NewService(stateStore, collector, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageCommands := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}, store: stateStore}
+	launches, err := newLaunchCommandService(stateStore, nil, nil, nil, usageCommands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := launches.Prepare(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root}, "0.153.4")
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preLaunch, err := stateStore.LatestUsageSnapshot(context.Background(), target)
+	if err != nil || preLaunch.TriggerReason != usage.TriggerPreLaunch {
+		t.Fatalf("pre-launch snapshot = %#v/%v", preLaunch, err)
+	}
+	if err := launches.MarkStarted(context.Background(), plan.LeaseID, 7777); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(time.Minute)
+	if err := launches.MarkExited(context.Background(), plan.LeaseID, 23, filepath.Join(paths.Root, "codex"), "0.153.4"); err != nil {
+		t.Fatalf("MarkExited() error = %v", err)
+	}
+	if len(collector.requests) != 2 || collector.requests[0].Executable != filepath.Join(paths.Root, "codex") || collector.requests[1].Executable != collector.requests[0].Executable || collector.requests[1].SourceVersion != "0.153.4" || !collector.deadlines[0] || !collector.deadlines[1] {
+		t.Fatalf("lifecycle collection candidates/deadlines = %#v/%v", collector.requests, collector.deadlines)
+	}
+
+	databasePath := stateStore.Path()
+	if err := stateStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err = store.OpenWithOptions(store.Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	postExit, err := stateStore.LatestUsageSnapshot(context.Background(), target)
+	if err != nil || postExit.TriggerReason != usage.TriggerPostExit || postExit.Status != usage.AvailabilityTemporarilyUnavailable {
+		t.Fatalf("post-exit snapshot = %#v/%v", postExit, err)
+	}
+	record, err := stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
+	if err != nil || record.State != launch.StateExited || record.ExitStatus == nil || *record.ExitStatus != 23 {
+		t.Fatalf("Managed Launch = %#v/%v", record, err)
 	}
 }
 

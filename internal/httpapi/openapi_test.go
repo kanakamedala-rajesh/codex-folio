@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -102,6 +103,79 @@ func TestGeneratedClientBuildsBootstrapExchangeRequest(t *testing.T) {
 	}
 	if input.BootstrapToken != "bootstrap-value" {
 		t.Fatalf("bootstrap request token = %q, want bootstrap-value", input.BootstrapToken)
+	}
+}
+
+func TestGeneratedClientBuildsUsageRefreshRequest(t *testing.T) {
+	t.Parallel()
+	fixture := []byte(`{"snapshot_id":"snapshot-1","profile_id":"profile-1","alias":"Work","source":"codex_app_server","source_version":"0.153.4","captured_at":"2026-09-06T12:00:00Z","observations":[],"availability":[]}`)
+	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
+	triggerReason := "dashboard_refresh"
+	got, response, err := NewClient("http://127.0.0.1", httpClient).RefreshUsage(context.Background(), UsageRefreshRequest{Alias: "Work", TriggerReason: &triggerReason})
+	if err != nil {
+		t.Fatalf("RefreshUsage() error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || got.SnapshotId != "snapshot-1" {
+		t.Fatalf("RefreshUsage() = %#v, status %d", got, response.StatusCode)
+	}
+	if httpClient.request.Method != http.MethodPost || httpClient.request.URL.Path != UsageRefreshPath {
+		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.Path)
+	}
+	body, err := io.ReadAll(httpClient.request.Body)
+	if err != nil || string(body) != `{"alias":"Work","trigger_reason":"dashboard_refresh"}` {
+		t.Fatalf("request body = %q/%v", body, err)
+	}
+}
+
+func TestGeneratedClientBuildsLatestUsageRequest(t *testing.T) {
+	t.Parallel()
+	fixture := []byte(`{"snapshot_id":"snapshot-1","profile_id":"profile-1","alias":"Work","source":"codex_app_server","source_version":"0.153.4","captured_at":"2026-09-06T12:00:00Z","status":"partial","observations":[],"availability":[]}`)
+	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
+	got, response, err := NewClient("http://127.0.0.1", httpClient).GetLatestUsage(context.Background(), "Work")
+	if err != nil || response.StatusCode != http.StatusOK || got.SnapshotId != "snapshot-1" {
+		t.Fatalf("GetLatestUsage() = %#v/%v", got, err)
+	}
+	if httpClient.request.Method != http.MethodGet || httpClient.request.URL.Path != UsageLatestPath || httpClient.request.URL.Query().Get("alias") != "Work" {
+		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.String())
+	}
+}
+
+func TestGeneratedClientBuildsAnalyticsRequest(t *testing.T) {
+	t.Parallel()
+	fixture := []byte(`{"scope":"combined_identity","eligible_profile_count":2,"profiles":[],"aggregates":[],"ambiguities":[],"activity":[]}`)
+	httpClient := &recordingHTTPDoer{response: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(fixture))}}
+	got, response, err := NewClient("http://127.0.0.1", httpClient).GetAnalytics(context.Background(), "combined_identity")
+	if err != nil || response.StatusCode != http.StatusOK || got.Scope != "combined_identity" || got.EligibleProfileCount != 2 {
+		t.Fatalf("GetAnalytics() = %#v/%v", got, err)
+	}
+	if httpClient.request.Method != http.MethodGet || httpClient.request.URL.Path != AnalyticsPath || httpClient.request.URL.Query().Get("scope") != "combined_identity" {
+		t.Fatalf("request = %s %s", httpClient.request.Method, httpClient.request.URL.String())
+	}
+}
+
+func TestGeneratedUsageClientExposesSafeError(t *testing.T) {
+	t.Parallel()
+	httpClient := &recordingHTTPDoer{response: &http.Response{
+		StatusCode: http.StatusConflict,
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"code":"CF_USAGE_PROFILE_UNAVAILABLE","message":"Usage is unavailable for this profile."}`))),
+	}}
+	_, _, err := NewClient("http://127.0.0.1", httpClient).RefreshUsage(context.Background(), UsageRefreshRequest{Alias: "Work"})
+	var failure UsageErrorResponse
+	if !errors.As(err, &failure) || failure.Code != "CF_USAGE_PROFILE_UNAVAILABLE" || failure.Message != "Usage is unavailable for this profile." {
+		t.Fatalf("RefreshUsage() error = %#v", err)
+	}
+}
+
+func TestGeneratedUsageErrorExcludesSnapshotEvidence(t *testing.T) {
+	t.Parallel()
+	payload, err := json.Marshal(UsageErrorResponse{Code: "CF_USAGE_COLLECTION_FAILED", Message: "Usage refresh failed."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prohibited := range []string{"snapshot", "profile", "alias", "value", "observations"} {
+		if bytes.Contains(payload, []byte(prohibited)) {
+			t.Fatalf("error payload %s contains %q", payload, prohibited)
+		}
 	}
 }
 

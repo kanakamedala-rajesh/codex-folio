@@ -64,6 +64,14 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runSelect(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "configuration-pack":
 		return runConfigurationPack(args[1:], os.Stdin, stdout, stderr, resolvePaths)
+	case "usage":
+		return runUsage(args[1:], stdout, stderr, resolvePaths)
+	case "project":
+		return runProject(args[1:], stdout, stderr, resolvePaths)
+	case "activity":
+		return runActivity(args[1:], stdout, stderr, resolvePaths)
+	case "analytics":
+		return runAnalyticsWithDependencies(args[1:], os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink())
 	case "shell":
 		return runShell(args[1:], stdout, stderr, resolvePaths, metadata.Version)
 	case "help", "--help", "-h":
@@ -119,6 +127,11 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
 	fmt.Fprintln(stdout, "  codex-folio select ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio configuration-pack {create|approve|assign|override|preview|project|promotion-preview|promote} ...")
+	fmt.Fprintln(stdout, "  codex-folio usage refresh ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio usage show [--combined] [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio project {resolve|list|edit|reconcile} ...")
+	fmt.Fprintln(stdout, "  codex-folio activity {refresh ALIAS|list [--profile ALIAS] [--project ID]} ...")
+	fmt.Fprintln(stdout, "  codex-folio analytics {retention|purge|aggregates} ...")
 	fmt.Fprintln(stdout, "  codex-folio shell {generate|remove} [--shell bash|zsh|powershell] [--wrapper] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

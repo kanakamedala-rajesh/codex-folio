@@ -21,10 +21,12 @@ const (
 )
 
 type PrepareRequest struct {
-	Alias            string
-	Executable       string
-	WorkingDirectory string
-	Arguments        []string
+	Alias             string
+	Executable        string
+	WorkingDirectory  string
+	Arguments         []string
+	ProjectID         string
+	ExpectedSessionID string
 }
 
 type Plan struct {
@@ -36,14 +38,15 @@ type Plan struct {
 }
 
 type ManagedLaunch struct {
-	ID         string     `json:"id"`
-	ProfileID  string     `json:"profile_id"`
-	LeaseID    string     `json:"lease_id"`
-	State      State      `json:"state"`
-	ProcessID  int        `json:"process_id,omitempty"`
-	ExitStatus *int       `json:"exit_status,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	ID           string     `json:"id"`
+	ProfileID    string     `json:"profile_id"`
+	ProfileAlias string     `json:"profile_alias,omitempty"`
+	LeaseID      string     `json:"lease_id"`
+	State        State      `json:"state"`
+	ProcessID    int        `json:"process_id,omitempty"`
+	ExitStatus   *int       `json:"exit_status,omitempty"`
+	StartedAt    time.Time  `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
 }
 
 type ProcessInspector interface {
@@ -90,7 +93,32 @@ func (workflow *Workflow) Prepare(ctx context.Context, request PrepareRequest) (
 		return Plan{}, err
 	}
 	request.Arguments = append([]string(nil), request.Arguments...)
+	request.ExpectedSessionID = ResumeSessionID(request.Arguments)
 	return workflow.repository.PrepareLaunch(contextOrBackground(ctx), request)
+}
+
+// ResumeSessionID returns the only stable session identifier available before
+// a transparent foreground launch. Other launches remain uncorrelated.
+func ResumeSessionID(arguments []string) string {
+	if len(arguments) < 2 || arguments[0] != "resume" || !validSessionID(arguments[1]) {
+		return ""
+	}
+	return strings.ToLower(arguments[1])
+}
+
+func validSessionID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (workflow *Workflow) Reconcile(ctx context.Context, inspector ProcessInspector) error {

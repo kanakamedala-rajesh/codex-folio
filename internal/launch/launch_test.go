@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,20 @@ func TestWorkflowPrepareRejectsRelativeExecutableAndWorkingDirectory(t *testing.
 				t.Fatalf("Prepare() error = %v, want ErrPlanInvalid", err)
 			}
 		})
+	}
+}
+
+func TestResumeSessionIDReturnsOnlyAnExplicitStableIdentifier(t *testing.T) {
+	const id = "018f4f70-6f77-7c3f-9b77-93aa087dfc4d"
+	if got := ResumeSessionID([]string{"resume", id}); got != id {
+		t.Fatalf("ResumeSessionID() = %q, want %q", got, id)
+	}
+	if got := ResumeSessionID([]string{"resume", strings.ToUpper(id), "continue the task"}); got != id {
+		t.Fatalf("ResumeSessionID() with prompt = %q, want %q", got, id)
+	}
+	for _, arguments := range [][]string{{"resume", "--last"}, {"resume"}, {"--model", "gpt-5"}, {"resume", "not-a-session"}} {
+		if got := ResumeSessionID(arguments); got != "" {
+			t.Fatalf("ResumeSessionID(%q) = %q, want no correlation identifier", arguments, got)
+		}
 	}
 }

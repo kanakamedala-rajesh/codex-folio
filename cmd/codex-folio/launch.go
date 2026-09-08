@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
@@ -127,7 +128,7 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 			abandon()
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
 		}
-		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus}); err != nil {
+		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version}); err != nil {
 			_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitStatus
@@ -171,6 +172,10 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 	}
 	defer func() { _ = stateStore.Close() }()
 	attachServiceDiagnosticStore(diagnosticSink, stateStore)
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	configurationPacks, err := newConfigurationPackService(stateStore)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -182,7 +187,11 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
 		}
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator)
+	usageCommands, err := newUsageCommandService(stateStore, nil)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator, projects, usageCommands)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -190,7 +199,7 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

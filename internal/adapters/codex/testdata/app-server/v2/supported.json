@@ -1,0 +1,1 @@
+{"id":3,"result":{"accountId":"workspace-123","rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":1788753600},"secondary":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":1789358400},"futurePromptField":"must-not-survive"},"futureTopLevel":{"cookie":"must-not-survive"}}}

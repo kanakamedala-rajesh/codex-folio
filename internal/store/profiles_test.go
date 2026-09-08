@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/usage"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
@@ -535,15 +537,19 @@ func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testi
 		t.Fatalf("PromotePendingProfile() error = %v", err)
 	}
 	for _, statement := range []string{
-		`INSERT INTO usage_metrics (metric_key, unit, value_kind, created_at) VALUES ('requests', 'count', 'count', '2026-09-06T00:00:00Z')`,
-		`INSERT INTO metric_provenance (provenance_id, source, captured_at, freshness, availability) VALUES ('source-1', 'derived', '2026-09-06T00:00:00Z', 'fresh', 'available')`,
-		`INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id) VALUES ('availability-1', 'profile-external', 'requests', 'available', '2026-09-06T00:00:00Z', 'source-1')`,
-		`INSERT INTO usage_observations (observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, observed_at) VALUES ('observation-1', 'profile-external', 'requests', 'source-1', 'availability-1', 1, 'count', '2026-09-06T00:00:00Z')`,
-		`INSERT INTO alerts (alert_id, profile_id, category, severity, state, created_at) VALUES ('alert-1', 'profile-external', 'capacity', 'warning', 'open', '2026-09-06T00:00:00Z')`,
+		`INSERT INTO usage_metrics (metric_key, unit, value_kind, created_at) VALUES ('requests', 'count', 'count', '2026-09-01T00:00:00Z')`,
+		`INSERT INTO metric_provenance (provenance_id, source, captured_at, freshness, availability) VALUES ('source-1', 'codex_app_server', '2026-09-01T00:00:00Z', 'fresh', 'available')`,
+		`INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason) VALUES ('snapshot-1', 'profile-external', 'codex_app_server', '', '2026-09-01T00:00:00Z', 'available', 'explicit_refresh')`,
+		`INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id) VALUES ('availability-1', 'profile-external', 'requests', 'available', '2026-09-01T00:00:00Z', 'source-1')`,
+		`INSERT INTO usage_observations (observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, observed_at, snapshot_id) VALUES ('observation-1', 'profile-external', 'requests', 'source-1', 'availability-1', 1, 'count', '2026-09-01T00:00:00Z', 'snapshot-1')`,
+		`INSERT INTO alerts (alert_id, profile_id, category, severity, state, created_at) VALUES ('alert-1', 'profile-external', 'capacity', 'warning', 'open', '2026-09-01T00:00:00Z')`,
 	} {
 		if _, err := stateStore.db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("seed analytics: %v", err)
 		}
+	}
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{{SourceSessionID: "session-1", ProfileID: "profile-external", ProfileAlias: "External", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), LastObservedAt: time.Date(2026, 9, 1, 0, 1, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
 	}
 	record, err := stateStore.BeginProfileRemoval(ctx, "External", "")
 	if err != nil || record.Action != profile.RemovalDeregistered {
@@ -560,6 +566,14 @@ func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testi
 		if err := stateStore.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE profile_id = 'profile-external'`).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("preserved %s rows = %d, error = %v, want 1", table, count, err)
 		}
+	}
+	timeline, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(timeline) != 1 || timeline[0].ProfileID != "profile-external" || timeline[0].ProfileAlias != "profile-external" {
+		t.Fatalf("retained activity = %#v/%v", timeline, err)
+	}
+	exported, err := stateStore.ExportAnalytics(ctx, activity.ExportRequest{Format: "json", Datasets: []string{"usage"}, Scope: usage.ScopeSelectedProfile, ProfileID: "profile-external", ProjectID: "*", From: "all", To: "all"})
+	if err != nil || exported.Usage == nil || len(*exported.Usage) != 1 || (*exported.Usage)[0].ProfileAlias != "profile-external" {
+		t.Fatalf("retained usage export = %#v/%v", exported, err)
 	}
 }
 

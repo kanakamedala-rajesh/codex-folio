@@ -40,6 +40,21 @@ const (
 	ConfigurationPackAssignmentInvalid       = "CF_CONFIGPACK_ASSIGNMENT_INVALID"
 	ConfigurationPackProjectionFailed        = "CF_CONFIGPACK_PROJECTION_FAILED"
 	ConfigurationPackPromotionReviewRequired = "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED"
+	AnalyticsRequestInvalid                  = "CF_USAGE_ANALYTICS_REQUEST_INVALID"
+	AnalyticsConfirmationInvalid             = "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID"
+	AnalyticsScopeTooLarge                   = "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE"
+	AnalyticsExportFailed                    = "CF_USAGE_ANALYTICS_EXPORT_FAILED"
+	UsageRequestInvalid                      = "CF_USAGE_REQUEST_INVALID"
+	UsageProfileNotFound                     = "CF_USAGE_PROFILE_NOT_FOUND"
+	UsageProfileUnavailable                  = "CF_USAGE_PROFILE_UNAVAILABLE"
+	UsageCollectionFailed                    = "CF_USAGE_COLLECTION_FAILED"
+	UsageSourceInvalid                       = "CF_USAGE_SOURCE_INVALID"
+	ActivityRequestInvalid                   = "CF_ACTIVITY_REQUEST_INVALID"
+	ActivitySourceUnavailable                = "CF_ACTIVITY_SOURCE_UNAVAILABLE"
+	ProjectIdentityInvalid                   = "CF_ACTIVITY_PROJECT_IDENTITY_INVALID"
+	ProjectIdentityNotFound                  = "CF_ACTIVITY_PROJECT_IDENTITY_NOT_FOUND"
+	ProjectPathInvalid                       = "CF_ACTIVITY_PROJECT_PATH_INVALID"
+	ProjectPathCollision                     = "CF_ACTIVITY_PROJECT_PATH_COLLISION"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -149,6 +164,21 @@ func IsRegistered(code string) bool {
 		ConfigurationPackAssignmentInvalid,
 		ConfigurationPackProjectionFailed,
 		ConfigurationPackPromotionReviewRequired,
+		AnalyticsRequestInvalid,
+		AnalyticsConfirmationInvalid,
+		AnalyticsScopeTooLarge,
+		AnalyticsExportFailed,
+		UsageRequestInvalid,
+		UsageProfileNotFound,
+		UsageProfileUnavailable,
+		UsageCollectionFailed,
+		UsageSourceInvalid,
+		ActivityRequestInvalid,
+		ActivitySourceUnavailable,
+		ProjectIdentityInvalid,
+		ProjectIdentityNotFound,
+		ProjectPathInvalid,
+		ProjectPathCollision,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

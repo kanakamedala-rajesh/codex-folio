@@ -14,11 +14,17 @@ Triage uses the default five-label vocabulary. See `docs/agents/triage-labels.md
 
 This repository uses the single-context layout. See `docs/agents/domain.md`.
 
+### Agent handoff contract
+
+Before spawning a review, fixer, delivery, or milestone agent, read `docs/agents/review-contract.md` and supply its role-specific inputs. These four roles are leaf agents. Keep at most one writer on the ticket's files and freeze writers while review is running. The primary agent owns the two-round remediation budget and final verification.
+
 ### Verification
 
 `node scripts/verify.mjs` is the canonical repository verification workflow.
 
-Run it from a clean checkout with the pinned toolchains before claiming a change or milestone is complete. It installs the locked frontend dependencies, runs every Phase 0 check used by CI, and must leave tracked source unchanged.
+Use pinned toolchains. Before committing, run the checks required for the candidate and identify their exact working-tree content. A dirty candidate can be tested, but its HEAD alone does not identify the tested changes. The pre-commit review consumes this evidence; read-only reviewers do not run the writing verifier.
+
+After the reviewed candidate is committed, the primary agent must run the canonical verifier on that exact clean commit before final completion or delivery. It installs the locked frontend dependencies, runs every Phase 0 check used by CI, and must leave tracked source unchanged. Do not relabel a pre-commit run as verification of a later commit.
 
 See `docs/development/BUILDING.md` for focused checks, expected output, and qualification limits.
 
@@ -99,7 +105,8 @@ Give the reviewer:
 
 * the executable ticket number and contents;
 * its applicable parent specification;
-* the complete working-tree and staged changes;
+* explicit mode `full`, the ticket base SHA, candidate HEAD, and a content identity covering staged, unstaged, and relevant untracked files;
+* the complete ticket delta, including any already committed ticket work;
 * relevant ADR, architecture, security, privacy, compatibility, and platform constraints;
 * available verification evidence.
 
@@ -152,7 +159,8 @@ When `codexfolio_reviewer` reports one or more valid `BLOCKER` findings:
    * the accepted blocker ID or IDs;
    * the violated contract;
    * concise evidence;
-   * the required behavioral outcome.
+   * the required behavioral outcome;
+   * the candidate content identity, affected-file ownership, and remediation round 1 or 2.
 8. Do not pass unrelated reviewer discussion or advisories to the fixer.
 9. Make the smallest coherent change needed to resolve the accepted blocker.
 10. Run the narrowest verification that proves the blocker correction.
@@ -177,7 +185,7 @@ The primary implementation agent remains responsible for integrating the fix and
 
 After remediation, do not run another unrestricted ticket review.
 
-Ask `codexfolio_reviewer` for a confirmation review of only the previously accepted blocker IDs.
+Ask `codexfolio_reviewer` with explicit mode `confirmation`, the previously accepted blocker IDs, prior/current content identities, remediation delta, and remediation round. Do not request another full review.
 
 The confirmation review must answer whether each accepted blocker is:
 
@@ -215,17 +223,35 @@ Do not push as part of the implementation or review workflow unless the user exp
 Commit only after:
 
 1. the executable ticket implementation is complete;
-2. required verification has passed;
+2. required pre-commit verification has passed;
 3. the ticket review gate has passed;
 4. accepted blocker remediation, if any, has passed confirmation.
 
-Do not include unrelated changes in the ticket commit.
+Do not include unrelated changes in the ticket commit. Verify that the committed tree matches the reviewed candidate, then complete exact-commit canonical verification. Unexpected source changes invalidate affected review evidence; do not silently reuse the prior PASS.
+
+### Post-commit delivery
+
+When an executable-ticket implementation is committed and the user explicitly asks to push it and verify the hosted pipeline, spawn the `codexfolio_delivery` custom agent exactly once.
+
+Give the delivery agent:
+
+* the executable ticket number and parent specification number;
+* the exact commit SHA, current branch, remote, and intended base branch;
+* the ticket-review result and canonical local-verification evidence;
+* confirmation of the user's push and pipeline-verification authorization and the PR/comment/closure actions delegated by repository policy;
+* the reviewed acceptance evidence index, authorized unpublished commit range, expected checks, and a bounded polling deadline or attempt budget.
+
+The delivery agent owns only the authorized push, any pull request required to trigger repository checks, pipeline observation bound to the exact source commit and intended base, and successful GitHub ticket bookkeeping. It must not change files, create or amend commits, repair failures, merge a pull request, or mark a milestone complete.
+
+For PR workflows, record the source head, base, and actual tested checkout SHA. A synthetic merge checkout is acceptable only when its relationship to that exact head and base is proven; label it as merge-result evidence, not a direct head checkout.
+
+If the pipeline fails or does not produce evidence bound to the authorized head and base, leave the executable ticket open and report the failure to the primary agent. Do not begin corrective implementation without a separate user request.
 
 ### Milestone completion review
 
 Do not declare a parent milestone specification complete solely because all child tickets are closed.
 
-When the final executable child ticket of a milestone has completed its ticket review gate, spawn `codexfolio_milestone_reviewer` against the parent specification.
+When the final executable child is reviewed, committed, and verified, and required delivery/exit evidence is available, spawn `codexfolio_milestone_reviewer` with the parent specification, exact candidate commit, child set, and evidence index. A partial audit cannot authorize milestone completion.
 
 The milestone reviewer is a read-only auditor.
 

@@ -139,11 +139,17 @@ function validateContract(contract, productVersion) {
     throw new Error("API version must use the v<major> format");
   }
 
+  const activityPath = `/api/${apiVersion}/activity`;
+  const analyticsPath = `/api/${apiVersion}/analytics`;
+  const historyPath = `/api/${apiVersion}/analytics/history`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
+  const projectsPath = `/api/${apiVersion}/projects`;
   const selectionPath = `/api/${apiVersion}/selection`;
+  const usageLatestPath = `/api/${apiVersion}/usage/latest`;
+  const usageRefreshPath = `/api/${apiVersion}/usage/refresh`;
   assertObject(contract.paths, "paths");
-  assertExactKeys(contract.paths, [bootstrapPath, metadataPath, selectionPath], "paths");
+  assertExactKeys(contract.paths, [activityPath, analyticsPath, historyPath, bootstrapPath, metadataPath, projectsPath, selectionPath, usageLatestPath, usageRefreshPath], "paths");
 
   const bootstrapPathItem = contract.paths[bootstrapPath];
   assertObject(bootstrapPathItem, `path ${bootstrapPath}`);
@@ -179,6 +185,24 @@ function validateContract(contract, productVersion) {
     `GET ${metadataPath}`,
   );
 
+  const activityOperation = contract.paths[activityPath]?.get;
+  assertObject(activityOperation, `GET ${activityPath}`);
+  assertExactKeys(activityOperation, ["operationId", "parameters", "responses"], `GET ${activityPath}`);
+  assertIdentifier(activityOperation.operationId, "activity operationId");
+  if (!Array.isArray(activityOperation.parameters) || activityOperation.parameters.length !== 2) {
+    throw new Error(`GET ${activityPath} must declare profile and project query parameters`);
+  }
+  const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`);
+
+  const analyticsOperation = contract.paths[analyticsPath]?.get;
+  assertObject(analyticsOperation, `GET ${analyticsPath}`);
+  assertExactKeys(analyticsOperation, ["operationId", "parameters", "responses"], `GET ${analyticsPath}`);
+  assertIdentifier(analyticsOperation.operationId, "analytics operationId");
+  if (!Array.isArray(analyticsOperation.parameters) || analyticsOperation.parameters.length !== 1 || analyticsOperation.parameters[0]?.name !== "scope") {
+    throw new Error(`GET ${analyticsPath} must declare the optional scope query parameter`);
+  }
+  const analyticsResponseReference = responseReference(analyticsOperation, `GET ${analyticsPath}`, ["200", "default"]);
+
   const selectionPathItem = contract.paths[selectionPath];
   assertObject(selectionPathItem, `path ${selectionPath}`);
   assertExactKeys(selectionPathItem, ["get", "put"], `path ${selectionPath}`);
@@ -192,12 +216,59 @@ function validateContract(contract, productVersion) {
   const selectionResponseReference = responseReference(getSelectionOperation, `GET ${selectionPath}`);
   assertEqual(responseReference(setSelectionOperation, `PUT ${selectionPath}`), selectionResponseReference, "selection response reference");
 
+  const projectsOperation = contract.paths[projectsPath]?.get;
+  assertObject(projectsOperation, `GET ${projectsPath}`);
+  assertExactKeys(projectsOperation, ["operationId", "responses"], `GET ${projectsPath}`);
+  assertIdentifier(projectsOperation.operationId, "projects operationId");
+  const projectsResponseReference = responseReference(projectsOperation, `GET ${projectsPath}`);
+
+  const usageOperation = contract.paths[usageRefreshPath]?.post;
+  assertObject(usageOperation, `POST ${usageRefreshPath}`);
+  assertExactKeys(usageOperation, ["operationId", "requestBody", "responses"], `POST ${usageRefreshPath}`);
+  assertIdentifier(usageOperation.operationId, "usage refresh operationId");
+  const usageRequestReference = requestReference(usageOperation.requestBody, `POST ${usageRefreshPath} request body`);
+  const usageResponseReference = responseReference(usageOperation, `POST ${usageRefreshPath}`, ["200", "default"]);
+  const usageErrorResponseReference = errorResponseReference(usageOperation, `POST ${usageRefreshPath}`);
+  const usageLatestOperation = contract.paths[usageLatestPath]?.get;
+  assertObject(usageLatestOperation, `GET ${usageLatestPath}`);
+  assertExactKeys(usageLatestOperation, ["operationId", "parameters", "responses"], `GET ${usageLatestPath}`);
+  assertIdentifier(usageLatestOperation.operationId, "latest usage operationId");
+  if (!Array.isArray(usageLatestOperation.parameters) || usageLatestOperation.parameters.length !== 1 || usageLatestOperation.parameters[0]?.name !== "alias") {
+    throw new Error(`GET ${usageLatestPath} must declare the alias query parameter`);
+  }
+  assertEqual(responseReference(usageLatestOperation, `GET ${usageLatestPath}`, ["200", "default"]), usageResponseReference, "latest usage response reference");
+  assertEqual(errorResponseReference(usageLatestOperation, `GET ${usageLatestPath}`), usageErrorResponseReference, "latest usage error response reference");
+  assertEqual(errorResponseReference(analyticsOperation, `GET ${analyticsPath}`), usageErrorResponseReference, "analytics error response reference");
+
+  const historyOperation = contract.paths[historyPath]?.post;
+  assertObject(historyOperation, `POST ${historyPath}`);
+  assertExactKeys(contract.paths[historyPath], ["post"], `path ${historyPath}`);
+  assertExactKeys(historyOperation, ["operationId", "requestBody", "responses"], `POST ${historyPath}`);
+  assertEqual(historyOperation.operationId, "manageAnalyticsHistory", "history operationId");
+  assertEqual(requestReference(historyOperation.requestBody, "history request body"), "#/$defs/HistoryRequest", "history request");
+  assertEqual(responseReference(historyOperation, "history response", ["200", "default"]), "#/$defs/HistoryResponse", "history response");
+  assertEqual(errorResponseReference(historyOperation, "history error"), usageErrorResponseReference, "history error response");
+  const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate", "AnalyticsExportRequest", "AnalyticsExportDatasetPreview", "UsageExportRecord", "AvailabilityExportRecord", "AnalyticsExportRecords", "AnalyticsExportResult", "ActivityExportRecord", "ActivityCorrelation"];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
     schemaNameFromReference(metadataResponseReference, "metadata response"),
     schemaNameFromReference(selectionRequestReference, "selection request"),
     schemaNameFromReference(selectionResponseReference, "selection response"),
+    schemaNameFromReference(projectsResponseReference, "projects response"),
+    schemaNameFromReference(usageRequestReference, "usage request"),
+    schemaNameFromReference(usageResponseReference, "usage response"),
+    schemaNameFromReference(usageErrorResponseReference, "usage error response"),
+    schemaNameFromReference(activityResponseReference, "activity response"),
+    "UsageObservation",
+    "UsageMetricAvailability",
+    "ProjectIdentity",
+    "ActivityRecord",
+    schemaNameFromReference(analyticsResponseReference, "analytics response"),
+    "UsageAggregate",
+    "UsageMetricAmbiguity",
+    "UsageCandidate",
+    ...historySchemaNames,
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -212,9 +283,34 @@ function validateContract(contract, productVersion) {
   const metadataFields = schemaFields(contract.$defs[schemaNames[2]], schemaNames[2]);
   const selectionRequestFields = schemaFields(contract.$defs[schemaNames[3]], schemaNames[3]);
   const selectionResponseFields = schemaFields(contract.$defs[schemaNames[4]], schemaNames[4]);
+  const projectsResponseFields = schemaFields(contract.$defs[schemaNames[5]], schemaNames[5]);
+  const usageRequestFields = schemaFields(contract.$defs[schemaNames[6]], schemaNames[6]);
+  const usageResponseFields = schemaFields(contract.$defs[schemaNames[7]], schemaNames[7]);
+  const usageErrorResponseFields = schemaFields(contract.$defs[schemaNames[8]], schemaNames[8]);
+  const usageObservationFields = schemaFields(contract.$defs.UsageObservation, "UsageObservation");
+  const usageAvailabilityFields = schemaFields(contract.$defs.UsageMetricAvailability, "UsageMetricAvailability");
+  const projectIdentityFields = schemaFields(contract.$defs.ProjectIdentity, "ProjectIdentity");
+  const activityResponseFields = schemaFields(contract.$defs[schemaNames[9]], schemaNames[9]);
+  const activityRecordFields = schemaFields(contract.$defs.ActivityRecord, "ActivityRecord");
+  const analyticsResponseFields = schemaFields(contract.$defs[schemaNames[14]], schemaNames[14]);
+  const usageAggregateFields = schemaFields(contract.$defs.UsageAggregate, "UsageAggregate");
+  const usageMetricAmbiguityFields = schemaFields(contract.$defs.UsageMetricAmbiguity, "UsageMetricAmbiguity");
+  const usageCandidateFields = schemaFields(contract.$defs.UsageCandidate, "UsageCandidate");
 
   return {
+    historyPath,
+    historySchemas: historySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     apiVersion,
+    activityOperationId: activityOperation.operationId,
+    activityPath,
+    activityRecordFields,
+    activityRecordType: "ActivityRecord",
+    activityResponseFields,
+    activityResponseType: schemaNames[9],
+    analyticsOperationId: analyticsOperation.operationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType: schemaNames[14],
     bootstrapPath,
     bootstrapOperationId,
     bootstrapRequestFields,
@@ -225,6 +321,12 @@ function validateContract(contract, productVersion) {
     metadataPath,
     metadataOperationId,
     metadataResponseType: schemaNames[2],
+    projectIdentityFields,
+    projectIdentityType: "ProjectIdentity",
+    projectsOperationId: projectsOperation.operationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType: schemaNames[5],
     selectionGetOperationId: getSelectionOperation.operationId,
     selectionPath,
     selectionRequestFields,
@@ -232,6 +334,25 @@ function validateContract(contract, productVersion) {
     selectionResponseFields,
     selectionResponseType: schemaNames[4],
     selectionSetOperationId: setSelectionOperation.operationId,
+    usageAvailabilityFields,
+    usageAvailabilityType: "UsageMetricAvailability",
+    usageAggregateFields,
+    usageAggregateType: "UsageAggregate",
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType: "UsageMetricAmbiguity",
+    usageCandidateFields,
+    usageObservationFields,
+    usageObservationType: "UsageObservation",
+    usageLatestOperationId: usageLatestOperation.operationId,
+    usageLatestPath,
+    usageOperationId: usageOperation.operationId,
+    usageErrorResponseFields,
+    usageErrorResponseType: schemaNames[8],
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType: schemaNames[6],
+    usageResponseFields,
+    usageResponseType: schemaNames[7],
   };
 }
 
@@ -247,9 +368,9 @@ function requestReference(requestBody, name) {
   return mediaType.schema.$ref;
 }
 
-function responseReference(operation, name) {
+function responseReference(operation, name, expectedStatuses = ["200"]) {
   assertObject(operation.responses, `${name} responses`);
-  assertExactKeys(operation.responses, ["200"], `${name} responses`);
+  assertExactKeys(operation.responses, expectedStatuses, `${name} responses`);
   const response = operation.responses["200"];
   assertObject(response, `${name} 200 response`);
   assertObject(response.content, `${name} response content`);
@@ -257,6 +378,17 @@ function responseReference(operation, name) {
   const mediaType = response.content["application/json"];
   assertObject(mediaType, `${name} JSON response`);
   assertObject(mediaType.schema, `${name} response schema`);
+  return mediaType.schema.$ref;
+}
+
+function errorResponseReference(operation, name) {
+  const response = operation.responses.default;
+  assertObject(response, `${name} default response`);
+  assertObject(response.content, `${name} default response content`);
+  assertExactKeys(response.content, ["application/json"], `${name} default response content`);
+  const mediaType = response.content["application/json"];
+  assertObject(mediaType, `${name} default JSON response`);
+  assertObject(mediaType.schema, `${name} default response schema`);
   return mediaType.schema.$ref;
 }
 
@@ -274,20 +406,16 @@ function schemaFields(schema, schemaName) {
   assertEqual(schema.type, "object", `${schemaName} type`);
   assertEqual(schema.additionalProperties, false, `${schemaName} additionalProperties`);
   assertObject(schema.properties, `${schemaName} properties`);
-  assertArrayEqual(
-    schema.required,
-    Object.keys(schema.properties),
-    `${schemaName} required properties`,
-  );
-  const fields = schema.required.map((name) => {
+  if (!Array.isArray(schema.required) || schema.required.some((name) => !Object.hasOwn(schema.properties, name))) {
+    throw new Error(`${schemaName} required properties must name declared properties`);
+  }
+  const required = new Set(schema.required);
+  const fields = Object.keys(schema.properties).map((name) => {
     if (!/^[a-z][a-z0-9_]*$/.test(name)) {
       throw new Error(`${schemaName} property ${JSON.stringify(name)} is not a snake_case field`);
     }
-    return { name, schema: schema.properties[name] };
+    return { name, required: required.has(name), schema: schema.properties[name] };
   });
-  for (const { schema: fieldSchema } of fields) {
-    assertEqual(fieldSchema.type, "string", `${schemaName} property type`);
-  }
   return fields;
 }
 
@@ -322,6 +450,16 @@ function writeArtifacts({ artifacts }, rootDirectory = defaultRootDirectory) {
 function renderGo(productVersion, sourceHash, contractShape) {
   const {
     apiVersion,
+    activityOperationId,
+    activityPath,
+    activityRecordFields,
+    activityRecordType,
+    activityResponseFields,
+    activityResponseType,
+    analyticsOperationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType,
     bootstrapOperationId,
     bootstrapPath,
     bootstrapRequestFields,
@@ -332,6 +470,12 @@ function renderGo(productVersion, sourceHash, contractShape) {
     metadataPath,
     metadataOperationId,
     metadataResponseType,
+    projectIdentityFields,
+    projectIdentityType,
+    projectsOperationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType,
     selectionGetOperationId,
     selectionPath,
     selectionRequestFields,
@@ -339,22 +483,60 @@ function renderGo(productVersion, sourceHash, contractShape) {
     selectionResponseFields,
     selectionResponseType,
     selectionSetOperationId,
+    usageAvailabilityFields,
+    usageAvailabilityType,
+    usageAggregateFields,
+    usageAggregateType,
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType,
+    usageCandidateFields,
+    usageObservationFields,
+    usageObservationType,
+    usageLatestOperationId,
+    usageLatestPath,
+    usageOperationId,
+    usageErrorResponseFields,
+    usageErrorResponseType,
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType,
+    usageResponseFields,
+    usageResponseType,
   } = contractShape;
+  const activityMethod = goIdentifier(activityOperationId);
+  const analyticsMethod = goIdentifier(analyticsOperationId);
   const bootstrapMethod = goIdentifier(bootstrapOperationId);
   const metadataMethod = goIdentifier(metadataOperationId);
+  const projectsMethod = goIdentifier(projectsOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
+  const usageLatestMethod = goIdentifier(usageLatestOperationId);
+  const usageMethod = goIdentifier(usageOperationId);
   const types = [
+    ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    renderGoStruct(activityRecordType, activityRecordFields),
+    renderGoStruct(activityResponseType, activityResponseFields),
+    renderGoStruct(analyticsResponseType, analyticsResponseFields),
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
+    renderGoStruct(projectIdentityType, projectIdentityFields),
+    renderGoStruct(projectsResponseType, projectsResponseFields),
     renderGoStruct(selectionRequestType, selectionRequestFields),
     renderGoStruct(selectionResponseType, selectionResponseFields),
+    renderGoStruct(usageRequestType, usageRequestFields),
+    renderGoStruct(usageErrorResponseType, usageErrorResponseFields),
+    renderGoStruct(usageObservationType, usageObservationFields),
+    renderGoStruct(usageAvailabilityType, usageAvailabilityFields),
+    renderGoStruct(usageAggregateType, usageAggregateFields),
+    renderGoStruct(usageMetricAmbiguityType, usageMetricAmbiguityFields),
+    renderGoStruct("UsageCandidate", usageCandidateFields),
+    renderGoStruct(usageResponseType, usageResponseFields),
   ].join("\n\n");
 
   const source = `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
-// Response schemas: ${bootstrapResponseType}, ${metadataResponseType}, ${selectionResponseType}
+// Response schemas: ${activityResponseType}, ${bootstrapResponseType}, ${metadataResponseType}, ${projectsResponseType}, ${selectionResponseType}, ${usageResponseType}
 package httpapi
 
 import (
@@ -363,19 +545,28 @@ import (
 \t"encoding/json"
 \t"fmt"
 \t"net/http"
+\t"net/url"
 \t"strings"
 )
 
 const (
 \tAPIVersion           = "${apiVersion}"
+\tActivityPath         = "${activityPath}"
+\tAnalyticsPath        = "${analyticsPath}"
+\tHistoryPath          = "${contractShape.historyPath}"
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
 \tMetadataPath         = "${metadataPath}"
+\tProjectsPath         = "${projectsPath}"
 \tSelectionPath        = "${selectionPath}"
+\tUsageLatestPath      = "${usageLatestPath}"
+\tUsageRefreshPath     = "${usageRefreshPath}"
 )
 
 ${types}
+
+func (response ${usageErrorResponseType}) Error() string { return response.Code }
 
 type HTTPDoer interface {
 \tDo(*http.Request) (*http.Response, error)
@@ -391,6 +582,73 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 \t\tbaseURL:    strings.TrimRight(baseURL, "/"),
 \t\thttpClient: httpClient,
 \t}
+}
+
+func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryRequest) (HistoryResponse, *http.Response, error) {
+\tvar result HistoryResponse
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${activityMethod}(ctx context.Context, profileAlias, projectID string) (${activityResponseType}, *http.Response, error) {
+\tvar result ${activityResponseType}
+\tquery := url.Values{}
+\tif profileAlias != "" { query.Set("profile", profileAlias) }
+\tif projectID != "" { query.Set("project", projectID) }
+\tpath := ActivityPath
+\tif encoded := query.Encode(); encoded != "" { path += "?" + encoded }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ActivityPath, response.StatusCode)
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+
+func (client *Client) ${analyticsMethod}(ctx context.Context, scope string) (${analyticsResponseType}, *http.Response, error) {
+\tvar result ${analyticsResponseType}
+\tpath := AnalyticsPath
+\tif scope != "" { path += "?" + url.Values{"scope": []string{scope}}.Encode() }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", AnalyticsPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
 }
 
 func (client *Client) ${bootstrapMethod}(ctx context.Context, input ${bootstrapRequestType}) (${bootstrapResponseType}, *http.Response, error) {
@@ -458,6 +716,23 @@ func (client *Client) ${metadataMethod}(ctx context.Context) (${metadataResponse
 \treturn result, response, nil
 }
 
+func (client *Client) ${projectsMethod}(ctx context.Context) (${projectsResponseType}, *http.Response, error) {
+\tvar result ${projectsResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProjectsPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ProjectsPath, response.StatusCode)
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+
 func (client *Client) ${selectionGetMethod}(ctx context.Context) (${selectionResponseType}, *http.Response, error) {
 \tvar result ${selectionResponseType}
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+SelectionPath, nil)
@@ -494,6 +769,52 @@ func (client *Client) ${selectionSetMethod}(ctx context.Context, input ${selecti
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
 }
+
+func (client *Client) ${usageMethod}(ctx context.Context, input ${usageRequestType}) (${usageResponseType}, *http.Response, error) {
+\tvar result ${usageResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+UsageRefreshPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("POST %s returned HTTP %d", UsageRefreshPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+func (client *Client) ${usageLatestMethod}(ctx context.Context, alias string) (${usageResponseType}, *http.Response, error) {
+\tvar result ${usageResponseType}
+\tquery := url.Values{"alias": []string{alias}}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+UsageLatestPath+"?"+query.Encode(), nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+\t\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", UsageLatestPath, response.StatusCode)
+\t\t}
+\t\treturn result, response, failure
+\t}
+\tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
+\treturn result, response, nil
+}
+
 `;
 
   return formatGo(source);
@@ -501,7 +822,7 @@ func (client *Client) ${selectionSetMethod}(ctx context.Context, input ${selecti
 
 function renderGoStruct(schemaName, fields) {
   const fieldLines = fields
-    .map(({ name, schema }) => `\t${goIdentifier(name)} ${goType(schema)} \`json:"${name}"\``)
+    .map(({ name, required, schema }) => `\t${goIdentifier(name)} ${required ? "" : "*"}${goType(schema)} \`json:"${name}${required ? "" : ",omitempty"}"\``)
     .join("\n");
   return `type ${goIdentifier(schemaName)} struct {
 ${fieldLines}
@@ -511,6 +832,16 @@ ${fieldLines}
 function renderTypeScript(productVersion, sourceHash, contractShape) {
   const {
     apiVersion,
+    activityOperationId,
+    activityPath,
+    activityRecordFields,
+    activityRecordType,
+    activityResponseFields,
+    activityResponseType,
+    analyticsOperationId,
+    analyticsPath,
+    analyticsResponseFields,
+    analyticsResponseType,
     bootstrapOperationId,
     bootstrapPath,
     bootstrapRequestFields,
@@ -521,6 +852,12 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     metadataPath,
     metadataOperationId,
     metadataResponseType,
+    projectIdentityFields,
+    projectIdentityType,
+    projectsOperationId,
+    projectsPath,
+    projectsResponseFields,
+    projectsResponseType,
     selectionGetOperationId,
     selectionPath,
     selectionRequestFields,
@@ -528,7 +865,29 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     selectionResponseFields,
     selectionResponseType,
     selectionSetOperationId,
+    usageAvailabilityFields,
+    usageAvailabilityType,
+    usageAggregateFields,
+    usageAggregateType,
+    usageMetricAmbiguityFields,
+    usageMetricAmbiguityType,
+    usageCandidateFields,
+    usageObservationFields,
+    usageObservationType,
+    usageLatestOperationId,
+    usageLatestPath,
+    usageOperationId,
+    usageErrorResponseFields,
+    usageErrorResponseType,
+    usageRefreshPath,
+    usageRequestFields,
+    usageRequestType,
+    usageResponseFields,
+    usageResponseType,
   } = contractShape;
+  const activityRecordLines = activityRecordFields.map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n");
+  const activityResponseLines = activityResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const analyticsResponseLines = analyticsResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const bootstrapRequestLines = bootstrapRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
@@ -538,12 +897,22 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
   const metadataLines = metadataFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
+  const projectIdentityLines = projectIdentityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const projectsResponseLines = projectsResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
   const selectionRequestLines = selectionRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const selectionResponseLines = selectionResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
+  const usageRequestLines = usageRequestFields.map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n");
+  const usageErrorResponseLines = usageErrorResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageObservationLines = usageObservationFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageAvailabilityLines = usageAvailabilityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageAggregateLines = usageAggregateFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageMetricAmbiguityLines = usageMetricAmbiguityFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageCandidateLines = usageCandidateFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
+  const usageResponseLines = usageResponseFields.map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`).join("\n");
 
   return `// Code generated by codex-folio OpenAPI generator ${GENERATOR_VERSION}; DO NOT EDIT.
 // Contract source: ${contractPath}
@@ -551,6 +920,20 @@ export const API_VERSION = "${apiVersion}" as const;
 export const CONTRACT_VERSION = "${productVersion}" as const;
 export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
+
+${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+export interface ${activityRecordType} {
+${activityRecordLines}
+}
+
+export interface ${activityResponseType} {
+${activityResponseLines}
+}
+
+export interface ${analyticsResponseType} {
+${analyticsResponseLines}
+}
 
 export interface ${bootstrapRequestType} {
 ${bootstrapRequestLines}
@@ -564,6 +947,14 @@ export interface ${metadataResponseType} {
 ${metadataLines}
 }
 
+export interface ${projectIdentityType} {
+${projectIdentityLines}
+}
+
+export interface ${projectsResponseType} {
+${projectsResponseLines}
+}
+
 export interface ${selectionRequestType} {
 ${selectionRequestLines}
 }
@@ -572,7 +963,76 @@ export interface ${selectionResponseType} {
 ${selectionResponseLines}
 }
 
+export interface ${usageRequestType} {
+${usageRequestLines}
+}
+
+export interface ${usageErrorResponseType} {
+${usageErrorResponseLines}
+}
+
+export class UsageRefreshError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "UsageRefreshError";
+    this.status = status;
+  }
+}
+
+export interface ${usageObservationType} {
+${usageObservationLines}
+}
+
+export interface ${usageAvailabilityType} {
+${usageAvailabilityLines}
+}
+
+export interface ${usageAggregateType} {
+${usageAggregateLines}
+}
+
+export interface ${usageMetricAmbiguityType} {
+${usageMetricAmbiguityLines}
+}
+
+export interface UsageCandidate {
+${usageCandidateLines}
+}
+
+export interface ${usageResponseType} {
+${usageResponseLines}
+}
+
 export interface ApiPaths {
+  "${contractShape.historyPath}": {
+    post: {
+      operationId: "manageAnalyticsHistory";
+      requestBody: HistoryRequest;
+      responses: {
+        200: { content: { "application/json": HistoryResponse } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
+  "${analyticsPath}": {
+    get: {
+      operationId: "${analyticsOperationId}";
+      responses: {
+        200: { content: { "application/json": ${analyticsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
+  "${activityPath}": {
+    get: {
+      operationId: "${activityOperationId}";
+      responses: { 200: { content: { "application/json": ${activityResponseType} } } };
+    };
+  };
   "${bootstrapPath}": {
     post: {
       operationId: "${bootstrapOperationId}";
@@ -609,13 +1069,48 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ${selectionResponseType} } } };
     };
   };
+  "${projectsPath}": {
+    get: {
+      operationId: "${projectsOperationId}";
+      responses: { 200: { content: { "application/json": ${projectsResponseType} } } };
+    };
+  };
+  "${usageRefreshPath}": {
+    post: {
+      operationId: "${usageOperationId}";
+      requestBody: ${usageRequestType};
+      responses: {
+        200: { content: { "application/json": ${usageResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
+  "${usageLatestPath}": {
+    get: {
+      operationId: "${usageLatestOperationId}";
+      responses: {
+        200: { content: { "application/json": ${usageResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
+  manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
+  ${analyticsOperationId}(scope?: string, init?: RequestInit): Promise<${analyticsResponseType}>;
+  ${activityOperationId}(
+    profileAlias?: string,
+    projectId?: string,
+    init?: RequestInit,
+  ): Promise<${activityResponseType}>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
+  ${projectsOperationId}(init?: RequestInit): Promise<${projectsResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
+  ${usageLatestOperationId}(alias: string, init?: RequestInit): Promise<${usageResponseType}>;
+  ${usageOperationId}(request: ${usageRequestType}, init?: RequestInit): Promise<${usageResponseType}>;
 }
 
 export function createCodexFolioApiClient(
@@ -623,6 +1118,59 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async manageAnalyticsHistory(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.historyPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HistoryResponse;
+    },
+    async ${analyticsOperationId}(scope = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (scope) query.set("scope", scope);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "${analyticsPath}" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${analyticsResponseType};
+    },
+    async ${activityOperationId}(profileAlias = "", projectId = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (profileAlias) query.set("profile", profileAlias);
+      if (projectId) query.set("project", projectId);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "${activityPath}" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET ${activityPath} failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ${activityResponseType};
+    },
     async ${bootstrapOperationId}(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -653,6 +1201,20 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as ${metadataResponseType};
     },
+    async ${projectsOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${projectsPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET ${projectsPath} failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ${projectsResponseType};
+    },
     async ${selectionGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -682,6 +1244,39 @@ export function createCodexFolioApiClient(
         throw new Error("PUT ${selectionPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${selectionResponseType};
+    },
+    async ${usageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${usageRefreshPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${usageResponseType};
+    },
+    async ${usageLatestOperationId}(alias, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams({ alias });
+      const response = await fetcher(baseUrl + "${usageLatestPath}?" + query.toString(), {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${usageResponseType};
     },
   };
 }
@@ -780,15 +1375,40 @@ function goIdentifier(name) {
 }
 
 function goType(schema) {
+  if (schema.type === "array" && schema.items?.type === "string") return "[]string";
+  if (schema.type === "boolean") return "bool";
+  if (typeof schema.$ref === "string") {
+    return goIdentifier(schemaNameFromReference(schema.$ref, "field"));
+  }
   if (schema.type === "string") {
     return "string";
+  }
+  if (schema.type === "number") {
+    return "float64";
+  }
+  if (schema.type === "integer") {
+    return "int64";
+  }
+  if (schema.type === "array" && typeof schema.items?.$ref === "string") {
+    return `[]${goIdentifier(schemaNameFromReference(schema.items.$ref, "array item"))}`;
   }
   throw new Error(`unsupported Go schema type ${JSON.stringify(schema.type)}`);
 }
 
 function typescriptType(schema) {
+  if (schema.type === "array" && schema.items?.type === "string") return "string[]";
+  if (schema.type === "boolean") return "boolean";
+  if (typeof schema.$ref === "string") {
+    return schemaNameFromReference(schema.$ref, "field");
+  }
   if (schema.type === "string") {
     return "string";
+  }
+  if (schema.type === "number" || schema.type === "integer") {
+    return "number";
+  }
+  if (schema.type === "array" && typeof schema.items?.$ref === "string") {
+    return `${schemaNameFromReference(schema.items.$ref, "array item")}[]`;
   }
   throw new Error(`unsupported TypeScript schema type ${JSON.stringify(schema.type)}`);
 }

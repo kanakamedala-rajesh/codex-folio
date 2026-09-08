@@ -19,11 +19,13 @@ import (
 	"sync"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 const (
@@ -39,6 +41,12 @@ const (
 	CommandProfileLifecyclePath      = "/api/v1/command/profile-lifecycle"
 	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
 	CommandLaunchPath                = "/api/v1/command/launch"
+	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
+	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
+	CommandAnalyticsPath             = "/api/v1/command/analytics"
+	CommandProjectsPath              = "/api/v1/command/projects"
+	CommandActivityPath              = "/api/v1/command/activity"
+	CommandHistoryPath               = "/api/v1/command/analytics-history"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
@@ -77,6 +85,11 @@ type Options struct {
 	ProfileAuthentication CommandProfileAuthenticationService
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
+	Usage                 CommandUsageService
+	Projects              *activity.ProjectService
+	Activities            CommandActivityService
+	History               *usage.HistoryService
+	Exports               *activity.ExportService
 	CommandToken          string
 }
 
@@ -102,6 +115,11 @@ type Server struct {
 	profileAuthentication CommandProfileAuthenticationService
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
+	usage                 CommandUsageService
+	projects              *activity.ProjectService
+	activities            CommandActivityService
+	historyService        *usage.HistoryService
+	exportService         *activity.ExportService
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -174,6 +192,11 @@ func NewServer(options Options) (*Server, error) {
 		profileAuthentication: options.ProfileAuthentication,
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
+		usage:                 options.Usage,
+		projects:              options.Projects,
+		activities:            options.Activities,
+		historyService:        options.History,
+		exportService:         options.Exports,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -362,6 +385,25 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandHistoryPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.history(response, request)
+	case HistoryPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.history(response, request)
+	case CommandActivityPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandActivity(response, request)
 	case CommandProfilesPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -392,6 +434,26 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandLaunch(response, request)
+	case CommandUsageRefreshPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.usageRefresh(response, request)
+	case CommandUsageLatestPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.usageLatest(response, request)
+	case CommandAnalyticsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.analytics(response, request)
+	case CommandProjectsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandProjects(response, request)
 	case BootstrapPathName, "/", "/index.html":
 		if !isReadMethod(request.Method) {
 			server.writeMethodError(response, http.MethodGet)
@@ -446,6 +508,43 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.setSelection(response, request)
+	case UsageRefreshPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.usageRefresh(response, request)
+	case UsageLatestPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.usageLatest(response, request)
+	case AnalyticsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.analytics(response, request)
+	case ProjectsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !isReadMethod(request.Method) {
+			server.writeMethodError(response, http.MethodGet)
+			return
+		}
+		server.getProjects(response, request)
+	case ActivityPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !isReadMethod(request.Method) {
+			server.writeMethodError(response, http.MethodGet)
+			return
+		}
+		server.getActivity(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {
@@ -1046,6 +1145,24 @@ func safeMessage(code string) string {
 		return "The requested dashboard resource was not found."
 	case apperrors.HTTPAPIServiceUnavailable:
 		return "The local dashboard is temporarily unavailable. Relaunch CodexFolio."
+	case apperrors.UsageCollectionFailed:
+		return "Usage refresh failed temporarily. Last-known evidence was preserved."
+	case apperrors.UsageSourceInvalid:
+		return "Codex returned malformed usage metadata. Last-known evidence was preserved."
+	case apperrors.UsageProfileNotFound:
+		return "The requested Identity Profile was not found."
+	case apperrors.UsageProfileUnavailable:
+		return "The requested Identity Profile is unavailable for usage refresh."
+	case apperrors.UsageRequestInvalid:
+		return "The usage refresh request is invalid."
+	case apperrors.AnalyticsRequestInvalid:
+		return "Specify a valid retention setting or every analytics scope dimension."
+	case apperrors.AnalyticsConfirmationInvalid:
+		return "Purge requires the exact confirmation token from the scoped preview."
+	case apperrors.AnalyticsScopeTooLarge:
+		return "Purge exceeds the atomic record limit. Narrow the date, profile, project, or record classes."
+	case apperrors.AnalyticsExportFailed:
+		return "Analytics export could not be written. The destination was preserved."
 	default:
 		return "The local dashboard could not complete the request."
 	}

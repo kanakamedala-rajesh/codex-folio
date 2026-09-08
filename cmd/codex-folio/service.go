@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
@@ -23,6 +24,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 type serviceOptions struct {
@@ -316,7 +318,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator())
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	usageCommands, err := newUsageCommandService(stateStore, nil)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects, usageCommands)
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -333,13 +347,19 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	activities, err := newActivityCommandService(stateStore, projects)
+	if err != nil {
+		_ = stateStore.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -643,6 +663,10 @@ func serviceDiagnosticState(code string) string {
 		apperrors.ConfigurationPackNotApproved,
 		apperrors.ConfigurationPackAssignmentInvalid,
 		apperrors.ConfigurationPackPromotionReviewRequired,
+		apperrors.ActivityRequestInvalid,
+		apperrors.ProjectIdentityInvalid,
+		apperrors.ProjectIdentityNotFound,
+		apperrors.ProjectPathCollision,
 		apperrors.HTTPAPIHostInvalid,
 		apperrors.HTTPAPIOriginInvalid,
 		apperrors.HTTPAPIBootstrapInvalid,
@@ -654,6 +678,7 @@ func serviceDiagnosticState(code string) string {
 		return diagnostics.StateRejected
 	case apperrors.PlatformStatePathInvalid,
 		apperrors.PlatformStatePathUnsafe,
+		apperrors.ProjectPathInvalid,
 		apperrors.LaunchPlanInvalid,
 		apperrors.LaunchProcessStatusInvalid,
 		apperrors.DiagnosticsConfigurationInvalid,
@@ -677,6 +702,7 @@ func serviceDiagnosticState(code string) string {
 	case apperrors.PlatformPermissionDenied,
 		apperrors.LaunchProfileUnavailable,
 		apperrors.ProfileAuthenticationUnavailable,
+		apperrors.ActivitySourceUnavailable,
 		apperrors.PlatformServiceUnavailable,
 		apperrors.HTTPAPIServiceUnavailable,
 		apperrors.StoreOpenFailed,
@@ -725,6 +751,36 @@ func serviceRemediation(code string) string {
 		return "the Profile Quarantine operation could not be completed safely"
 	case apperrors.ProfileQuarantineExpired:
 		return "the Profile Quarantine recovery period has expired"
+	case apperrors.ProjectIdentityInvalid:
+		return "the Project Identity or Project Alias is invalid"
+	case apperrors.ActivityRequestInvalid:
+		return "the activity request or filter is invalid"
+	case apperrors.ActivitySourceUnavailable:
+		return "supported Codex activity metadata is unavailable"
+	case apperrors.UsageCollectionFailed:
+		return "usage refresh failed temporarily; last-known evidence was preserved"
+	case apperrors.UsageSourceInvalid:
+		return "Codex returned malformed usage metadata; last-known evidence was preserved"
+	case apperrors.UsageProfileNotFound:
+		return "the requested Identity Profile was not found"
+	case apperrors.UsageProfileUnavailable:
+		return "the requested Identity Profile is not available for usage refresh"
+	case apperrors.UsageRequestInvalid:
+		return "the usage refresh request is invalid"
+	case apperrors.AnalyticsRequestInvalid:
+		return "specify a valid retention setting or every analytics scope dimension"
+	case apperrors.AnalyticsConfirmationInvalid:
+		return "purge requires --confirm with the exact token from the scoped preview"
+	case apperrors.AnalyticsScopeTooLarge:
+		return "purge exceeds the atomic record limit; narrow the date, profile, project, or record classes"
+	case apperrors.AnalyticsExportFailed:
+		return "analytics export could not be written; the destination was preserved"
+	case apperrors.ProjectIdentityNotFound:
+		return "the Project Identity was not found"
+	case apperrors.ProjectPathInvalid:
+		return "the repository location is inaccessible or is not a directory"
+	case apperrors.ProjectPathCollision:
+		return "the repository location belongs to another Project Identity; the prior identity was preserved"
 	case apperrors.ConfigurationPackInvalid:
 		return "the configuration pack or its reviewed files are invalid"
 	case apperrors.ConfigurationPackNotFound:

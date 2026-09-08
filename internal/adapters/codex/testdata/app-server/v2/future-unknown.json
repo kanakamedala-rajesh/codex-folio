@@ -1,0 +1,1 @@
+{"id":3,"result":{"accountId":"workspace-123","rateLimits":{"primary":{"usedPercent":0,"windowDurationMins":300,"resetsAt":1788753600,"newProviderField":{"transcript":"must-not-survive"}},"newBucket":{"usedPercent":99}},"rawResponse":"must-not-survive"}}

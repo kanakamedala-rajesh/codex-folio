@@ -236,6 +236,79 @@ The JSON contract contains `product`, `command`, `version`,
 `source_revision`, `build_class`, and `dirty` fields. The `dirty` field is one
 of `clean`, `dirty`, or `unknown`.
 
+## Analytics retention and scoped purge
+
+The state-owning service provides these CLI operations and the generated
+`POST /api/v1/analytics/history` contract:
+
+```sh
+codex-folio analytics retention
+codex-folio analytics retention 30
+codex-folio analytics retention unlimited
+codex-folio analytics retention 13-months --run
+codex-folio analytics purge --profile '*' --project '*' --from all --to all --classes usage,aggregates --dry-run --json
+codex-folio analytics aggregates --profile '*' --project '*' --from all --to all --json
+```
+
+All commands accept `--state-root PATH`, `--vault-mode MODE`, and `--json`.
+Retention defaults to thirteen calendar months (clamped at month end), with
+explicit day counts of at least thirty or `unlimited`. A successful collection
+or `retention --run` processes one transaction with at most 100 detail records
+per class; `more: true` means another run can continue. No periodic scheduler
+is installed. Settings changes leave diagnostics and checkpoint expiry alone.
+
+Expired usage detail is compacted into distinct normalized readings. Each
+aggregate retains its value, metric/unit, provenance, source/version, encrypted
+source scope, availability, assumptions, observation/capture range, and bucket.
+`samples` counts repeated readings, never additive quota or usage. Provider
+windows remain source windows; only unwindowed observations receive calendar
+days in their recorded timezone or UTC. Stored bucket zones never change.
+Aggregates remain until explicitly purged. The latest snapshot status and
+decisive authentication evidence remain as bounded current-state records;
+last-known values can be projected from aggregates. Expired activity metadata
+is deleted; running/pending launches and referenced launch records are preserved.
+
+Purge requires every scope dimension: `--profile ID|'*'`,
+`--project ID|'*'|none`, `--from RFC3339|all`, `--to RFC3339|all`, and an explicit
+comma-separated `--classes` selection from `usage`, `aggregates`,
+`observed_sessions`, `managed_launches`, and `checkpoints`. Profile IDs are
+available from `profile list --json`. Dates are inclusive at `from`, exclusive
+at `to`; whole activity intervals and aggregate buckets must fit inside the
+range. Provider usage has no Project Identity, so a specific project excludes
+it. Checkpoints have no profile attribution and require `--profile '*'`.
+
+`--dry-run` reports scope, each affected record class, counts, the atomic limit,
+and a scope-bound confirmation token. Normal purge prompts for that token;
+automation must supply `--non-interactive --confirm TOKEN` with the same full
+scope. A purge touching more than 1000 records is rejected before deletion;
+narrow its scope using the preview. Aggregation and deletion commit together;
+purge commits all selected classes together. Reference cleanup is included in
+the counts. Purge never deletes profiles, homes, authentication, configuration
+packs, quarantine, vault keys, projects, or checkpoints outside the explicit
+checkpoint scope. Aggregate listing returns at most 1000 buckets; narrow dates
+or profile scope for larger histories.
+
+## Analytics export
+
+Preview or write normalized usage, availability, aggregate, or activity data
+through the same generated analytics-history contract:
+
+```sh
+codex-folio analytics export --format json --datasets usage,availability,activity --dry-run --json
+codex-folio analytics export --format json --datasets usage,aggregates --output analytics.json
+codex-folio analytics export --format csv --datasets activity --output activity.csv
+```
+
+The default scope is the Selected Profile with all projects and dates. Combined
+Identity View requires `--scope combined_identity --profile '*'`; CSV accepts
+one dataset. Add `--project`, `--from`, or `--to` to narrow the result. The
+preview reports the exact fields and record counts. Exports contain normalized
+evidence only and use Project Alias and basename by default; `--include-paths`
+explicitly adds canonical project paths. Identity Home paths, credentials, raw
+source responses, Codex content, commands, tool payloads, diffs, transcripts,
+vault material, and diagnostics are never export fields. Destination creation
+is exclusive: an existing file is preserved and the export fails safely.
+
 ## Current limitations
 
 Phase 0 proves a native development build on the host, compile-only builds for

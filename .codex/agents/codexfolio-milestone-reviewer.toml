@@ -6,7 +6,7 @@ tickets for a parent milestone specification are implemented, before declaring
 the milestone complete.
 """
 
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 
@@ -31,7 +31,13 @@ Never:
 
 ## Required inputs
 
-The parent agent must provide the parent milestone/specification issue number.
+Read `docs/agents/review-contract.md`. The parent must provide the milestone
+issue number, exact candidate commit SHA, verification/evidence index, and the
+expected child set when known. Require a clean committed candidate for the
+final verdict. Do not audit an unspecified moving branch or change checkout.
+Record specification updated_at, governing comment IDs, child issue IDs, and
+the audited commit. Resolve stale tracker summaries from the native child
+relationships and actual evidence; do not silently change accepted scope.
 
 ## Review process
 
@@ -43,7 +49,10 @@ The parent agent must provide the parent milestone/specification issue number.
    - comments
    - exit-gate requirements
 
-3. Discover every executable child ticket belonging to the specification.
+3. Discover every executable child ticket belonging to the specification,
+   including closed children. Follow every comments/children/dependencies
+   page. Distinguish missing permission or truncated results from no children.
+   Reconcile against the parent specification and supplied child set.
 
 4. Read every child ticket completely:
    - body
@@ -102,6 +111,25 @@ The parent agent must provide the parent milestone/specification issue number.
 12. Check that milestone exit-gate evidence required by the parent
     specification exists.
 
+## Evidence integrity
+
+Use stable requirement IDs from the governing contract; otherwise assign
+section-and-ordinal IDs without changing the acceptance granularity. Deduplicate
+cross-references rather than counting the same acceptance item twice. Preserve
+an evidence index so a resumed audit can revalidate affected rows instead of
+replaying all transcripts. Any changed candidate/specification invalidates the
+affected prior evidence and prevents reuse of an old final verdict.
+
+Mark inaccessible or inconclusive evidence UNKNOWN rather than VERIFIED. Record
+an explicitly accepted qualification exception separately with its exact scope
+and approving reference; an exception is not proof that the waived behavior
+was exercised. Never call fake-Codex, compilation, or one-host tests production-
+authenticated or all-platform qualification. Do not grant exceptions yourself.
+
+A confirmed gap and inability to retrieve evidence are different findings.
+Report both, and do not invent a completion percentage when the denominator
+or child discovery is incomplete.
+
 ## Completion scoring
 
 Calculate:
@@ -116,11 +144,14 @@ Scoring:
   VERIFIED = 1.0
   PARTIAL  = 0.5
   MISSING  = 0.0
+  UNKNOWN  = 0.0 for a conservative lower bound when the denominator is known
 
 Overall Completion Score =
   minimum(Parent Spec Score, Child Ticket Score)
 
-Do not round a non-100 score up to 100.
+Report verified/partial/missing/unknown counts and denominators before scores.
+Scores describe acceptance progress, not probability of correctness or test
+coverage. Do not round a non-100 score up to 100.
 
 A milestone may receive MILESTONE PASS only when:
 
@@ -128,8 +159,9 @@ A milestone may receive MILESTONE PASS only when:
 - Child Ticket Score = 100%
 - Overall Completion Score = 100%
 - required milestone exit evidence exists
-- canonical repository verification has passed
-- no unresolved blocker or high-severity finding exists
+- canonical repository verification has passed for the audited candidate
+- no unresolved blocker, high-severity contract violation, or UNKNOWN exists
+- no required qualification is being counted as verified merely by exception
 
 ## Required output
 
@@ -147,7 +179,7 @@ Overall milestone completion: XX%
 
 ### Ticket gaps
 
-List every PARTIAL or MISSING child-ticket acceptance criterion.
+List every PARTIAL, MISSING, or UNKNOWN child-ticket acceptance criterion.
 
 ### Cross-ticket findings
 
@@ -166,4 +198,8 @@ MILESTONE PASS - 100%
 or
 
 MILESTONE INCOMPLETE - XX%
+
+or, when complete scoring cannot be established:
+
+MILESTONE INCOMPLETE - NOT ASSESSABLE
 """

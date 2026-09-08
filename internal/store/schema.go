@@ -134,6 +134,150 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 9,
+			name:    "normalized-usage-snapshots",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE usage_snapshots (
+						snapshot_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						source TEXT NOT NULL CHECK (source IN ('codex_app_server')),
+						source_version TEXT NOT NULL,
+						captured_at TEXT NOT NULL,
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`ALTER TABLE usage_metrics ADD COLUMN source_class TEXT NOT NULL DEFAULT 'Provider-reported Metric' CHECK (source_class IN ('Provider-reported Metric', 'Locally-derived Metric', 'Estimated Metric', 'Observed during session'))`,
+					`ALTER TABLE usage_metrics ADD COLUMN scope TEXT NOT NULL DEFAULT 'provider_quota_window'`,
+					`ALTER TABLE usage_metrics ADD COLUMN aggregation TEXT NOT NULL DEFAULT 'none'`,
+					`ALTER TABLE metric_provenance ADD COLUMN provenance_label TEXT NOT NULL DEFAULT 'Provider-reported Metric' CHECK (provenance_label IN ('Provider-reported Metric', 'Locally-derived Metric', 'Estimated Metric', 'Observed during session'))`,
+					`ALTER TABLE usage_observations ADD COLUMN snapshot_id TEXT REFERENCES usage_snapshots (snapshot_id)`,
+					`CREATE INDEX idx_usage_snapshots_profile_time ON usage_snapshots (profile_id, captured_at)`,
+					`CREATE INDEX idx_usage_observations_snapshot ON usage_observations (snapshot_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 10,
+			name:    "project-identity-safe-basename",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE project_identities ADD COLUMN repository_basename TEXT NOT NULL DEFAULT ''`)
+				return err
+			},
+		},
+		{
+			version: 11,
+			name:    "observed-session-activity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE managed_launches ADD COLUMN expected_session_id TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN source_session_id TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN source_version TEXT NOT NULL DEFAULT ''`,
+					`ALTER TABLE observed_sessions ADD COLUMN project_identity_id TEXT REFERENCES project_identities (project_identity_id)`,
+					`ALTER TABLE observed_sessions ADD COLUMN last_observed_at TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN model TEXT`,
+					`ALTER TABLE observed_sessions ADD COLUMN tokens_used INTEGER CHECK (tokens_used IS NULL OR tokens_used >= 0)`,
+					`ALTER TABLE observed_sessions ADD COLUMN correlation_state TEXT NOT NULL DEFAULT 'uncorrelated' CHECK (correlation_state IN ('correlated', 'uncorrelated', 'ambiguous', 'contradictory'))`,
+					`CREATE UNIQUE INDEX idx_observed_sessions_source_identity ON observed_sessions (profile_id, source, source_session_id) WHERE source_session_id IS NOT NULL`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 12,
+			name:    "honest-usage-evidence",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					"ALTER TABLE usage_snapshots ADD COLUMN status TEXT NOT NULL DEFAULT 'available'",
+					"ALTER TABLE metric_availability ADD COLUMN reason TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE metric_availability ADD COLUMN condition TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN window_timezone TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN assumptions TEXT NOT NULL DEFAULT ''",
+					"ALTER TABLE usage_observations ADD COLUMN uncertainty TEXT NOT NULL DEFAULT ''",
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 13,
+			name:    "usage-trigger-reason",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE usage_snapshots ADD COLUMN trigger_reason TEXT NOT NULL DEFAULT 'explicit_refresh' CHECK (trigger_reason IN ('explicit_refresh', 'dashboard_open', 'dashboard_refresh', 'pre_launch', 'post_exit'))`)
+				return err
+			},
+		},
+		{
+			version: 14,
+			name:    "usage-source-scope",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, column := range []string{"login_identity_ciphertext", "workspace_ciphertext"} {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE usage_snapshots ADD COLUMN "+column+" BLOB CHECK ("+column+" IS NULL OR typeof("+column+") = 'blob')"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 15,
+			name:    "analytics-history-retention",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN analytics_retention_mode TEXT NOT NULL DEFAULT 'default' CHECK (analytics_retention_mode IN ('default', 'days', 'unlimited'))`,
+					`UPDATE settings SET analytics_retention_mode = 'days' WHERE analytics_retention_days IS NOT NULL`,
+					`CREATE TABLE usage_aggregates (
+						aggregate_id TEXT PRIMARY KEY NOT NULL,
+						group_key TEXT NOT NULL,
+						profile_id TEXT NOT NULL REFERENCES identity_profiles(profile_id),
+						project_identity_id TEXT REFERENCES project_identities(project_identity_id),
+						metric_key TEXT NOT NULL REFERENCES usage_metrics(metric_key),
+						value REAL NOT NULL,
+						unit TEXT NOT NULL,
+						source TEXT NOT NULL,
+						source_version TEXT NOT NULL,
+						provenance_label TEXT NOT NULL,
+						availability TEXT NOT NULL,
+						assumptions TEXT NOT NULL,
+						uncertainty TEXT NOT NULL,
+						bucket_kind TEXT NOT NULL CHECK (bucket_kind IN ('source_window', 'calendar_day')),
+						bucket_start TEXT NOT NULL,
+						bucket_end TEXT NOT NULL,
+						timezone TEXT NOT NULL,
+						first_observed_at TEXT NOT NULL,
+						last_observed_at TEXT NOT NULL,
+						first_captured_at TEXT NOT NULL,
+						last_captured_at TEXT NOT NULL,
+						samples INTEGER NOT NULL CHECK (samples > 0),
+						source_scope_ciphertext BLOB NOT NULL CHECK (typeof(source_scope_ciphertext) = 'blob')
+					)`,
+					`CREATE INDEX idx_usage_aggregates_group ON usage_aggregates(group_key)`,
+					`CREATE INDEX idx_usage_aggregates_profile_time ON usage_aggregates(profile_id, bucket_start)`,
+					`CREATE INDEX idx_usage_observations_expiry ON usage_observations(rtrim(observed_at, 'Z'))`,
+					`CREATE INDEX idx_usage_observations_availability ON usage_observations(metric_availability_id)`,
+					`CREATE INDEX idx_usage_observations_provenance ON usage_observations(provenance_id)`,
+					`CREATE INDEX idx_metric_availability_provenance ON metric_availability(provenance_id)`,
+					`CREATE INDEX idx_correlation_evidence_session ON correlation_evidence(observed_session_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -389,24 +533,34 @@ var expectedTables = map[string][]string{
 	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
-	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status"},
-	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id"},
-	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability"},
-	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at"},
+	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id"},
+	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
+	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
+	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
-	"project_identities":             {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at"},
+	"project_identities":             {"project_identity_id", "project_alias", "canonical_path_ciphertext", "created_at", "updated_at", "repository_basename"},
 	"retention_state":                {"retention_state_id", "analytics_retention_days", "diagnostics_retention_days", "last_analytics_purge_at", "last_diagnostics_purge_at", "updated_at"},
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
-	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at"},
-	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
+	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
+	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
+	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
+	"usage_snapshots":                {"snapshot_id", "profile_id", "source", "source_version", "captured_at", "status", "trigger_reason", "login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 var expectedIndexes = []string{
+	"idx_usage_aggregates_group",
+	"idx_usage_aggregates_profile_time",
+	"idx_usage_observations_expiry",
+	"idx_usage_observations_availability",
+	"idx_usage_observations_provenance",
+	"idx_metric_availability_provenance",
+	"idx_correlation_evidence_session",
+
 	"idx_alerts_profile_state",
 	"idx_checkpoints_project_time",
 	"idx_cli_aliases_profile",
@@ -423,16 +577,21 @@ var expectedIndexes = []string{
 	"idx_metric_availability_profile",
 	"idx_metric_provenance_captured_at",
 	"idx_observed_sessions_profile_time",
+	"idx_observed_sessions_source_identity",
 	"idx_pending_profiles_state",
 	"idx_service_ownership_state",
 	"idx_usage_metrics_kind",
 	"idx_usage_observations_profile_time",
+	"idx_usage_observations_snapshot",
+	"idx_usage_snapshots_profile_time",
 }
 
 var sensitiveColumns = map[string][]string{
+	"usage_aggregates":   {"source_scope_ciphertext"},
 	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
 	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
 	"project_identities": {"canonical_path_ciphertext"},
+	"usage_snapshots":    {"login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 func validateSchema(ctx context.Context, database *sql.DB) error {

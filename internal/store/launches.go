@@ -81,12 +81,12 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, errors.New("launch clock returned zero")))
 	}
-	managedLaunchID, err := newLaunchIdentifier("launch")
+	managedLaunchID, err := newStoreIdentifier("launch")
 	if err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
-	leaseID, err := newLaunchIdentifier("lease")
+	leaseID, err := newStoreIdentifier("lease")
 	if err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
@@ -94,8 +94,9 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 	encodedNow := formatStoredTime(now)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO managed_launches (
 		managed_launch_id, profile_id, lease_id, project_identity_id, state,
-		started_at, ended_at, process_id, exit_status
-	) VALUES (?, ?, ?, NULL, 'pending', ?, NULL, NULL, NULL)`, managedLaunchID, profileID, leaseID, encodedNow); err != nil {
+		started_at, ended_at, process_id, exit_status,
+		expected_session_id
+	) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?)`, managedLaunchID, profileID, leaseID, nullableString(request.ProjectID), encodedNow, nullableString(request.ExpectedSessionID)); err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
@@ -255,9 +256,10 @@ func (store *Store) GetManagedLaunch(ctx context.Context, leaseID string) (launc
 	var processID, exitStatus sql.NullInt64
 	var startedAt string
 	var endedAt sql.NullString
-	err := store.db.QueryRowContext(ctx, `SELECT managed_launch_id, profile_id, lease_id, state,
-		process_id, exit_status, started_at, ended_at FROM managed_launches WHERE lease_id = ?`, leaseID).Scan(
-		&record.ID, &record.ProfileID, &record.LeaseID, &state, &processID, &exitStatus, &startedAt, &endedAt)
+	err := store.db.QueryRowContext(ctx, `SELECT ml.managed_launch_id, ml.profile_id, a.alias, ml.lease_id, ml.state,
+		ml.process_id, ml.exit_status, ml.started_at, ml.ended_at FROM managed_launches ml
+		JOIN cli_aliases a ON a.profile_id = ml.profile_id WHERE ml.lease_id = ?`, leaseID).Scan(
+		&record.ID, &record.ProfileID, &record.ProfileAlias, &record.LeaseID, &state, &processID, &exitStatus, &startedAt, &endedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return launch.ManagedLaunch{}, apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
 	}
@@ -286,7 +288,7 @@ func (store *Store) GetManagedLaunch(ctx context.Context, leaseID string) (launc
 	return record, nil
 }
 
-func newLaunchIdentifier(prefix string) (string, error) {
+func newStoreIdentifier(prefix string) (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return "", err

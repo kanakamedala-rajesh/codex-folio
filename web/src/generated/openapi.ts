@@ -3,7 +3,238 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "53b0dbb4504dc50c4894aaf217838e13317e7bcbae5d7c907110a87a91ece15a" as const;
+  "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580" as const;
+
+export interface HistoryScope {
+  profile_id: string;
+  project_id: string;
+  from: string;
+  to: string;
+  classes: string[];
+}
+
+export interface HistoryRequest {
+  action: string;
+  setting?: string;
+  run?: boolean;
+  scope?: HistoryScope;
+  confirmation?: string;
+  export?: AnalyticsExportRequest;
+}
+
+export interface HistoryResponse {
+  retention?: RetentionResult;
+  purge?: PurgeResult;
+  aggregates?: HistoryAggregate[];
+  export?: AnalyticsExportResult;
+}
+
+export interface RetentionResult {
+  setting: string;
+  processed: number;
+  more: boolean;
+}
+
+export interface PurgeResult {
+  scope: HistoryScope;
+  counts: HistoryRecordCount[];
+  confirmation: string;
+  record_limit: number;
+  executable: boolean;
+  applied: boolean;
+}
+
+export interface HistoryRecordCount {
+  record_class: string;
+  count: number;
+}
+
+export interface HistoryMetric {
+  metric_key: string;
+  value_kind: string;
+  unit: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+}
+
+export interface HistoryAggregate {
+  id: string;
+  profile_id: string;
+  project_id: string;
+  metric: HistoryMetric;
+  value: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  availability: string;
+  assumptions: string;
+  uncertainty: string;
+  bucket_kind: string;
+  bucket_start: string;
+  bucket_end: string;
+  timezone: string;
+  first_observed_at: string;
+  last_observed_at: string;
+  first_captured_at: string;
+  last_captured_at: string;
+  samples: number;
+  profile_alias?: string;
+  project_alias?: string;
+  project_basename?: string;
+  login_identity?: string;
+  workspace?: string;
+  freshness?: string;
+  canonical_path?: string;
+}
+
+export interface AnalyticsExportRequest {
+  format: string;
+  datasets: string[];
+  scope: string;
+  profile_id: string;
+  project_id: string;
+  from: string;
+  to: string;
+  include_paths: boolean;
+}
+
+export interface AnalyticsExportDatasetPreview {
+  dataset: string;
+  fields: string[];
+  record_count: number;
+}
+
+export interface UsageExportRecord {
+  observation_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  metric: HistoryMetric;
+  value: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  freshness: string;
+  availability: string;
+  login_identity: string;
+  workspace: string;
+  window_start: string;
+  window_end: string;
+  window_timezone: string;
+  observed_at: string;
+  captured_at: string;
+  capture_age_seconds: number;
+  assumptions: string;
+  uncertainty: string;
+  canonical_path?: string;
+}
+
+export interface AvailabilityExportRecord {
+  metric_availability_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  metric: HistoryMetric;
+  state: string;
+  reason: string;
+  checked_at: string;
+  source: string;
+  source_version: string;
+  provenance: string;
+  freshness: string;
+  capture_age_seconds: number;
+  login_identity: string;
+  workspace: string;
+  canonical_path?: string;
+}
+
+export interface AnalyticsExportRecords {
+  usage?: UsageExportRecord[];
+  availability?: AvailabilityExportRecord[];
+  aggregates?: HistoryAggregate[];
+  activity?: ActivityExportRecord[];
+}
+
+export interface AnalyticsExportResult {
+  schema_version: string;
+  filters: AnalyticsExportRequest;
+  preview: AnalyticsExportDatasetPreview[];
+  records: AnalyticsExportRecords;
+}
+
+export interface ActivityExportRecord {
+  record_type: string;
+  id: string;
+  source_session_id?: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id?: string;
+  project_alias?: string;
+  project_basename?: string;
+  source: string;
+  source_version?: string;
+  provenance: string;
+  started_at: string;
+  last_observed_at: string;
+  lifecycle?: string;
+  exit_status?: number;
+  model?: string;
+  tokens_used?: number;
+  correlation: ActivityCorrelation;
+  canonical_path?: string;
+}
+
+export interface ActivityCorrelation {
+  state: string;
+  managed_launch_id?: string;
+  evidence_type?: string;
+  confidence?: string;
+}
+
+export interface ActivityRecord {
+  record_type: string;
+  id: string;
+  source_session_id: string;
+  profile_id: string;
+  profile_alias: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  source: string;
+  source_version: string;
+  provenance: string;
+  started_at: string;
+  last_observed_at: string;
+  lifecycle: string;
+  exit_status: string;
+  model: string;
+  tokens_used: string;
+  correlation_state: string;
+  correlation_managed_launch_id: string;
+  correlation_evidence_type: string;
+  correlation_confidence: string;
+  canonical_path?: string;
+}
+
+export interface ActivityResponse {
+  records: ActivityRecord[];
+}
+
+export interface AnalyticsResponse {
+  scope: string;
+  eligible_profile_count: number;
+  recommended_profile_id: string;
+  candidates: UsageCandidate[];
+  profiles: UsageSnapshotResponse[];
+  aggregates: UsageAggregate[];
+  ambiguities: UsageMetricAmbiguity[];
+  activity: ActivityRecord[];
+}
 
 export interface BootstrapRequest {
   bootstrap_token: string;
@@ -19,6 +250,18 @@ export interface MetadataResponse {
   product: string;
 }
 
+export interface ProjectIdentity {
+  project_id: string;
+  alias: string;
+  basename: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectsResponse {
+  projects: ProjectIdentity[];
+}
+
 export interface SelectionRequest {
   alias: string;
 }
@@ -30,7 +273,123 @@ export interface SelectionResponse {
   warning: string;
 }
 
+export interface UsageRefreshRequest {
+  alias: string;
+  trigger_reason?: string;
+}
+
+export interface UsageErrorResponse {
+  code: string;
+  message: string;
+}
+
+export class UsageRefreshError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "UsageRefreshError";
+    this.status = status;
+  }
+}
+
+export interface UsageObservation {
+  observation_id: string;
+  metric_key: string;
+  value: number;
+  unit: string;
+  value_kind: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+  observed_at: string;
+  captured_at: string;
+  capture_age_seconds: number;
+  window_start: string;
+  window_end: string;
+  window_timezone: string;
+  source: string;
+  source_version: string;
+  provenance: string;
+  freshness: string;
+  availability: string;
+  assumptions: string;
+  uncertainty: string;
+}
+
+export interface UsageMetricAvailability {
+  metric_availability_id: string;
+  metric_key: string;
+  state: string;
+  reason: string;
+  checked_at: string;
+  provenance: string;
+}
+
+export interface UsageAggregate {
+  metric_key: string;
+  value: number;
+  unit: string;
+  value_kind: string;
+  source_class: string;
+  scope: string;
+  aggregation: string;
+  profile_count: number;
+}
+
+export interface UsageMetricAmbiguity {
+  metric_key: string;
+  reason: string;
+}
+
+export interface UsageCandidate {
+  profile_id: string;
+  alias: string;
+  eligible: boolean;
+  capacity_state: string;
+}
+
+export interface UsageSnapshotResponse {
+  snapshot_id: string;
+  profile_id: string;
+  alias: string;
+  source: string;
+  source_version: string;
+  captured_at: string;
+  status: string;
+  trigger_reason: string;
+  observations: UsageObservation[];
+  availability: UsageMetricAvailability[];
+}
+
 export interface ApiPaths {
+  "/api/v1/analytics/history": {
+    post: {
+      operationId: "manageAnalyticsHistory";
+      requestBody: HistoryRequest;
+      responses: {
+        200: { content: { "application/json": HistoryResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/analytics": {
+    get: {
+      operationId: "getAnalytics";
+      responses: {
+        200: { content: { "application/json": AnalyticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/activity": {
+    get: {
+      operationId: "getActivity";
+      responses: { 200: { content: { "application/json": ActivityResponse } } };
+    };
+  };
   "/api/v1/bootstrap": {
     post: {
       operationId: "exchangeBootstrap";
@@ -67,13 +426,48 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": SelectionResponse } } };
     };
   };
+  "/api/v1/projects": {
+    get: {
+      operationId: "getProjects";
+      responses: { 200: { content: { "application/json": ProjectsResponse } } };
+    };
+  };
+  "/api/v1/usage/refresh": {
+    post: {
+      operationId: "refreshUsage";
+      requestBody: UsageRefreshRequest;
+      responses: {
+        200: { content: { "application/json": UsageSnapshotResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/usage/latest": {
+    get: {
+      operationId: "getLatestUsage";
+      responses: {
+        200: { content: { "application/json": UsageSnapshotResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
 }
 
 export interface CodexFolioApiClient {
+  manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
+  getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
+  getActivity(
+    profileAlias?: string,
+    projectId?: string,
+    init?: RequestInit,
+  ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
+  getProjects(init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
+  getLatestUsage(alias: string, init?: RequestInit): Promise<UsageSnapshotResponse>;
+  refreshUsage(request: UsageRefreshRequest, init?: RequestInit): Promise<UsageSnapshotResponse>;
 }
 
 export function createCodexFolioApiClient(
@@ -81,6 +475,59 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async manageAnalyticsHistory(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/analytics/history", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HistoryResponse;
+    },
+    async getAnalytics(scope = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (scope) query.set("scope", scope);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "/api/v1/analytics" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AnalyticsResponse;
+    },
+    async getActivity(profileAlias = "", projectId = "", init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams();
+      if (profileAlias) query.set("profile", profileAlias);
+      if (projectId) query.set("project", projectId);
+      const suffix = query.size ? "?" + query.toString() : "";
+      const response = await fetcher(baseUrl + "/api/v1/activity" + suffix, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET /api/v1/activity failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ActivityResponse;
+    },
     async exchangeBootstrap(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -111,6 +558,20 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as MetadataResponse;
     },
+    async getProjects(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/projects", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        throw new Error("GET /api/v1/projects failed with HTTP " + response.status);
+      }
+      return (await response.json()) as ProjectsResponse;
+    },
     async getSelection(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -140,6 +601,39 @@ export function createCodexFolioApiClient(
         throw new Error("PUT /api/v1/selection failed with HTTP " + response.status);
       }
       return (await response.json()) as SelectionResponse;
+    },
+    async refreshUsage(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/usage/refresh", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UsageSnapshotResponse;
+    },
+    async getLatestUsage(alias, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const query = new URLSearchParams({ alias });
+      const response = await fetcher(baseUrl + "/api/v1/usage/latest?" + query.toString(), {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UsageSnapshotResponse;
     },
   };
 }

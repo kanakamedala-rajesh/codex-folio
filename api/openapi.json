@@ -1,5 +1,193 @@
 {
   "$defs": {
+    "HistoryScope": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "from": {"type": "string"}, "to": {"type": "string"},
+        "classes": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["profile_id", "project_id", "from", "to", "classes"]
+    },
+    "HistoryRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "action": {"type": "string", "enum": ["retention", "purge", "aggregates", "export"]},
+        "setting": {"type": "string"}, "run": {"type": "boolean"},
+        "scope": {"$ref": "#/$defs/HistoryScope"}, "confirmation": {"type": "string"},
+        "export": {"$ref": "#/$defs/AnalyticsExportRequest"}
+      }, "required": ["action"]
+    },
+    "HistoryResponse": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "retention": {"$ref": "#/$defs/RetentionResult"},
+        "purge": {"$ref": "#/$defs/PurgeResult"},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}},
+        "export": {"$ref": "#/$defs/AnalyticsExportResult"}
+      }, "required": []
+    },
+    "RetentionResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"setting": {"type": "string"}, "processed": {"type": "integer"}, "more": {"type": "boolean"}},
+      "required": ["setting", "processed", "more"]
+    },
+    "PurgeResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "scope": {"$ref": "#/$defs/HistoryScope"},
+        "counts": {"type": "array", "items": {"$ref": "#/$defs/HistoryRecordCount"}},
+        "confirmation": {"type": "string"}, "record_limit": {"type": "integer"},
+        "executable": {"type": "boolean"}, "applied": {"type": "boolean"}
+      }, "required": ["scope", "counts", "confirmation", "record_limit", "executable", "applied"]
+    },
+    "HistoryRecordCount": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"record_class": {"type": "string"}, "count": {"type": "integer"}},
+      "required": ["record_class", "count"]
+    },
+    "HistoryMetric": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"}, "value_kind": {"type": "string"}, "unit": {"type": "string"},
+        "source_class": {"type": "string"}, "scope": {"type": "string"}, "aggregation": {"type": "string"}
+      }, "required": ["metric_key", "value_kind", "unit", "source_class", "scope", "aggregation"]
+    },
+    "HistoryAggregate": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "value": {"type": "number"},
+        "source": {"type": "string"}, "source_version": {"type": "string"}, "provenance": {"type": "string"},
+        "availability": {"type": "string"}, "assumptions": {"type": "string"}, "uncertainty": {"type": "string"},
+        "bucket_kind": {"type": "string"}, "bucket_start": {"type": "string"}, "bucket_end": {"type": "string"},
+        "timezone": {"type": "string"}, "first_observed_at": {"type": "string"}, "last_observed_at": {"type": "string"},
+        "first_captured_at": {"type": "string"}, "last_captured_at": {"type": "string"}, "samples": {"type": "integer"},
+        "profile_alias": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "login_identity": {"type": "string"}, "workspace": {"type": "string"}, "freshness": {"type": "string"}, "canonical_path": {"type": "string"}
+      },
+      "required": ["id", "profile_id", "project_id", "metric", "value", "source", "source_version", "provenance", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples"]
+    },
+    "AnalyticsExportRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "format": {"type": "string", "enum": ["json", "csv"]},
+        "datasets": {"type": "array", "items": {"type": "string"}},
+        "scope": {"type": "string", "enum": ["selected_profile", "combined_identity"]},
+        "profile_id": {"type": "string"}, "project_id": {"type": "string"},
+        "from": {"type": "string"}, "to": {"type": "string"}, "include_paths": {"type": "boolean"}
+      },
+      "required": ["format", "datasets", "scope", "profile_id", "project_id", "from", "to", "include_paths"]
+    },
+    "AnalyticsExportDatasetPreview": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "dataset": {"type": "string"}, "fields": {"type": "array", "items": {"type": "string"}}, "record_count": {"type": "integer"}
+      },
+      "required": ["dataset", "fields", "record_count"]
+    },
+    "UsageExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "observation_id": {"type": "string"}, "profile_id": {"type": "string"}, "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "value": {"type": "number"}, "source": {"type": "string"},
+        "source_version": {"type": "string"}, "provenance": {"type": "string"}, "freshness": {"type": "string"},
+        "availability": {"type": "string"}, "login_identity": {"type": "string"}, "workspace": {"type": "string"},
+        "window_start": {"type": "string"}, "window_end": {"type": "string"}, "window_timezone": {"type": "string"},
+        "observed_at": {"type": "string"}, "captured_at": {"type": "string"}, "capture_age_seconds": {"type": "integer"},
+        "assumptions": {"type": "string"}, "uncertainty": {"type": "string"}, "canonical_path": {"type": "string"}
+      },
+      "required": ["observation_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "value", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "window_start", "window_end", "window_timezone", "observed_at", "captured_at", "capture_age_seconds", "assumptions", "uncertainty"]
+    },
+    "AnalyticsExportRecords": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "usage": {"type": "array", "items": {"$ref": "#/$defs/UsageExportRecord"}},
+        "availability": {"type": "array", "items": {"$ref": "#/$defs/AvailabilityExportRecord"}},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/HistoryAggregate"}},
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityExportRecord"}}
+      },
+      "required": []
+    },
+    "AvailabilityExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "metric_availability_id": {"type": "string"}, "profile_id": {"type": "string"}, "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "metric": {"$ref": "#/$defs/HistoryMetric"}, "state": {"type": "string"}, "reason": {"type": "string"},
+        "checked_at": {"type": "string"}, "source": {"type": "string"}, "source_version": {"type": "string"},
+        "provenance": {"type": "string"}, "freshness": {"type": "string"}, "capture_age_seconds": {"type": "integer"},
+        "login_identity": {"type": "string"}, "workspace": {"type": "string"}, "canonical_path": {"type": "string"}
+      },
+      "required": ["metric_availability_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "state", "reason", "checked_at", "source", "source_version", "provenance", "freshness", "capture_age_seconds", "login_identity", "workspace"]
+    },
+    "AnalyticsExportResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "schema_version": {"type": "string"}, "filters": {"$ref": "#/$defs/AnalyticsExportRequest"},
+        "preview": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsExportDatasetPreview"}},
+        "records": {"$ref": "#/$defs/AnalyticsExportRecords"}
+      },
+      "required": ["schema_version", "filters", "preview", "records"]
+    },
+    "ActivityExportRecord": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "record_type": {"type": "string"}, "id": {"type": "string"}, "source_session_id": {"type": "string"},
+        "profile_id": {"type": "string"}, "profile_alias": {"type": "string"}, "project_id": {"type": "string"},
+        "project_alias": {"type": "string"}, "project_basename": {"type": "string"}, "source": {"type": "string"},
+        "source_version": {"type": "string"}, "provenance": {"type": "string"}, "started_at": {"type": "string"},
+        "last_observed_at": {"type": "string"}, "lifecycle": {"type": "string"}, "exit_status": {"type": "integer"},
+        "model": {"type": "string"}, "tokens_used": {"type": "integer"}, "correlation": {"$ref": "#/$defs/ActivityCorrelation"},
+        "canonical_path": {"type": "string"}
+      },
+      "required": ["record_type", "id", "profile_id", "profile_alias", "source", "provenance", "started_at", "last_observed_at", "correlation"]
+    },
+    "ActivityCorrelation": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "state": {"type": "string"}, "managed_launch_id": {"type": "string"}, "evidence_type": {"type": "string"}, "confidence": {"type": "string"}
+      },
+      "required": ["state"]
+    },
+    "ActivityRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "record_type": {"type": "string"},
+        "id": {"type": "string"},
+        "source_session_id": {"type": "string"},
+        "profile_id": {"type": "string"},
+        "profile_alias": {"type": "string"},
+        "project_id": {"type": "string"},
+        "project_alias": {"type": "string"},
+        "project_basename": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
+        "provenance": {"type": "string"},
+        "started_at": {"type": "string"},
+        "last_observed_at": {"type": "string"},
+        "lifecycle": {"type": "string"},
+        "exit_status": {"type": "string"},
+        "model": {"type": "string"},
+        "tokens_used": {"type": "string"},
+        "correlation_state": {"type": "string"},
+        "correlation_managed_launch_id": {"type": "string"},
+        "correlation_evidence_type": {"type": "string"},
+        "correlation_confidence": {"type": "string"},
+        "canonical_path": {"type": "string"}
+      },
+      "required": ["record_type", "id", "source_session_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"],
+      "type": "object"
+    },
+    "ActivityResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "records": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+      },
+      "required": ["records"],
+      "type": "object"
+    },
     "BootstrapRequest": {
       "additionalProperties": false,
       "properties": {
@@ -49,6 +237,26 @@
       ],
       "type": "object"
     },
+    "ProjectIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "basename": {"type": "string"},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      },
+      "required": ["project_id", "alias", "basename", "created_at", "updated_at"],
+      "type": "object"
+    },
+    "ProjectsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "projects": {"type": "array", "items": {"$ref": "#/$defs/ProjectIdentity"}}
+      },
+      "required": ["projects"],
+      "type": "object"
+    },
     "SelectionRequest": {
       "additionalProperties": false,
       "properties": {
@@ -89,6 +297,132 @@
         "warning"
       ],
       "type": "object"
+    },
+    "UsageRefreshRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {"description": "The CLI Alias of the Ready Identity Profile to refresh.", "type": "string"},
+        "trigger_reason": {"description": "The authorized dashboard lifecycle event requesting collection.", "enum": ["dashboard_open", "dashboard_refresh"], "type": "string"}
+      },
+      "required": ["alias"],
+      "type": "object"
+    },
+    "UsageErrorResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {"description": "Stable machine-readable error identifier.", "type": "string"},
+        "message": {"description": "Safe user-facing error message.", "type": "string"}
+      },
+      "required": ["code", "message"],
+      "type": "object"
+    },
+    "UsageAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"},
+        "value": {"type": "number"},
+        "unit": {"type": "string"},
+        "value_kind": {"type": "string"},
+        "source_class": {"type": "string"},
+        "scope": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "profile_count": {"type": "integer"}
+      },
+      "required": ["metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "profile_count"],
+      "type": "object"
+    },
+    "UsageMetricAmbiguity": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "required": ["metric_key", "reason"],
+      "type": "object"
+    },
+    "UsageMetricAvailability": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_availability_id": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "state": {"type": "string"},
+        "reason": {"type": "string"},
+        "checked_at": {"type": "string"},
+        "provenance": {"type": "string"}
+      },
+      "required": ["metric_availability_id", "metric_key", "state", "reason", "checked_at", "provenance"],
+      "type": "object"
+    },
+    "UsageObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {"type": "string"},
+        "metric_key": {"type": "string"},
+        "value": {"type": "number"},
+        "unit": {"type": "string"},
+        "value_kind": {"type": "string"},
+        "source_class": {"type": "string"},
+        "scope": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "observed_at": {"type": "string"},
+        "captured_at": {"type": "string"},
+        "capture_age_seconds": {"type": "integer"},
+        "window_start": {"type": "string"},
+        "window_end": {"type": "string"},
+        "window_timezone": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
+        "provenance": {"type": "string"},
+        "freshness": {"type": "string"},
+        "availability": {"type": "string"},
+        "assumptions": {"type": "string"},
+        "uncertainty": {"type": "string"}
+      },
+      "required": ["observation_id", "metric_key", "value", "unit", "value_kind", "source_class", "scope", "aggregation", "observed_at", "captured_at", "capture_age_seconds", "window_start", "window_end", "window_timezone", "source", "source_version", "provenance", "freshness", "availability", "assumptions", "uncertainty"],
+      "type": "object"
+    },
+    "UsageSnapshotResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {"type": "string"},
+        "profile_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "source": {"type": "string"},
+        "source_version": {"type": "string"},
+        "captured_at": {"type": "string"},
+        "status": {"type": "string"},
+        "trigger_reason": {"type": "string"},
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/UsageObservation"}},
+        "availability": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAvailability"}}
+      },
+      "required": ["snapshot_id", "profile_id", "alias", "source", "source_version", "captured_at", "status", "trigger_reason", "observations", "availability"],
+      "type": "object"
+    },
+    "UsageCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {"type": "string"},
+        "alias": {"type": "string"},
+        "eligible": {"type": "boolean"},
+        "capacity_state": {"enum": ["fresh", "stale", "partial", "contradictory", "incompatible", "ineligible"], "type": "string"}
+      },
+      "required": ["profile_id", "alias", "eligible", "capacity_state"],
+      "type": "object"
+    },
+    "AnalyticsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {"enum": ["selected_profile", "combined_identity"], "type": "string"},
+        "eligible_profile_count": {"type": "integer"},
+        "recommended_profile_id": {"type": "string", "description": "Empty unless a unique eligible profile has comparable provider capacity captured no more than ten minutes ago. This evaluates companion-observable facts only, not model, tool, repository, workspace-policy, or task suitability."},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/UsageCandidate"}},
+        "profiles": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}},
+        "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
+        "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+      },
+      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity"],
+      "type": "object"
     }
   },
   "info": {
@@ -98,6 +432,57 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/analytics/history": {
+      "post": {
+        "operationId": "manageAnalyticsHistory",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/HistoryRequest"}}}, "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/HistoryResponse"}}},
+            "description": "Reads/configures retention, runs one bounded maintenance batch, lists up to 1000 complete aggregate buckets, previews/applies a fully scoped confirmed purge, or returns a previewed normalized analytics export."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
+    "/api/v1/analytics": {
+      "get": {
+        "operationId": "getAnalytics",
+        "parameters": [
+          {"in": "query", "name": "scope", "required": false, "schema": {"enum": ["selected_profile", "combined_identity"], "type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/AnalyticsResponse"}}},
+            "description": "Returns Selected Profile analytics by default or the explicit Combined Identity View."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when analytics are unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/activity": {
+      "get": {
+        "operationId": "getActivity",
+        "parameters": [
+          {"in": "query", "name": "profile", "required": false, "schema": {"type": "string"}},
+          {"in": "query", "name": "project", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityResponse"}}},
+            "description": "Returns the safe filtered Managed Launch and Observed Session timeline."
+          }
+        }
+      }
+    },
     "/api/v1/bootstrap": {
       "post": {
         "operationId": "exchangeBootstrap",
@@ -142,6 +527,17 @@
         }
       }
     },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "getProjects",
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
+            "description": "Returns safe app-local Project Identity projections without canonical paths."
+          }
+        }
+      }
+    },
     "/api/v1/selection": {
       "get": {
         "operationId": "getSelection",
@@ -180,6 +576,43 @@
               }
             },
             "description": "Persists one Ready Identity Profile as Selected Profile."
+          }
+        }
+      }
+    },
+    "/api/v1/usage/latest": {
+      "get": {
+        "operationId": "getLatestUsage",
+        "parameters": [
+          {"in": "query", "name": "alias", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageSnapshotResponse"}}},
+            "description": "Returns the latest normalized usage evidence without collecting."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when evidence is unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/usage/refresh": {
+      "post": {
+        "operationId": "refreshUsage",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageRefreshRequest"}}},
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageSnapshotResponse"}}},
+            "description": "Collects and persists one normalized Usage Snapshot."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable, safe error identifier when refresh fails."
           }
         }
       }
