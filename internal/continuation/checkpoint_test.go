@@ -104,6 +104,65 @@ func TestCaptureRejectsOversizeWithoutTruncatingOrPersisting(t *testing.T) {
 	}
 }
 
+func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) {
+	repository := &checkpointRepositoryStub{}
+	service, err := NewService(ServiceOptions{
+		Repository:    repository,
+		Projects:      &projectStub{},
+		Inspector:     &inspectorStub{},
+		HomeDirectory: "/home/alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := Checkpoint{
+		ID: "checkpoint-1", Status: StatusApproved, Source: SourceRepositoryFirst,
+		Repository: RepositoryState{Modified: observed([]string{"private/secret.txt"}, CompletenessComplete)},
+		Fields:     CheckpointFields{Goal: userField("old goal")},
+	}
+	checkpoint, repository.loaded.Metadata, err = finalizeCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.loaded.ID, repository.loaded.Status = checkpoint.ID, checkpoint.Status
+
+	edited, err := service.Edit(context.Background(), checkpoint.ID, EditRequest{
+		Fields:      CheckpointFields{Goal: userField("finish /home/alice without token")},
+		RedactPaths: []string{"private/secret.txt"}, RedactText: []string{"token"},
+	})
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if edited.Status != StatusDraft || edited.Fields.Goal.Value != "finish [HOME] without [REDACTED]" || edited.Repository.Modified.Value[0] != RedactedValue || edited.Revision == "" {
+		t.Fatalf("edited checkpoint = %#v", edited)
+	}
+	if repository.saved.Status != StatusDraft {
+		t.Fatalf("saved edit status = %q, want draft", repository.saved.Status)
+	}
+
+	repository.loaded = repository.saved
+	approved, err := service.Approve(context.Background(), checkpoint.ID, edited.Revision)
+	if err != nil || approved.Status != StatusApproved || repository.saved.Status != StatusApproved {
+		t.Fatalf("Approve() = %#v, %v; saved status %q", approved, err, repository.saved.Status)
+	}
+	repository.loaded = repository.saved
+	if _, err := service.Approve(context.Background(), checkpoint.ID, "stale-revision"); !errors.Is(err, ErrCheckpointRevisionChanged) {
+		t.Fatalf("Approve(stale) error = %v, want ErrCheckpointRevisionChanged", err)
+	}
+
+	repository.loaded = repository.saved
+	reedited, err := service.Edit(context.Background(), checkpoint.ID, EditRequest{Fields: edited.Fields})
+	if err != nil || reedited.Status != StatusDraft {
+		t.Fatalf("Edit(approved) = %#v, %v", reedited, err)
+	}
+	repository.loaded = repository.saved
+	oversize := reedited.Fields
+	oversize.Goal.Value = strings.Repeat("x", MaxCheckpointBytes)
+	if _, err := service.Edit(context.Background(), checkpoint.ID, EditRequest{Fields: oversize}); !errors.Is(err, ErrCheckpointOversize) {
+		t.Fatalf("Edit(oversize) error = %v, want ErrCheckpointOversize", err)
+	}
+}
+
 func TestShowLoadsEncryptedRecordProjection(t *testing.T) {
 	want := Checkpoint{ID: "checkpoint-1", Status: StatusDraft, Project: Project{ID: "project-1", Alias: "Folio", Basename: "folio"}, Source: SourceRepositoryFirst}
 	metadata, err := encodeCheckpoint(want)

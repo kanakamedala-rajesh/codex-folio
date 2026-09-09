@@ -124,6 +124,15 @@ func TestContinuationCheckpointMetadataUsesEncryptedCheckpointStorage(t *testing
 	if err != nil || got.Metadata != metadata {
 		t.Fatalf("LoadCheckpoint() = %#v, %v", got, err)
 	}
+	edited := "approved checkpoint metadata sentinel"
+	record.Status, record.Metadata, record.Goal = continuation.StatusApproved, edited, &edited
+	if err := foundation.SaveCheckpoint(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	got, err = foundation.LoadCheckpoint(context.Background(), record.ID)
+	if err != nil || got.Status != continuation.StatusApproved || got.Metadata != edited || got.Goal == nil || *got.Goal != edited {
+		t.Fatalf("approved LoadCheckpoint() = %#v, %v", got, err)
+	}
 	if err := foundation.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +140,7 @@ func TestContinuationCheckpointMetadataUsesEncryptedCheckpointStorage(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(database, []byte("checkpoint metadata sentinel")) {
+	if bytes.Contains(database, []byte("checkpoint metadata sentinel")) || bytes.Contains(database, []byte(edited)) {
 		t.Fatal("database contains continuation metadata in plaintext")
 	}
 }

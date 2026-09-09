@@ -134,7 +134,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio project {resolve|list|edit|reconcile} ...")
 	fmt.Fprintln(stdout, "  codex-folio activity {refresh ALIAS|list [--profile ALIAS] [--project ID]} ...")
 	fmt.Fprintln(stdout, "  codex-folio analytics {retention|purge|aggregates} ...")
-	fmt.Fprintln(stdout, "  codex-folio checkpoint {capture|show} ...")
+	fmt.Fprintln(stdout, "  codex-folio checkpoint {capture|show|review} ...")
 	fmt.Fprintln(stdout, "  codex-folio shell {generate|remove} [--shell bash|zsh|powershell] [--wrapper] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

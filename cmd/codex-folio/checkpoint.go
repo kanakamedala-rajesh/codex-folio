@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	gitadapter "venkatasudha.com/codex-folio/internal/adapters/git"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -19,12 +22,29 @@ import (
 	"venkatasudha.com/codex-folio/internal/store"
 )
 
+type checkpointOptions struct {
+	selectionOptions
+	nonInteractive bool
+}
+
 func runCheckpoint(args []string, stdout, stderr io.Writer, resolvePaths servicePathResolver) int {
+	return runCheckpointWithDependencies(args, os.Stdin, stdout, stderr, resolvePaths, func(path string) error {
+		return editCheckpointFile(path, os.Stdin, stdout, stderr)
+	})
+}
+
+func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, editor func(string) error) int {
 	request, options, err := parseCheckpointRequest(args)
 	if err != nil {
 		return writeCheckpointUsage(stderr, newServiceDiagnosticSink())
 	}
-	return withSelectionService(os.Stdin, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
+	if request.Action == "review" && options.nonInteractive {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ContinuationCheckpointInvalid, errors.New("checkpoint review requires interactive approval")), newServiceDiagnosticSink())
+	}
+	return withSelectionService(input, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options.selectionOptions, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
+		if request.Action == "review" {
+			return reviewCheckpoint(input, stdout, stderr, client, request, editor)
+		}
 		result, err := client.Checkpoint(context.Background(), request)
 		if err != nil {
 			return err
@@ -37,23 +57,31 @@ func runCheckpoint(args []string, stdout, stderr io.Writer, resolvePaths service
 	})
 }
 
-func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, selectionOptions, error) {
-	if len(args) == 0 || (args[0] != "capture" && args[0] != "show") {
-		return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("checkpoint action is required")
+func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, checkpointOptions, error) {
+	if len(args) == 0 || (args[0] != "capture" && args[0] != "show" && args[0] != "review") {
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint action is required")
 	}
 	request := httpapi.CommandCheckpointRequest{Action: args[0]}
 	values, seen, operands, common := map[string]string{}, map[string]bool{}, []string{}, []string{}
+	nonInteractive := false
 	for index := 1; index < len(args); index++ {
 		arg := args[index]
 		if arg == "--json" {
 			common = append(common, arg)
 			continue
 		}
+		if arg == "--non-interactive" {
+			if nonInteractive {
+				return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("non-interactive may be supplied only once")
+			}
+			nonInteractive = true
+			continue
+		}
 		name, value, hasValue := strings.Cut(arg, "=")
 		if name == "--state-root" || name == "--vault-mode" {
 			if !hasValue {
 				if index+1 >= len(args) {
-					return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("common option requires a value")
+					return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("common option requires a value")
 				}
 				index++
 				common = append(common, name, args[index])
@@ -67,17 +95,17 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, se
 			continue
 		}
 		if !checkpointOption(name) {
-			return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("unknown checkpoint option")
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("unknown checkpoint option")
 		}
 		if !hasValue {
 			if index+1 >= len(args) {
-				return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("checkpoint option requires a value")
+				return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint option requires a value")
 			}
 			index++
 			value = args[index]
 		}
 		if value == "" || (seen[name] && name != "--project-command" && name != "--redact-path" && name != "--redact-text") {
-			return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("checkpoint option is invalid")
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint option is invalid")
 		}
 		seen[name] = true
 		if name == "--redact-path" {
@@ -92,17 +120,28 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, se
 	}
 	options, err := parseSelectionOptions(common)
 	if err != nil {
-		return httpapi.CommandCheckpointRequest{}, selectionOptions{}, err
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, err
 	}
+	resultOptions := checkpointOptions{selectionOptions: options, nonInteractive: nonInteractive}
 	if request.Action == "show" {
-		if len(operands) != 1 || len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 {
-			return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("show requires one checkpoint ID")
+		if len(operands) != 1 || len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 || nonInteractive {
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("show requires one checkpoint ID")
 		}
 		request.ID = operands[0]
-		return request, options, nil
+		return request, resultOptions, nil
+	}
+	if request.Action == "review" {
+		if len(operands) != 1 || len(values) != 0 || len(request.ProjectCommands) != 0 || options.json {
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("review requires one checkpoint ID")
+		}
+		request.ID = operands[0]
+		return request, resultOptions, nil
+	}
+	if nonInteractive {
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("capture is not interactive")
 	}
 	if len(operands) > 1 {
-		return httpapi.CommandCheckpointRequest{}, selectionOptions{}, errors.New("capture accepts one repository path")
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("capture accepts one repository path")
 	}
 	request.Path = "."
 	if len(operands) == 1 {
@@ -112,10 +151,149 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, se
 	request.PendingWork, request.Risks, request.NextAction = values["--pending-work"], values["--risks"], values["--next-action"]
 	validation, err := parseValidation(values)
 	if err != nil {
-		return httpapi.CommandCheckpointRequest{}, selectionOptions{}, err
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, err
 	}
 	request.Validation = validation
-	return request, options, nil
+	return request, resultOptions, nil
+}
+
+func reviewCheckpoint(input io.Reader, stdout, stderr io.Writer, client *httpapi.CommandClient, request httpapi.CommandCheckpointRequest, editor func(string) error) error {
+	shown, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "show", ID: request.ID})
+	if err != nil {
+		return err
+	}
+	writeCheckpoint(stdout, shown.Checkpoint)
+	fields, err := editCheckpointFields(shown.Checkpoint.Fields, editor)
+	if err != nil {
+		return err
+	}
+	edited, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "edit", ID: request.ID, Fields: &fields, RedactPaths: request.RedactPaths, RedactText: request.RedactText})
+	if err != nil {
+		return err
+	}
+	io.WriteString(stdout, "Sanitized revision:\n")
+	writeCheckpoint(stdout, edited.Checkpoint)
+	io.WriteString(stderr, "Type 'approve' to approve this sanitized revision; anything else cancels: ")
+	scanner := bufio.NewScanner(input)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		io.WriteString(stdout, "Checkpoint remains draft.\n")
+		return nil
+	}
+	if strings.TrimSpace(scanner.Text()) != "approve" {
+		io.WriteString(stdout, "Checkpoint remains draft.\n")
+		return nil
+	}
+	approved, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "approve", ID: request.ID, Revision: edited.Checkpoint.Revision})
+	if err != nil {
+		return err
+	}
+	io.WriteString(stdout, "Approved checkpoint:\n")
+	writeCheckpoint(stdout, approved.Checkpoint)
+	return nil
+}
+
+func editCheckpointFields(fields continuation.CheckpointFields, editor func(string) error) (continuation.CheckpointFields, error) {
+	if editor == nil {
+		return continuation.CheckpointFields{}, errors.New("checkpoint editor is unavailable")
+	}
+	file, err := os.CreateTemp("", "codex-folio-checkpoint-*.json")
+	if err != nil {
+		return continuation.CheckpointFields{}, err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(fields); err != nil {
+		file.Close()
+		return continuation.CheckpointFields{}, err
+	}
+	if err := file.Close(); err != nil {
+		return continuation.CheckpointFields{}, err
+	}
+	if err := editor(path); err != nil {
+		return continuation.CheckpointFields{}, fmt.Errorf("checkpoint editor failed: %w", err)
+	}
+	file, err = os.Open(path)
+	if err != nil {
+		return continuation.CheckpointFields{}, err
+	}
+	defer file.Close()
+	limited := io.LimitReader(file, 4*continuation.MaxCheckpointBytes+1)
+	decoder := json.NewDecoder(limited)
+	decoder.DisallowUnknownFields()
+	var edited continuation.CheckpointFields
+	if err := decoder.Decode(&edited); err != nil {
+		return continuation.CheckpointFields{}, continuation.ErrCheckpointInvalid
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return continuation.CheckpointFields{}, continuation.ErrCheckpointInvalid
+	}
+	return edited, nil
+}
+
+func editCheckpointFile(path string, input io.Reader, stdout, stderr io.Writer) error {
+	command, err := splitEditorCommand(os.Getenv("EDITOR"))
+	if err != nil {
+		return err
+	}
+	if len(command) == 0 {
+		return errors.New("EDITOR is not set")
+	}
+	editor := foregroundCommand(command[0], append(command[1:], path)...)
+	editor.Stdin, editor.Stdout, editor.Stderr = input, stdout, stderr
+	return editor.Run()
+}
+
+func splitEditorCommand(value string) ([]string, error) {
+	var arguments []string
+	var current strings.Builder
+	var quote rune
+	token := false
+	runes := []rune(strings.TrimSpace(value))
+	for index := 0; index < len(runes); index++ {
+		character := runes[index]
+		if quote == 0 && unicode.IsSpace(character) {
+			if token {
+				arguments = append(arguments, current.String())
+				current.Reset()
+				token = false
+			}
+			continue
+		}
+		if character == '\'' || character == '"' {
+			if quote == 0 {
+				quote, token = character, true
+				continue
+			}
+			if quote == character {
+				quote = 0
+				continue
+			}
+		}
+		if character == '\\' && index+1 < len(runes) {
+			next := runes[index+1]
+			if next == '\\' || next == quote || (quote == 0 && (next == '\'' || next == '"' || unicode.IsSpace(next))) {
+				current.WriteRune(next)
+				token = true
+				index++
+				continue
+			}
+		}
+		current.WriteRune(character)
+		token = true
+	}
+	if quote != 0 {
+		return nil, errors.New("EDITOR has an unmatched quote")
+	}
+	if token {
+		arguments = append(arguments, current.String())
+	}
+	return arguments, nil
 }
 
 func checkpointOption(name string) bool {
@@ -195,19 +373,22 @@ func validationValue(values []continuation.ValidationEvidence) string {
 	if len(values) == 0 {
 		return "unknown"
 	}
-	value := values[0]
-	result := value.Command + " (source " + value.Source + ", freshness " + value.Freshness
-	if value.Timestamp == nil {
-		result += ", at unknown"
-	} else {
-		result += ", at " + value.Timestamp.Format(time.RFC3339)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		entry := value.Command + " (source " + value.Source + ", freshness " + value.Freshness
+		if value.Timestamp == nil {
+			entry += ", at unknown"
+		} else {
+			entry += ", at " + value.Timestamp.Format(time.RFC3339)
+		}
+		if value.ExitStatus == nil {
+			entry += ", exit unknown"
+		} else {
+			entry += fmt.Sprintf(", exit %d", *value.ExitStatus)
+		}
+		result = append(result, entry+")")
 	}
-	if value.ExitStatus == nil {
-		result += ", exit unknown"
-	} else {
-		result += fmt.Sprintf(", exit %d", *value.ExitStatus)
-	}
-	return result + ")"
+	return strings.Join(result, "; ")
 }
 
 func newCheckpointService(stateStore *store.Store, projects continuation.Projects) (*continuation.Service, error) {
@@ -218,6 +399,6 @@ func newCheckpointService(stateStore *store.Store, projects continuation.Project
 func writeCheckpointUsage(stderr io.Writer, sink diagnostics.Sink) int {
 	recordServiceDiagnostic(sink, apperrors.CLIUsage, diagnostics.SeverityWarning)
 	fmt.Fprintf(stderr, "codex-folio [%s]: invalid checkpoint arguments\n", apperrors.CLIUsage)
-	io.WriteString(stderr, "Usage: codex-folio checkpoint {capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID} [--state-root PATH] [--vault-mode MODE] [--json]\n")
+	io.WriteString(stderr, "Usage: codex-folio checkpoint {capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID|review ID [--redact-path PATH] [--redact-text TEXT] [--non-interactive]} [--state-root PATH] [--vault-mode MODE] [--json]\n")
 	return exitUsage
 }

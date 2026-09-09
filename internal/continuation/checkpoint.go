@@ -4,6 +4,7 @@ package continuation
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -20,6 +22,7 @@ import (
 const (
 	MaxCheckpointBytes      = 16 * 1024
 	StatusDraft             = "draft"
+	StatusApproved          = "approved"
 	SourceRepositoryFirst   = "repository-first"
 	ProvenanceLocalObserved = "local-observed"
 	ProvenanceUserConfirmed = "user-confirmed"
@@ -34,10 +37,11 @@ const (
 )
 
 var (
-	ErrCheckpointInvalid    = errors.New("checkpoint request is invalid")
-	ErrCheckpointNotFound   = errors.New("checkpoint was not found")
-	ErrCheckpointOversize   = errors.New("checkpoint exceeds the review size limit")
-	ErrRepositoryInspection = errors.New("repository inspection failed")
+	ErrCheckpointInvalid         = errors.New("checkpoint request is invalid")
+	ErrCheckpointNotFound        = errors.New("checkpoint was not found")
+	ErrCheckpointOversize        = errors.New("checkpoint exceeds the review size limit")
+	ErrCheckpointRevisionChanged = errors.New("checkpoint changed after review")
+	ErrRepositoryInspection      = errors.New("repository inspection failed")
 )
 
 type Evidence[T any] struct {
@@ -113,12 +117,18 @@ type Checkpoint struct {
 	CreatedAt  time.Time        `json:"created_at"`
 	ExpiresAt  time.Time        `json:"expires_at"`
 	SizeBytes  int              `json:"size_bytes"`
+	Revision   string           `json:"revision"`
 }
 
 type CaptureRequest struct {
 	Path, Alias, Goal, CompletedWork, PendingWork, Risks, NextAction string
 	Validation                                                       *ValidationEvidence
 	ConfiguredCommands, RedactPaths, RedactText                      []string
+}
+
+type EditRequest struct {
+	Fields                  CheckpointFields
+	RedactPaths, RedactText []string
 }
 
 type CheckpointRecord struct {
@@ -158,6 +168,7 @@ type Service struct {
 	now        func() time.Time
 	random     io.Reader
 	home       string
+	mutationMu sync.Mutex
 }
 
 func NewService(options ServiceOptions) (*Service, error) {
@@ -218,20 +229,14 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	checkpoint.Fields.Risks = userField(sanitizeText(request.Risks, service.home, request.RedactText))
 	checkpoint.Fields.NextAction = userField(sanitizeText(request.NextAction, service.home, request.RedactText))
 	checkpoint.Fields.Validation = validationField(request.Validation, service.home, request.RedactText)
-	checkpoint, metadata, err := finalizeCheckpoint(checkpoint)
+	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
 	if err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
 	if checkpoint.SizeBytes > MaxCheckpointBytes {
 		return Checkpoint{}, ErrCheckpointOversize
 	}
-	validation, _ := json.Marshal(checkpoint.Fields.Validation.Value)
-	record := CheckpointRecord{
-		ID: checkpoint.ID, ProjectIdentityID: project.ID, Status: StatusDraft, Metadata: metadata,
-		Goal: pointerOrNil(checkpoint.Fields.Goal.Value), CompletedWork: pointerOrNil(checkpoint.Fields.CompletedWork.Value), PendingWork: pointerOrNil(checkpoint.Fields.PendingWork.Value),
-		Validation: pointerOrNil(string(validation)), Risks: pointerOrNil(checkpoint.Fields.Risks.Value), NextAction: pointerOrNil(checkpoint.Fields.NextAction.Value), CreatedAt: now, ExpiresAt: &checkpoint.ExpiresAt,
-	}
-	if err := service.repository.SaveCheckpoint(ctx, record); err != nil {
+	if err := service.save(ctx, checkpoint, metadata); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
@@ -250,6 +255,109 @@ func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error)
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
 	return checkpoint, nil
+}
+
+func (service *Service) Edit(ctx context.Context, id string, request EditRequest) (Checkpoint, error) {
+	if invalidRedactions(request.RedactPaths, request.RedactText) {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	checkpoint, err := service.Show(ctx, id)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	fields, err := sanitizeFields(request.Fields, service.home, request.RedactText)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	checkpoint.Fields = fields
+	checkpoint.Status = StatusDraft
+	redactedPaths := normalizedRedactions(request.RedactPaths)
+	if checkpoint.Repository.Staged.Value, err = sanitizePaths(checkpoint.Repository.Staged.Value, redactedPaths); err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.Repository.Modified.Value, err = sanitizePaths(checkpoint.Repository.Modified.Value, redactedPaths); err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.Repository.Untracked.Value, err = sanitizePaths(checkpoint.Repository.Untracked.Value, redactedPaths); err != nil {
+		return Checkpoint{}, err
+	}
+	for index, command := range checkpoint.Repository.ConfiguredCommands.Value {
+		checkpoint.Repository.ConfiguredCommands.Value[index] = sanitizeText(command, service.home, request.RedactText)
+	}
+	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
+	if err != nil {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	if checkpoint.SizeBytes > MaxCheckpointBytes {
+		return Checkpoint{}, ErrCheckpointOversize
+	}
+	if err := service.save(ctx, checkpoint, metadata); err != nil {
+		return Checkpoint{}, err
+	}
+	return checkpoint, nil
+}
+
+func (service *Service) Approve(ctx context.Context, id, revision string) (Checkpoint, error) {
+	if revision == "" || invalidText(revision) {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	checkpoint, err := service.Show(ctx, id)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.Revision != revision {
+		return Checkpoint{}, ErrCheckpointRevisionChanged
+	}
+	checkpoint.Status = StatusApproved
+	checkpoint, metadata, err := finalizeCheckpoint(checkpoint)
+	if err != nil {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	if err := service.save(ctx, checkpoint, metadata); err != nil {
+		return Checkpoint{}, err
+	}
+	return checkpoint, nil
+}
+
+func (service *Service) save(ctx context.Context, checkpoint Checkpoint, metadata string) error {
+	validation, _ := json.Marshal(checkpoint.Fields.Validation.Value)
+	return service.repository.SaveCheckpoint(ctx, CheckpointRecord{
+		ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: checkpoint.Status, Metadata: metadata,
+		Goal: pointerOrNil(checkpoint.Fields.Goal.Value), CompletedWork: pointerOrNil(checkpoint.Fields.CompletedWork.Value), PendingWork: pointerOrNil(checkpoint.Fields.PendingWork.Value),
+		Validation: pointerOrNil(string(validation)), Risks: pointerOrNil(checkpoint.Fields.Risks.Value), NextAction: pointerOrNil(checkpoint.Fields.NextAction.Value), CreatedAt: checkpoint.CreatedAt, ExpiresAt: &checkpoint.ExpiresAt,
+	})
+}
+
+func sanitizeFields(fields CheckpointFields, home string, redactions []string) (CheckpointFields, error) {
+	values := []*Evidence[string]{&fields.Goal, &fields.CompletedWork, &fields.PendingWork, &fields.Risks, &fields.NextAction}
+	for _, field := range values {
+		if invalidText(field.Value) {
+			return CheckpointFields{}, ErrCheckpointInvalid
+		}
+		*field = userField(sanitizeText(field.Value, home, redactions))
+	}
+	validations := make([]ValidationEvidence, 0, len(fields.Validation.Value))
+	completeness := CompletenessComplete
+	for _, validation := range fields.Validation.Value {
+		if invalidValidation(&validation) {
+			return CheckpointFields{}, ErrCheckpointInvalid
+		}
+		value := validationField(&validation, home, redactions)
+		validations = append(validations, value.Value[0])
+		if value.Completeness != CompletenessComplete {
+			completeness = CompletenessPartial
+		}
+	}
+	if len(validations) == 0 {
+		fields.Validation = Evidence[[]ValidationEvidence]{Value: []ValidationEvidence{}, Provenance: ProvenanceUnknown, Completeness: CompletenessUnknown}
+	} else {
+		fields.Validation = Evidence[[]ValidationEvidence]{Value: validations, Provenance: ProvenanceUserConfirmed, Completeness: completeness}
+	}
+	return fields, nil
 }
 
 func repositoryState(inventory RepositoryInventory) RepositoryState {
@@ -408,6 +516,23 @@ func finalizeCheckpoint(checkpoint Checkpoint) (Checkpoint, string, error) {
 		}
 		checkpoint.SizeBytes = len(metadata)
 	}
+}
+
+func prepareCheckpoint(checkpoint Checkpoint) (Checkpoint, string, error) {
+	content, err := json.Marshal(struct {
+		Project    Project          `json:"project"`
+		Repository RepositoryState  `json:"repository"`
+		Fields     CheckpointFields `json:"fields"`
+		Source     string           `json:"source"`
+		CreatedAt  time.Time        `json:"created_at"`
+		ExpiresAt  time.Time        `json:"expires_at"`
+	}{checkpoint.Project, checkpoint.Repository, checkpoint.Fields, checkpoint.Source, checkpoint.CreatedAt, checkpoint.ExpiresAt})
+	if err != nil {
+		return Checkpoint{}, "", err
+	}
+	digest := sha256.Sum256(content)
+	checkpoint.Revision = hex.EncodeToString(digest[:])
+	return finalizeCheckpoint(checkpoint)
 }
 
 func newID(random io.Reader) (string, error) {

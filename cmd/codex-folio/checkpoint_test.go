@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +36,10 @@ func TestParseCheckpointCaptureAndShow(t *testing.T) {
 	if err != nil || show.ID != "checkpoint-1" {
 		t.Fatalf("show = %#v, %v", show, err)
 	}
+	review, reviewOptions, err := parseCheckpointRequest([]string{"review", "checkpoint-1", "--redact-text", "secret", "--non-interactive"})
+	if err != nil || review.ID != "checkpoint-1" || !reviewOptions.nonInteractive || len(review.RedactText) != 1 {
+		t.Fatalf("review = %#v/%#v, %v", review, reviewOptions, err)
+	}
 	for _, invalid := range [][]string{{"capture", "a", "b"}, {"show"}, {"show", "id", "--goal", "no"}, {"show", "id", "--project-command", "go test"}, {"capture", "--validation-exit", "0"}, {"capture", "--validation-command", "go test", "--validation-freshness", "recent"}} {
 		if _, _, err := parseCheckpointRequest(invalid); err == nil {
 			t.Fatalf("parseCheckpointRequest(%q) error = nil", invalid)
@@ -50,8 +58,48 @@ func TestPartialValidationUsesExplicitUnknowns(t *testing.T) {
 	if request.Validation.Source != continuation.ProvenanceUnknown || request.Validation.Freshness != continuation.FreshnessUnknown {
 		t.Fatalf("validation = %#v", request.Validation)
 	}
-	if got := validationValue([]continuation.ValidationEvidence{*request.Validation}); got != "go test ./... (source unknown, freshness unknown, at unknown, exit unknown)" {
+	second := continuation.ValidationEvidence{Command: "go vet ./...", Source: "local", Freshness: continuation.FreshnessFresh}
+	if got := validationValue([]continuation.ValidationEvidence{*request.Validation, second}); got != "go test ./... (source unknown, freshness unknown, at unknown, exit unknown); go vet ./... (source local, freshness fresh, at unknown, exit unknown)" {
 		t.Fatalf("validationValue() = %q", got)
+	}
+}
+
+func TestEditCheckpointFilePassesEditorArgumentsAndPath(t *testing.T) {
+	if os.Getenv("GO_WANT_CHECKPOINT_EDITOR_HELPER") == "1" {
+		args := os.Args
+		if len(args) < 2 || args[len(args)-2] != "--" {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(os.Getenv("CHECKPOINT_EDITOR_MARKER"), []byte(args[len(args)-1]), 0o600); err != nil {
+			os.Exit(3)
+		}
+		input, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			os.Exit(4)
+		}
+		_, _ = os.Stdout.Write(input)
+		_, _ = os.Stderr.Write([]byte("editor stderr"))
+		os.Exit(0)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "editor-marker")
+	checkpointPath := filepath.Join(t.TempDir(), "checkpoint with spaces.json")
+	t.Setenv("GO_WANT_CHECKPOINT_EDITOR_HELPER", "1")
+	t.Setenv("CHECKPOINT_EDITOR_MARKER", marker)
+	t.Setenv("EDITOR", strconv.Quote(executable)+" -test.run=^TestEditCheckpointFilePassesEditorArgumentsAndPath$ --")
+	var stdout, stderr bytes.Buffer
+	if err := editCheckpointFile(checkpointPath, strings.NewReader("editor stdin"), &stdout, &stderr); err != nil {
+		t.Fatalf("editCheckpointFile() error = %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil || string(got) != checkpointPath {
+		t.Fatalf("editor path = %q, %v; want %q", got, err, checkpointPath)
+	}
+	if stdout.String() != "editor stdin" || stderr.String() != "editor stderr" {
+		t.Fatalf("editor streams = stdout %q stderr %q", stdout.String(), stderr.String())
 	}
 }
 
@@ -116,6 +164,85 @@ func TestCheckpointCLICapturesAndShowsThroughServiceAndEncryptedStore(t *testing
 	var shown continuation.Checkpoint
 	if decodeErr := json.Unmarshal(stdout.Bytes(), &shown); code != exitSuccess || decodeErr != nil || shown.ID != captured.ID || shown.Fields.Goal.Value != captured.Fields.Goal.Value {
 		t.Fatalf("show CLI = code %d stdout %q checkpoint %#v error %v", code, stdout.String(), shown, decodeErr)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	var editedPath string
+	editor := func(path string) error {
+		editedPath = path
+		if filepath.Clean(filepath.Dir(path)) == filepath.Clean(repository) {
+			t.Fatalf("editor material was created in the repository: %s", path)
+		}
+		if info, statErr := os.Stat(path); statErr != nil {
+			t.Fatal(statErr)
+		} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+			t.Fatalf("editor material mode = %o, want 600", info.Mode().Perm())
+		}
+		encoded, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var fields continuation.CheckpointFields
+		if decodeErr := json.Unmarshal(encoded, &fields); decodeErr != nil {
+			return decodeErr
+		}
+		fields.Goal.Value = "approved token-value"
+		fields.NextAction.Value = "run nothing"
+		return os.WriteFile(path, mustJSON(t, fields), 0o600)
+	}
+	code = runCheckpointWithDependencies([]string{"review", captured.ID, "--redact-text", "token-value", "--redact-path", "notes.txt"}, strings.NewReader("approve\n"), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, editor)
+	if code != exitSuccess || !strings.Contains(stdout.String(), "Approved checkpoint:") || !strings.Contains(stdout.String(), "approved [REDACTED]") || !strings.Contains(stdout.String(), continuation.StatusApproved) {
+		t.Fatalf("review CLI = code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(editedPath); !os.IsNotExist(err) {
+		t.Fatalf("editor material was not cleaned up: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCheckpointWithDependencies([]string{"review", captured.ID}, strings.NewReader("cancel\n"), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, func(path string) error {
+		var fields continuation.CheckpointFields
+		encoded, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if decodeErr := json.Unmarshal(encoded, &fields); decodeErr != nil {
+			return decodeErr
+		}
+		fields.Goal.Value = "cancelled edit"
+		return os.WriteFile(path, mustJSON(t, fields), 0o600)
+	})
+	if code != exitSuccess || !strings.Contains(stdout.String(), "Checkpoint remains draft.") {
+		t.Fatalf("cancel review = code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+	stored, err := service.Show(t.Context(), captured.ID)
+	if err != nil || stored.Status != continuation.StatusDraft || stored.Fields.Goal.Value != "cancelled edit" {
+		t.Fatalf("cancelled stored checkpoint = %#v, %v", stored, err)
+	}
+
+	editorCalled := false
+	code = runCheckpointWithDependencies([]string{"review", captured.ID, "--non-interactive"}, strings.NewReader("approve\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, func(string) error { editorCalled = true; return nil })
+	if code == exitSuccess || editorCalled {
+		t.Fatalf("non-interactive review = code %d editor called %t", code, editorCalled)
+	}
+	code = runCheckpointWithDependencies([]string{"review", captured.ID}, strings.NewReader("approve\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, func(string) error { return errors.New("editor failed") })
+	if code == exitSuccess {
+		t.Fatal("editor failure approved checkpoint")
+	}
+	code = runCheckpointWithDependencies([]string{"review", captured.ID}, strings.NewReader("approve\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, func(path string) error {
+		return os.WriteFile(path, []byte(`{"goal":`), 0o600)
+	})
+	if code == exitSuccess {
+		t.Fatal("invalid edited content approved checkpoint")
+	}
+	code = runCheckpointWithDependencies([]string{"review", captured.ID}, strings.NewReader("approve\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, func(path string) error {
+		fields := stored.Fields
+		fields.Goal.Value = strings.Repeat("x", continuation.MaxCheckpointBytes)
+		return os.WriteFile(path, mustJSON(t, fields), 0o600)
+	})
+	if code == exitSuccess {
+		t.Fatal("oversize edited content approved checkpoint")
 	}
 	statusAfter := runCheckpointGit(t, repository, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if string(statusBefore) != string(statusAfter) {
