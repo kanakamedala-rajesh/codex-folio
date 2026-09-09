@@ -153,6 +153,8 @@ func checkpointError(err error) (int, string) {
 		return http.StatusConflict, apperrors.ContinuationCheckpointOversize
 	case errors.Is(err, continuation.ErrCheckpointRevisionChanged):
 		return http.StatusConflict, apperrors.ContinuationCheckpointInvalid
+	case errors.Is(err, continuation.ErrHandoffNotReady):
+		return http.StatusConflict, apperrors.ContinuationCheckpointInvalid
 	case errors.Is(err, continuation.ErrRepositoryInspection):
 		return http.StatusConflict, apperrors.ContinuationRepositoryInspectionFailed
 	case errors.Is(err, continuation.ErrCheckpointInvalid):

@@ -23,6 +23,8 @@ const (
 	MaxCheckpointBytes      = 16 * 1024
 	StatusDraft             = "draft"
 	StatusApproved          = "approved"
+	StatusLaunching         = "launching"
+	StatusCompleted         = "completed"
 	SourceRepositoryFirst   = "repository-first"
 	ProvenanceLocalObserved = "local-observed"
 	ProvenanceUserConfirmed = "user-confirmed"
@@ -41,8 +43,31 @@ var (
 	ErrCheckpointNotFound        = errors.New("checkpoint was not found")
 	ErrCheckpointOversize        = errors.New("checkpoint exceeds the review size limit")
 	ErrCheckpointRevisionChanged = errors.New("checkpoint changed after review")
+	ErrHandoffNotReady           = errors.New("Safe Continuation is not ready")
 	ErrRepositoryInspection      = errors.New("repository inspection failed")
 )
+
+type SourceState string
+
+const (
+	SourceExited    SourceState = "exited"
+	SourceRunning   SourceState = "running"
+	SourceUncertain SourceState = "uncertain"
+)
+
+type SourceLaunch struct {
+	ProfileID string
+	State     SourceState
+}
+
+type PreparedHandoff struct {
+	CheckpointID     string
+	Revision         string
+	ProjectID        string
+	SourceProfileID  string
+	WorkingDirectory string
+	Context          string
+}
 
 type Evidence[T any] struct {
 	Value        T      `json:"value"`
@@ -141,6 +166,7 @@ type CheckpointRecord struct {
 type Repository interface {
 	SaveCheckpoint(context.Context, CheckpointRecord) error
 	LoadCheckpoint(context.Context, string) (CheckpointRecord, error)
+	LatestSourceLaunch(context.Context, string) (SourceLaunch, error)
 }
 
 type Projects interface {
@@ -254,6 +280,7 @@ func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error)
 	if err := json.Unmarshal([]byte(record.Metadata), &checkpoint); err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
+	checkpoint.Status = record.Status
 	return checkpoint, nil
 }
 
@@ -266,6 +293,9 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 	checkpoint, err := service.Show(ctx, id)
 	if err != nil {
 		return Checkpoint{}, err
+	}
+	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted {
+		return Checkpoint{}, ErrHandoffNotReady
 	}
 	fields, err := sanitizeFields(request.Fields, service.home, request.RedactText)
 	if err != nil {
@@ -309,6 +339,9 @@ func (service *Service) Approve(ctx context.Context, id, revision string) (Check
 	if err != nil {
 		return Checkpoint{}, err
 	}
+	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted {
+		return Checkpoint{}, ErrHandoffNotReady
+	}
 	if checkpoint.Revision != revision {
 		return Checkpoint{}, ErrCheckpointRevisionChanged
 	}
@@ -321,6 +354,38 @@ func (service *Service) Approve(ctx context.Context, id, revision string) (Check
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
+}
+
+func (service *Service) PrepareHandoff(ctx context.Context, id, revision, targetProfileID string) (PreparedHandoff, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(revision) == "" || strings.TrimSpace(targetProfileID) == "" || invalidText(id) || invalidText(revision) || invalidText(targetProfileID) {
+		return PreparedHandoff{}, ErrCheckpointInvalid
+	}
+	record, err := service.repository.LoadCheckpoint(ctx, id)
+	if err != nil {
+		return PreparedHandoff{}, err
+	}
+	var checkpoint Checkpoint
+	if err := json.Unmarshal([]byte(record.Metadata), &checkpoint); err != nil {
+		return PreparedHandoff{}, ErrCheckpointInvalid
+	}
+	if record.Status != StatusApproved || checkpoint.Status != StatusApproved || checkpoint.Revision != revision || record.ProjectIdentityID == "" || checkpoint.Project.ID != record.ProjectIdentityID || record.ExpiresAt == nil || !service.now().UTC().Before(record.ExpiresAt.UTC()) || !checkpoint.ExpiresAt.Equal(*record.ExpiresAt) {
+		return PreparedHandoff{}, ErrHandoffNotReady
+	}
+	source, err := service.repository.LatestSourceLaunch(ctx, record.ProjectIdentityID)
+	if err != nil {
+		return PreparedHandoff{}, err
+	}
+	if source.State != SourceExited || source.ProfileID == "" || source.ProfileID == targetProfileID {
+		return PreparedHandoff{}, ErrHandoffNotReady
+	}
+	workingDirectory, err := service.projects.CanonicalLocation(ctx, record.ProjectIdentityID)
+	if err != nil {
+		return PreparedHandoff{}, err
+	}
+	return PreparedHandoff{
+		CheckpointID: id, Revision: revision, ProjectID: record.ProjectIdentityID, SourceProfileID: source.ProfileID,
+		WorkingDirectory: workingDirectory, Context: record.Metadata,
+	}, nil
 }
 
 func (service *Service) save(ctx context.Context, checkpoint Checkpoint, metadata string) error {

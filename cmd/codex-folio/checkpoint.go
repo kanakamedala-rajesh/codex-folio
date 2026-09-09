@@ -43,7 +43,8 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 	}
 	return withSelectionService(input, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options.selectionOptions, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		if request.Action == "review" {
-			return reviewCheckpoint(input, stdout, stderr, client, request, editor)
+			_, _, err := reviewCheckpoint(input, stdout, stderr, client, request, editor)
+			return err
 		}
 		result, err := client.Checkpoint(context.Background(), request)
 		if err != nil {
@@ -157,19 +158,19 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, ch
 	return request, resultOptions, nil
 }
 
-func reviewCheckpoint(input io.Reader, stdout, stderr io.Writer, client *httpapi.CommandClient, request httpapi.CommandCheckpointRequest, editor func(string) error) error {
+func reviewCheckpoint(input io.Reader, stdout, stderr io.Writer, client *httpapi.CommandClient, request httpapi.CommandCheckpointRequest, editor func(string) error) (continuation.Checkpoint, bool, error) {
 	shown, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "show", ID: request.ID})
 	if err != nil {
-		return err
+		return continuation.Checkpoint{}, false, err
 	}
 	writeCheckpoint(stdout, shown.Checkpoint)
 	fields, err := editCheckpointFields(shown.Checkpoint.Fields, editor)
 	if err != nil {
-		return err
+		return continuation.Checkpoint{}, false, err
 	}
 	edited, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "edit", ID: request.ID, Fields: &fields, RedactPaths: request.RedactPaths, RedactText: request.RedactText})
 	if err != nil {
-		return err
+		return continuation.Checkpoint{}, false, err
 	}
 	io.WriteString(stdout, "Sanitized revision:\n")
 	writeCheckpoint(stdout, edited.Checkpoint)
@@ -177,22 +178,22 @@ func reviewCheckpoint(input io.Reader, stdout, stderr io.Writer, client *httpapi
 	scanner := bufio.NewScanner(input)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			return err
+			return continuation.Checkpoint{}, false, err
 		}
 		io.WriteString(stdout, "Checkpoint remains draft.\n")
-		return nil
+		return edited.Checkpoint, false, nil
 	}
 	if strings.TrimSpace(scanner.Text()) != "approve" {
 		io.WriteString(stdout, "Checkpoint remains draft.\n")
-		return nil
+		return edited.Checkpoint, false, nil
 	}
 	approved, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "approve", ID: request.ID, Revision: edited.Checkpoint.Revision})
 	if err != nil {
-		return err
+		return continuation.Checkpoint{}, false, err
 	}
 	io.WriteString(stdout, "Approved checkpoint:\n")
 	writeCheckpoint(stdout, approved.Checkpoint)
-	return nil
+	return approved.Checkpoint, true, nil
 }
 
 func editCheckpointFields(fields continuation.CheckpointFields, editor func(string) error) (continuation.CheckpointFields, error) {

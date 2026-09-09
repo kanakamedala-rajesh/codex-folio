@@ -42,6 +42,7 @@ If semantic summarization is requested, the target identity performs it only aft
 - Default checkpoint size: 8–16 KiB, approximately 2–4k tokens.
 - Default retention: 30 days for repository-first checkpoints and seven days for transcript-assisted checkpoints, configurable from one day to unlimited.
 - A successful target launch marks the checkpoint completed but retains it until expiry or explicit analytics purge.
+- A reservation records the OS boot-session identity. If process start is not reported, keep the checkpoint non-authorizing during that boot; after a verified boot-session change, abandon the stale pending lease, restore the checkpoint, and rerun every current handoff check. Time alone is never evidence that the target stopped.
 - Exclude raw prompts, replies, diffs, tool output, environment values, authentication data, absolute home paths, and credential-bearing remotes.
 - Use repository-relative paths and allow path redaction.
 - Label fields as local-observed, user-confirmed, or model-derived.

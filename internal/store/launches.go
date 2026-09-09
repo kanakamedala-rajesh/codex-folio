@@ -5,11 +5,14 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 )
@@ -75,6 +78,13 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 		rollback()
 		return launch.Plan{}, apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
 	}
+	if request.CheckpointID != "" {
+		info, statErr := os.Stat(identityHome)
+		if statErr != nil || !info.IsDir() {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ProfileHomeInvalid, profile.ErrHomeInvalid)
+		}
+	}
 
 	now := store.clock.Now().UTC()
 	if now.IsZero() {
@@ -92,11 +102,56 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
 	encodedNow := formatStoredTime(now)
+	if request.CheckpointID != "" {
+		if strings.TrimSpace(request.BootSessionID) == "" {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid)
+		}
+		var checkpointStatus, checkpointProjectID, expiresAt string
+		var metadataCiphertext []byte
+		if err := tx.QueryRowContext(ctx, `SELECT status, project_identity_id, expires_at, recovery_metadata_ciphertext FROM checkpoints WHERE checkpoint_id = ?`, request.CheckpointID).Scan(&checkpointStatus, &checkpointProjectID, &expiresAt, &metadataCiphertext); err != nil {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+		expiry, err := parseStoredTime(expiresAt)
+		if err != nil || checkpointStatus != continuation.StatusApproved || checkpointProjectID != request.ProjectID || !now.Before(expiry) {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+		metadata, err := decryptField(ctx, secureVault, metadataCiphertext, checkpointAAD(request.CheckpointID, checkpointRecoveryField))
+		if err != nil {
+			rollback()
+			return launch.Plan{}, err
+		}
+		var approved struct {
+			Status   string `json:"status"`
+			Revision string `json:"revision"`
+		}
+		if json.Unmarshal([]byte(metadata), &approved) != nil || approved.Status != continuation.StatusApproved || approved.Revision != request.CheckpointRevision {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+		var sourceProfileID, sourceState string
+		err = tx.QueryRowContext(ctx, definitiveSourceLaunchSQL, request.ProjectID).Scan(&sourceProfileID, &sourceState)
+		if err != nil || sourceState != string(launch.StateExited) || sourceProfileID != request.SourceProfileID || sourceProfileID == profileID {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE checkpoints SET status = 'launching' WHERE checkpoint_id = ? AND status = 'approved'`, request.CheckpointID)
+		if err != nil {
+			rollback()
+			return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+		}
+		if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
+			rollback()
+			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO managed_launches (
 		managed_launch_id, profile_id, lease_id, project_identity_id, state,
 		started_at, ended_at, process_id, exit_status,
-		expected_session_id
-	) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?)`, managedLaunchID, profileID, leaseID, nullableString(request.ProjectID), encodedNow, nullableString(request.ExpectedSessionID)); err != nil {
+		expected_session_id, continuation_checkpoint_id, continuation_revision, boot_session_id
+	) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, ?, ?, ?)`, managedLaunchID, profileID, leaseID, nullableString(request.ProjectID), encodedNow, nullableString(request.ExpectedSessionID), nullableString(request.CheckpointID), nullableString(request.CheckpointRevision), nullableString(request.BootSessionID)); err != nil {
 		rollback()
 		return launch.Plan{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
@@ -120,14 +175,42 @@ func (store *Store) MarkManagedLaunchStarted(ctx context.Context, leaseID string
 	ctx = contextOrBackground(ctx)
 	store.operationMu.Lock()
 	defer store.operationMu.Unlock()
-	result, err := store.db.ExecContext(ctx, `UPDATE managed_launches SET state = 'running', process_id = ? WHERE lease_id = ? AND state = 'pending'`, processID, leaseID)
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
+	rollback := func() { _ = tx.Rollback() }
+	var checkpointID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT continuation_checkpoint_id FROM managed_launches WHERE lease_id = ? AND state = 'pending'`, leaseID).Scan(&checkpointID); err != nil {
+		rollback()
+		return apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE managed_launches SET state = 'running', process_id = ? WHERE lease_id = ? AND state = 'pending'`, processID, leaseID)
+	if err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+	}
 	if affected, err := result.RowsAffected(); err != nil {
+		rollback()
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	} else if affected == 0 {
+		rollback()
 		return apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
+	}
+	if checkpointID.Valid {
+		result, err = tx.ExecContext(ctx, `UPDATE checkpoints SET status = 'completed' WHERE checkpoint_id = ? AND status = 'launching'`, checkpointID.String)
+		if err != nil {
+			rollback()
+			return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+		}
+		if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
+			rollback()
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
 	return nil
 }
@@ -169,14 +252,37 @@ func (store *Store) MarkManagedLaunchAbandoned(ctx context.Context, leaseID stri
 	}
 	store.operationMu.Lock()
 	defer store.operationMu.Unlock()
-	result, err := store.db.ExecContext(ctx, `UPDATE managed_launches SET state = 'abandoned', ended_at = ? WHERE lease_id = ? AND state IN ('pending', 'running')`, formatStoredTime(now), leaseID)
+	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
+	rollback := func() { _ = tx.Rollback() }
+	var checkpointID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT continuation_checkpoint_id FROM managed_launches WHERE lease_id = ? AND state IN ('pending', 'running')`, leaseID).Scan(&checkpointID); err != nil {
+		rollback()
+		return apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE managed_launches SET state = 'abandoned', ended_at = ? WHERE lease_id = ? AND state IN ('pending', 'running')`, formatStoredTime(now), leaseID)
+	if err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+	}
 	if affected, err := result.RowsAffected(); err != nil {
+		rollback()
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	} else if affected == 0 {
+		rollback()
 		return apperrors.New(apperrors.LaunchLeaseInvalid, launch.ErrLeaseInvalid)
+	}
+	if checkpointID.Valid {
+		if _, err := tx.ExecContext(ctx, `UPDATE checkpoints SET status = 'approved' WHERE checkpoint_id = ? AND status = 'launching'`, checkpointID.String); err != nil {
+			rollback()
+			return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
 	return nil
 }
@@ -188,19 +294,36 @@ func (store *Store) ReconcileManagedLaunches(ctx context.Context, inspector laun
 	ctx = contextOrBackground(ctx)
 	store.operationMu.Lock()
 	defer store.operationMu.Unlock()
-	rows, err := store.db.QueryContext(ctx, `SELECT lease_id, state, process_id FROM managed_launches WHERE state IN ('pending', 'running')`)
+	rows, err := store.db.QueryContext(ctx, `SELECT lease_id, state, process_id, continuation_checkpoint_id, boot_session_id FROM managed_launches WHERE state IN ('pending', 'running')`)
 	if err != nil {
 		return coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, err))
 	}
-	var abandoned []string
+	type abandonedLaunch struct {
+		leaseID, checkpointID string
+	}
+	var abandoned []abandonedLaunch
 	for rows.Next() {
 		var leaseID, state string
 		var processID sql.NullInt64
-		if err := rows.Scan(&leaseID, &state, &processID); err != nil {
+		var checkpointID, bootSessionID sql.NullString
+		if err := rows.Scan(&leaseID, &state, &processID, &checkpointID, &bootSessionID); err != nil {
 			_ = rows.Close()
 			return coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, err))
 		}
-		if state == string(launch.StatePending) || !processID.Valid || processID.Int64 <= 0 || inspector == nil {
+		if state == string(launch.StatePending) {
+			if checkpointID.Valid && bootSessionID.Valid && inspector != nil {
+				currentBootSessionID, bootErr := inspector.BootSessionID()
+				if bootErr != nil {
+					_ = rows.Close()
+					return coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, bootErr))
+				}
+				if currentBootSessionID != "" && currentBootSessionID != bootSessionID.String {
+					abandoned = append(abandoned, abandonedLaunch{leaseID: leaseID, checkpointID: checkpointID.String})
+				}
+			}
+			continue
+		}
+		if !processID.Valid || processID.Int64 <= 0 || inspector == nil {
 			continue
 		}
 		running, err := inspector.IsRunning(int(processID.Int64))
@@ -209,7 +332,7 @@ func (store *Store) ReconcileManagedLaunches(ctx context.Context, inspector laun
 			return coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, err))
 		}
 		if !running {
-			abandoned = append(abandoned, leaseID)
+			abandoned = append(abandoned, abandonedLaunch{leaseID: leaseID, checkpointID: checkpointID.String})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -231,10 +354,16 @@ func (store *Store) ReconcileManagedLaunches(ctx context.Context, inspector laun
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
 	}
 	rollback := func() { _ = tx.Rollback() }
-	for _, leaseID := range abandoned {
-		if _, err := tx.ExecContext(ctx, `UPDATE managed_launches SET state = 'abandoned', ended_at = ? WHERE lease_id = ? AND state IN ('pending', 'running')`, formatStoredTime(now), leaseID); err != nil {
+	for _, item := range abandoned {
+		if _, err := tx.ExecContext(ctx, `UPDATE managed_launches SET state = 'abandoned', ended_at = ? WHERE lease_id = ? AND state IN ('pending', 'running')`, formatStoredTime(now), item.leaseID); err != nil {
 			rollback()
 			return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+		}
+		if item.checkpointID != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE checkpoints SET status = 'approved' WHERE checkpoint_id = ? AND status = 'launching'`, item.checkpointID); err != nil {
+				rollback()
+				return coded(apperrors.StoreWriteFailed, errors.Join(ErrLaunchState, err))
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

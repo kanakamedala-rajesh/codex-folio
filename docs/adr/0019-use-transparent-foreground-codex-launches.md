@@ -1,3 +1,5 @@
 # Use transparent foreground Codex launches
 
 The deterministic CLI contract will run the user's installed Codex executable in the foreground with the selected Identity Home, pass through remaining arguments and terminal streams, forward signals according to platform conventions, and return Codex's exit status. CodexFolio records only Managed Launch metadata and does not introduce detached Codex execution in the MVP. Authentication remains an invocation of Codex's own login flow inside that Identity Home.
+
+Safe Continuation reservations also record the operating system's boot-session identity. If the CLI disappears before reporting whether Codex started, the lease remains uncertain and non-authorizing for the rest of that boot; elapsed time is not termination evidence. After a verified boot-session change, no process from the prior boot can remain, so the service may abandon the pending lease, restore the retained checkpoint, and retry only after current source, target, approval, revision, and expiry checks pass again. CodexFolio never terminates a process automatically for this recovery.

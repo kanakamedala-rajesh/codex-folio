@@ -161,6 +161,15 @@ func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) 
 	if _, err := service.Edit(context.Background(), checkpoint.ID, EditRequest{Fields: oversize}); !errors.Is(err, ErrCheckpointOversize) {
 		t.Fatalf("Edit(oversize) error = %v, want ErrCheckpointOversize", err)
 	}
+
+	repository.loaded = repository.saved
+	repository.loaded.Status = StatusCompleted
+	if _, err := service.Edit(context.Background(), checkpoint.ID, EditRequest{Fields: edited.Fields}); !errors.Is(err, ErrHandoffNotReady) {
+		t.Fatalf("Edit(completed) error = %v, want ErrHandoffNotReady", err)
+	}
+	if _, err := service.Approve(context.Background(), checkpoint.ID, repository.loaded.Metadata); !errors.Is(err, ErrHandoffNotReady) {
+		t.Fatalf("Approve(completed) error = %v, want ErrHandoffNotReady", err)
+	}
 }
 
 func TestShowLoadsEncryptedRecordProjection(t *testing.T) {
@@ -176,6 +185,77 @@ func TestShowLoadsEncryptedRecordProjection(t *testing.T) {
 	got, err := service.Show(context.Background(), want.ID)
 	if err != nil || got.ID != want.ID || got.Project.Alias != "Folio" {
 		t.Fatalf("Show() = %#v, %v", got, err)
+	}
+}
+
+func TestPrepareHandoffUsesOnlyApprovedCurrentCheckpointAfterExitedSource(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	checkpoint := Checkpoint{
+		ID: "checkpoint-1", Status: StatusApproved, Revision: "revision-1",
+		Project: Project{ID: "project-1", Alias: "Folio", Basename: "folio"},
+		Fields:  CheckpointFields{Goal: userField("finish ticket 50")},
+		Source:  SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(24 * time.Hour),
+	}
+	metadata, err := encodeCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{
+		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusApproved, Metadata: metadata, ExpiresAt: &checkpoint.ExpiresAt},
+		source: SourceLaunch{ProfileID: "source-profile", State: SourceExited},
+	}
+	service, err := NewService(ServiceOptions{
+		Repository: repository, Projects: &projectStub{path: "/repo"}, Inspector: &inspectorStub{}, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prepared, err := service.PrepareHandoff(context.Background(), checkpoint.ID, checkpoint.Revision, "target-profile")
+	if err != nil {
+		t.Fatalf("PrepareHandoff() error = %v", err)
+	}
+	if prepared.WorkingDirectory != "/repo" || prepared.ProjectID != "project-1" || prepared.SourceProfileID != "source-profile" || prepared.Context != metadata {
+		t.Fatalf("prepared handoff = %#v", prepared)
+	}
+}
+
+func TestPrepareHandoffRejectsUnapprovedExpiredChangedOrUnstoppedState(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	base := Checkpoint{
+		ID: "checkpoint-1", Status: StatusApproved, Revision: "revision-1", Project: Project{ID: "project-1"},
+		Source: SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour),
+	}
+	for _, test := range []struct {
+		name, status, revision, target string
+		expires                        time.Time
+		source                         SourceLaunch
+	}{
+		{name: "draft", status: StatusDraft, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
+		{name: "expired", status: StatusApproved, revision: base.Revision, target: "target", expires: now, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
+		{name: "changed", status: StatusApproved, revision: "changed", target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
+		{name: "running", status: StatusApproved, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceRunning}},
+		{name: "uncertain", status: StatusApproved, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceUncertain}},
+		{name: "same profile", status: StatusApproved, revision: base.Revision, target: "source", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkpoint := base
+			checkpoint.Status, checkpoint.ExpiresAt = test.status, test.expires
+			metadata, err := encodeCheckpoint(checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository := &checkpointRepositoryStub{loaded: CheckpointRecord{
+				ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: test.status, Metadata: metadata, ExpiresAt: &test.expires,
+			}, source: test.source}
+			service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{path: "/repo"}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.PrepareHandoff(context.Background(), checkpoint.ID, test.revision, test.target); !errors.Is(err, ErrHandoffNotReady) {
+				t.Fatalf("PrepareHandoff() error = %v, want ErrHandoffNotReady", err)
+			}
+		})
 	}
 }
 
@@ -207,6 +287,7 @@ func (stub *inspectorStub) Inspect(_ context.Context, path string) (RepositoryIn
 type checkpointRepositoryStub struct {
 	saved     CheckpointRecord
 	loaded    CheckpointRecord
+	source    SourceLaunch
 	saveCalls int
 }
 
@@ -218,6 +299,10 @@ func (stub *checkpointRepositoryStub) SaveCheckpoint(_ context.Context, record C
 
 func (stub *checkpointRepositoryStub) LoadCheckpoint(context.Context, string) (CheckpointRecord, error) {
 	return stub.loaded, nil
+}
+
+func (stub *checkpointRepositoryStub) LatestSourceLaunch(context.Context, string) (SourceLaunch, error) {
+	return stub.source, nil
 }
 
 func intPointer(value int) *int { return &value }

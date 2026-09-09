@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/vault"
@@ -19,12 +21,17 @@ type launchClock struct{ now time.Time }
 func (clock launchClock) Now() time.Time { return clock.now }
 
 type launchInspector struct {
-	running bool
-	err     error
+	running       bool
+	err           error
+	bootSessionID string
 }
 
 func (inspector launchInspector) IsRunning(int) (bool, error) {
 	return inspector.running, inspector.err
+}
+
+func (inspector launchInspector) BootSessionID() (string, error) {
+	return inspector.bootSessionID, inspector.err
 }
 
 func TestPrepareAndCompleteManagedLaunchPersistsLifecycleWithoutChangingSelection(t *testing.T) {
@@ -75,6 +82,135 @@ func TestPrepareAndCompleteManagedLaunchPersistsLifecycleWithoutChangingSelectio
 	}
 	if selectedProfile != profileID {
 		t.Fatalf("selected profile = %q, want immutable profile %q", selectedProfile, profileID)
+	}
+}
+
+func TestHandoffLaunchReservesApprovedCheckpointAndCompletesItOnStart(t *testing.T) {
+	stateStore, _, sourceProfileID, home := readyLaunchStore(t)
+	defer func() { _ = stateStore.Close() }()
+	targetProfileID, targetHome := addReadyLaunchProfile(t, stateStore, "profile-2", "Personal")
+	projectPath := filepath.Join(home, "repository")
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	project := activity.ProjectRecord{ID: "project-1", Alias: "Folio", Basename: "repository", CanonicalPath: projectPath, CreatedAt: now, UpdatedAt: now}
+	if err := stateStore.SaveProjectRecord(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: projectPath, ProjectID: project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), concurrent.LeaseID, 4000); err != nil {
+		t.Fatal(err)
+	}
+	source, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: projectPath, ProjectID: project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), source.LeaseID, 4001); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchExited(context.Background(), source.LeaseID, 0); err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(24 * time.Hour)
+	checkpoint := continuation.CheckpointRecord{ID: "checkpoint-1", ProjectIdentityID: project.ID, Status: continuation.StatusApproved, Metadata: `{"status":"approved","revision":"revision-1"}`, CreatedAt: now, ExpiresAt: &expires}
+	if err := stateStore.SaveCheckpoint(context.Background(), checkpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	request := launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath,
+		Arguments: []string{checkpoint.Metadata}, ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-a",
+	}
+	if _, err := stateStore.PrepareLaunch(context.Background(), request); !errors.Is(err, continuation.ErrHandoffNotReady) {
+		t.Fatalf("PrepareLaunch(concurrent source) error = %v, want ErrHandoffNotReady", err)
+	}
+	if err := stateStore.MarkManagedLaunchExited(context.Background(), concurrent.LeaseID, 0); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := stateStore.PrepareLaunch(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareLaunch(handoff) error = %v", err)
+	}
+	reserved, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || reserved.Status != continuation.StatusLaunching {
+		t.Fatalf("reserved checkpoint = %#v, %v", reserved, err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), plan.LeaseID, 4002); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted(handoff) error = %v", err)
+	}
+	completed, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || completed.Status != continuation.StatusCompleted {
+		t.Fatalf("completed checkpoint = %#v, %v", completed, err)
+	}
+	if plan.Environment["CODEX_HOME"] != targetHome || targetProfileID == sourceProfileID {
+		t.Fatalf("target plan/profile = %#v/%q", plan, targetProfileID)
+	}
+}
+
+func TestReconcilePendingHandoffRecoversOnlyAfterBootSessionChanges(t *testing.T) {
+	stateStore, _, sourceProfileID, home := readyLaunchStore(t)
+	defer func() { _ = stateStore.Close() }()
+	_, targetHome := addReadyLaunchProfile(t, stateStore, "profile-2", "Personal")
+	projectPath := filepath.Join(home, "repository")
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	project := activity.ProjectRecord{ID: "project-1", Alias: "Folio", Basename: "repository", CanonicalPath: projectPath, CreatedAt: now, UpdatedAt: now}
+	if err := stateStore.SaveProjectRecord(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	source, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: projectPath, ProjectID: project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), source.LeaseID, 4001); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchExited(context.Background(), source.LeaseID, 0); err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(24 * time.Hour)
+	checkpoint := continuation.CheckpointRecord{ID: "checkpoint-1", ProjectIdentityID: project.ID, Status: continuation.StatusApproved, Metadata: `{"status":"approved","revision":"revision-1"}`, CreatedAt: now, ExpiresAt: &expires}
+	if err := stateStore.SaveCheckpoint(context.Background(), checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath, Arguments: []string{checkpoint.Metadata},
+		ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := formatStoredTime(now.Add(-time.Hour))
+	if _, err := stateStore.db.ExecContext(context.Background(), `UPDATE managed_launches SET started_at = ? WHERE lease_id = ?`, stale, plan.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.ReconcileManagedLaunches(context.Background(), launchInspector{bootSessionID: "boot-a"}); err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || reserved.Status != continuation.StatusLaunching || reserved.ExpiresAt == nil || !reserved.ExpiresAt.Equal(expires) {
+		t.Fatalf("reserved checkpoint = %#v, %v", reserved, err)
+	}
+	record, err := stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
+	if err != nil || record.State != launch.StatePending {
+		t.Fatalf("reconciled launch = %#v, %v", record, err)
+	}
+	if _, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath, Arguments: []string{checkpoint.Metadata},
+		ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-a",
+	}); !errors.Is(err, continuation.ErrHandoffNotReady) {
+		t.Fatalf("PrepareLaunch(stale pending handoff) error = %v, want ErrHandoffNotReady", err)
+	}
+	if err := stateStore.ReconcileManagedLaunches(context.Background(), launchInspector{bootSessionID: "boot-b"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || recovered.Status != continuation.StatusApproved || recovered.ExpiresAt == nil || !recovered.ExpiresAt.Equal(expires) {
+		t.Fatalf("recovered checkpoint = %#v, %v", recovered, err)
+	}
+	record, err = stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
+	if err != nil || record.State != launch.StateAbandoned {
+		t.Fatalf("recovered launch = %#v, %v", record, err)
 	}
 }
 
@@ -211,6 +347,30 @@ func readyLaunchStore(t *testing.T) (*Store, vault.Vault, string, string) {
 		t.Fatalf("CompleteInitialSelection() error = %v", err)
 	}
 	return stateStore, secureVault, profileID, home
+}
+
+func addReadyLaunchProfile(t *testing.T, stateStore *Store, profileID, alias string) (string, string) {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "managed-home")
+	if err := mkdirForLaunchTest(home); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: profileID, Alias: alias, DisplayName: alias}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.SetManagedHome(ctx, profileID, profileID, home); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
+		if err := stateStore.SaveSetupStage(ctx, profileID, stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := stateStore.PromotePendingProfile(ctx, profileID); err != nil {
+		t.Fatal(err)
+	}
+	return profileID, home
 }
 
 func mkdirForLaunchTest(path string) error {

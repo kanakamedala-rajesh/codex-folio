@@ -89,50 +89,53 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 		if prepared.Plan == nil {
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
 		}
-		plan := *prepared.Plan
 		if prepared.Warning != "" {
 			_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", prepared.Warning)
 		}
-		abandon := func() {
-			_, _ = client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "abandoned", LeaseID: plan.LeaseID})
-		}
-		if newProcess == nil {
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
-		}
-		process, err := newProcess(plan, childInput, stdout, stderr)
-		if err != nil || process == nil {
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
-		}
-		if err := process.Start(); err != nil {
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
-		}
-		processID := process.PID()
-		if processID <= 0 {
-			_ = process.Kill()
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
-		}
-		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "started", LeaseID: plan.LeaseID, ProcessID: processID}); err != nil {
-			_ = process.Kill()
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		stopForwarding := forwardForegroundSignals(process)
-		_ = process.Wait()
-		stopForwarding()
-		exitStatus := process.ExitStatus()
-		if !launch.ValidProcessStatus(exitStatus) {
-			abandon()
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
-		}
-		if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version}); err != nil {
-			_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		return exitStatus
+		return runForegroundLaunch(client, *prepared.Plan, report, childInput, stdout, stderr, newProcess, diagnosticSink)
 	})
+}
+
+func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink) int {
+	abandon := func() {
+		_, _ = client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "abandoned", LeaseID: plan.LeaseID})
+	}
+	if newProcess == nil {
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+	}
+	process, err := newProcess(plan, input, stdout, stderr)
+	if err != nil || process == nil {
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+	}
+	if err := process.Start(); err != nil {
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+	}
+	processID := process.PID()
+	if processID <= 0 {
+		_ = process.Kill()
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+	}
+	if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "started", LeaseID: plan.LeaseID, ProcessID: processID}); err != nil {
+		_ = process.Kill()
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	stopForwarding := forwardForegroundSignals(process)
+	_ = process.Wait()
+	stopForwarding()
+	exitStatus := process.ExitStatus()
+	if !launch.ValidProcessStatus(exitStatus) {
+		abandon()
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
+	}
+	if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version}); err != nil {
+		_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	return exitStatus
 }
 
 func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.Paths, options launchOptions, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions, action func(*httpapi.CommandClient, io.Reader) int) int {
@@ -195,11 +198,16 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	checkpoints, err := newCheckpointService(stateStore, projects)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches.continuations = checkpoints
 	commandToken, err := newCommandToken()
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, Checkpoints: checkpoints, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

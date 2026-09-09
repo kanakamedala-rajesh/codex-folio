@@ -58,10 +58,10 @@ Do not add a port merely to mock a pure function or wrap a single implementation
 The service alone opens writable SQLite and vault state. A foreground launch avoids routing terminal I/O through that service:
 
 1. CLI requests a Launch Plan for a profile and Codex arguments.
-2. Service validates companion-owned preconditions, records a pending Managed Launch lease, and returns executable path, working directory, non-secret environment changes such as the Identity Home, arguments, and lease identifier.
+2. Service validates companion-owned preconditions, records a pending Managed Launch lease and the current OS boot-session identity, and returns executable path, working directory, non-secret environment changes such as the Identity Home, arguments, and lease identifier.
 3. CLI starts the installed Codex executable as its foreground child with native stdin/stdout/stderr and signal handling.
 4. CLI reports start/PID and final exit status to the service.
-5. Service reconciles abandoned leases after CLI crash using conservative process checks; it never assumes that absence of a report means Codex was safely terminated.
+5. Service reconciles abandoned leases after CLI crash using conservative process checks; it never assumes that absence of a report means Codex was safely terminated. An unreported handoff remains non-authorizing during the same boot session. A later boot-session identity proves that no process from the prior boot remains, so reconciliation may abandon that pending lease, restore its checkpoint, and require all handoff checks again.
 
 Deterministic `launch <profile>` does not mutate Selected Profile. Codex owns its session and execution behavior throughout.
 

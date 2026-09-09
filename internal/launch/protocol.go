@@ -21,12 +21,16 @@ const (
 )
 
 type PrepareRequest struct {
-	Alias             string
-	Executable        string
-	WorkingDirectory  string
-	Arguments         []string
-	ProjectID         string
-	ExpectedSessionID string
+	Alias              string
+	Executable         string
+	WorkingDirectory   string
+	Arguments          []string
+	ProjectID          string
+	ExpectedSessionID  string
+	CheckpointID       string
+	CheckpointRevision string
+	SourceProfileID    string
+	BootSessionID      string
 }
 
 type Plan struct {
@@ -51,6 +55,7 @@ type ManagedLaunch struct {
 
 type ProcessInspector interface {
 	IsRunning(processID int) (bool, error)
+	BootSessionID() (string, error)
 }
 
 type Repository interface {
@@ -164,6 +169,16 @@ func validatePrepareRequest(request PrepareRequest) error {
 		return apperrors.New(apperrors.LaunchPlanInvalid, ErrPlanInvalid)
 	}
 	if strings.TrimSpace(request.WorkingDirectory) == "" || !filepath.IsAbs(request.WorkingDirectory) {
+		return apperrors.New(apperrors.LaunchPlanInvalid, ErrPlanInvalid)
+	}
+	checkpointValues := []string{request.CheckpointID, request.CheckpointRevision, request.SourceProfileID, request.BootSessionID, request.ProjectID}
+	checkpointCount := 0
+	for _, value := range checkpointValues[:4] {
+		if strings.TrimSpace(value) != "" {
+			checkpointCount++
+		}
+	}
+	if checkpointCount != 0 && (checkpointCount != 4 || strings.TrimSpace(request.ProjectID) == "") {
 		return apperrors.New(apperrors.LaunchPlanInvalid, ErrPlanInvalid)
 	}
 	return nil

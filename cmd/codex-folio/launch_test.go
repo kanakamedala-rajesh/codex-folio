@@ -66,6 +66,13 @@ func (process *launchTestProcess) Kill() error {
 
 func (process *launchTestProcess) ExitStatus() int { return process.exitStatus }
 
+func TestForegroundProcessInspectorReportsBootSession(t *testing.T) {
+	bootSessionID, err := (foregroundProcessInspector{}).BootSessionID()
+	if err != nil || strings.TrimSpace(bootSessionID) == "" {
+		t.Fatalf("BootSessionID() = %q, %v", bootSessionID, err)
+	}
+}
+
 func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)

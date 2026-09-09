@@ -278,6 +278,48 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 16,
+			name:    "safe-continuation-launch-lifecycle",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE checkpoints_v16 (
+						checkpoint_id TEXT PRIMARY KEY NOT NULL,
+						project_identity_id TEXT,
+						status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'launching', 'completed', 'expired')),
+						goal_ciphertext BLOB CHECK (goal_ciphertext IS NULL OR typeof(goal_ciphertext) = 'blob'),
+						completed_work_ciphertext BLOB CHECK (completed_work_ciphertext IS NULL OR typeof(completed_work_ciphertext) = 'blob'),
+						pending_work_ciphertext BLOB CHECK (pending_work_ciphertext IS NULL OR typeof(pending_work_ciphertext) = 'blob'),
+						validation_ciphertext BLOB CHECK (validation_ciphertext IS NULL OR typeof(validation_ciphertext) = 'blob'),
+						risks_ciphertext BLOB CHECK (risks_ciphertext IS NULL OR typeof(risks_ciphertext) = 'blob'),
+						next_action_ciphertext BLOB CHECK (next_action_ciphertext IS NULL OR typeof(next_action_ciphertext) = 'blob'),
+						recovery_metadata_ciphertext BLOB CHECK (recovery_metadata_ciphertext IS NULL OR typeof(recovery_metadata_ciphertext) = 'blob'),
+						created_at TEXT NOT NULL,
+						expires_at TEXT,
+						FOREIGN KEY (project_identity_id) REFERENCES project_identities (project_identity_id)
+					)`,
+					`INSERT INTO checkpoints_v16 SELECT * FROM checkpoints`,
+					`DROP TABLE checkpoints`,
+					`ALTER TABLE checkpoints_v16 RENAME TO checkpoints`,
+					`CREATE INDEX idx_checkpoints_project_time ON checkpoints (project_identity_id, created_at)`,
+					`ALTER TABLE managed_launches ADD COLUMN continuation_checkpoint_id TEXT REFERENCES checkpoints(checkpoint_id)`,
+					`ALTER TABLE managed_launches ADD COLUMN continuation_revision TEXT`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 17,
+			name:    "safe-continuation-boot-recovery",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE managed_launches ADD COLUMN boot_session_id TEXT`)
+				return err
+			},
+		},
 	}
 }
 
@@ -533,7 +575,7 @@ var expectedTables = map[string][]string{
 	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
-	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id"},
+	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id", "continuation_checkpoint_id", "continuation_revision", "boot_session_id"},
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
 	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},

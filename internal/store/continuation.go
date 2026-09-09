@@ -5,8 +5,21 @@ import (
 	"database/sql"
 	"errors"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/continuation"
+	"venkatasudha.com/codex-folio/internal/launch"
 )
+
+const definitiveSourceLaunchSQL = `SELECT profile_id, state FROM managed_launches candidate
+	WHERE project_identity_id = ?
+	AND NOT (continuation_checkpoint_id IS NOT NULL AND state = 'abandoned' AND process_id IS NULL)
+	AND NOT EXISTS (
+		SELECT 1 FROM managed_launches unresolved
+		WHERE unresolved.project_identity_id = candidate.project_identity_id
+		AND NOT (unresolved.continuation_checkpoint_id IS NOT NULL AND unresolved.state = 'abandoned' AND unresolved.process_id IS NULL)
+		AND unresolved.state <> 'exited'
+	)
+	ORDER BY started_at DESC, rowid DESC LIMIT 1`
 
 func (store *Store) SaveCheckpoint(ctx context.Context, record continuation.CheckpointRecord) error {
 	return store.PutCheckpoint(ctx, Checkpoint{
@@ -35,4 +48,24 @@ func (store *Store) LoadCheckpoint(ctx context.Context, id string) (continuation
 		Validation: record.Validation, Risks: record.Risks, NextAction: record.NextAction,
 		Metadata: metadata, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
 	}, nil
+}
+
+func (store *Store) LatestSourceLaunch(ctx context.Context, projectID string) (continuation.SourceLaunch, error) {
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var profileID, state string
+	err := store.db.QueryRowContext(contextOrBackground(ctx), definitiveSourceLaunchSQL, projectID).Scan(&profileID, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return continuation.SourceLaunch{State: continuation.SourceUncertain}, nil
+	}
+	if err != nil {
+		return continuation.SourceLaunch{}, coded(apperrors.StoreReadFailed, err)
+	}
+	result := continuation.SourceLaunch{ProfileID: profileID, State: continuation.SourceUncertain}
+	if state == string(launch.StateExited) {
+		result.State = continuation.SourceExited
+	} else if state == string(launch.StateRunning) {
+		result.State = continuation.SourceRunning
+	}
+	return result, nil
 }

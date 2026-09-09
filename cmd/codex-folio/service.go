@@ -359,6 +359,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	launches.continuations = checkpoints
 	commandToken, err := newCommandToken()
 	if err != nil {
 		_ = stateStore.Close()
@@ -792,7 +793,7 @@ func serviceRemediation(code string) string {
 	case apperrors.ProjectPathCollision:
 		return "the repository location belongs to another Project Identity; the prior identity was preserved"
 	case apperrors.ContinuationCheckpointInvalid:
-		return "the checkpoint request or stored checkpoint is invalid"
+		return "the checkpoint is invalid, changed, unapproved, expired, already launching, or lacks a definitively exited source"
 	case apperrors.ContinuationCheckpointNotFound:
 		return "the checkpoint was not found"
 	case apperrors.ContinuationCheckpointOversize:
