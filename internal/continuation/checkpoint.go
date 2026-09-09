@@ -20,22 +20,24 @@ import (
 )
 
 const (
-	MaxCheckpointBytes      = 16 * 1024
-	StatusDraft             = "draft"
-	StatusApproved          = "approved"
-	StatusLaunching         = "launching"
-	StatusCompleted         = "completed"
-	SourceRepositoryFirst   = "repository-first"
-	ProvenanceLocalObserved = "local-observed"
-	ProvenanceUserConfirmed = "user-confirmed"
-	ProvenanceUnknown       = "unknown"
-	CompletenessComplete    = "complete"
-	CompletenessPartial     = "partial"
-	CompletenessUnknown     = "unknown"
-	FreshnessFresh          = "fresh"
-	FreshnessStale          = "stale"
-	FreshnessUnknown        = "unknown"
-	RedactedValue           = "[REDACTED]"
+	MaxCheckpointBytes       = 16 * 1024
+	StatusDraft              = "draft"
+	StatusApproved           = "approved"
+	StatusLaunching          = "launching"
+	StatusCompleted          = "completed"
+	SourceRepositoryFirst    = "repository-first"
+	SourceTranscriptAssisted = "transcript-assisted"
+	ProvenanceLocalObserved  = "local-observed"
+	ProvenanceUserConfirmed  = "user-confirmed"
+	ProvenanceModelDerived   = "model-derived"
+	ProvenanceUnknown        = "unknown"
+	CompletenessComplete     = "complete"
+	CompletenessPartial      = "partial"
+	CompletenessUnknown      = "unknown"
+	FreshnessFresh           = "fresh"
+	FreshnessStale           = "stale"
+	FreshnessUnknown         = "unknown"
+	RedactedValue            = "[REDACTED]"
 )
 
 var (
@@ -45,6 +47,7 @@ var (
 	ErrCheckpointRevisionChanged = errors.New("checkpoint changed after review")
 	ErrHandoffNotReady           = errors.New("Safe Continuation is not ready")
 	ErrRepositoryInspection      = errors.New("repository inspection failed")
+	ErrHistoryUnavailable        = errors.New("stored history is unavailable")
 )
 
 type SourceState string
@@ -58,6 +61,11 @@ const (
 type SourceLaunch struct {
 	ProfileID string
 	State     SourceState
+}
+
+type HistorySource struct {
+	SourceProfileID string `json:"source_profile_id"`
+	IdentityHome    string `json:"identity_home"`
 }
 
 type PreparedHandoff struct {
@@ -151,6 +159,10 @@ type CaptureRequest struct {
 	ConfiguredCommands, RedactPaths, RedactText                      []string
 }
 
+type HistoryReadRequest struct {
+	Executable, IdentityHome, ThreadID string
+}
+
 type EditRequest struct {
 	Fields                  CheckpointFields
 	RedactPaths, RedactText []string
@@ -167,6 +179,7 @@ type Repository interface {
 	SaveCheckpoint(context.Context, CheckpointRecord) error
 	LoadCheckpoint(context.Context, string) (CheckpointRecord, error)
 	LatestSourceLaunch(context.Context, string) (SourceLaunch, error)
+	SourceIdentityHome(context.Context, string) (string, error)
 }
 
 type Projects interface {
@@ -284,6 +297,28 @@ func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error)
 	return checkpoint, nil
 }
 
+func (service *Service) PrepareHistory(ctx context.Context, id, revision string) (HistorySource, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(revision) == "" || invalidText(id) || invalidText(revision) {
+		return HistorySource{}, ErrCheckpointInvalid
+	}
+	checkpoint, err := service.Show(ctx, id)
+	if err != nil {
+		return HistorySource{}, err
+	}
+	if checkpoint.Status != StatusDraft || checkpoint.Source != SourceRepositoryFirst || checkpoint.Revision != revision {
+		return HistorySource{}, ErrHistoryUnavailable
+	}
+	source, err := service.repository.LatestSourceLaunch(ctx, checkpoint.Project.ID)
+	if err != nil || source.State != SourceExited || source.ProfileID == "" {
+		return HistorySource{}, ErrHistoryUnavailable
+	}
+	home, err := service.repository.SourceIdentityHome(ctx, source.ProfileID)
+	if err != nil || !filepath.IsAbs(home) {
+		return HistorySource{}, ErrHistoryUnavailable
+	}
+	return HistorySource{SourceProfileID: source.ProfileID, IdentityHome: filepath.Clean(home)}, nil
+}
+
 func (service *Service) Edit(ctx context.Context, id string, request EditRequest) (Checkpoint, error) {
 	if invalidRedactions(request.RedactPaths, request.RedactText) {
 		return Checkpoint{}, ErrCheckpointInvalid
@@ -297,25 +332,10 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted {
 		return Checkpoint{}, ErrHandoffNotReady
 	}
-	fields, err := sanitizeFields(request.Fields, service.home, request.RedactText)
-	if err != nil {
+	if err := service.applyEdit(&checkpoint, request); err != nil {
 		return Checkpoint{}, err
 	}
-	checkpoint.Fields = fields
 	checkpoint.Status = StatusDraft
-	redactedPaths := normalizedRedactions(request.RedactPaths)
-	if checkpoint.Repository.Staged.Value, err = sanitizePaths(checkpoint.Repository.Staged.Value, redactedPaths); err != nil {
-		return Checkpoint{}, err
-	}
-	if checkpoint.Repository.Modified.Value, err = sanitizePaths(checkpoint.Repository.Modified.Value, redactedPaths); err != nil {
-		return Checkpoint{}, err
-	}
-	if checkpoint.Repository.Untracked.Value, err = sanitizePaths(checkpoint.Repository.Untracked.Value, redactedPaths); err != nil {
-		return Checkpoint{}, err
-	}
-	for index, command := range checkpoint.Repository.ConfiguredCommands.Value {
-		checkpoint.Repository.ConfiguredCommands.Value[index] = sanitizeText(command, service.home, request.RedactText)
-	}
 	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
 	if err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
@@ -327,6 +347,85 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
+}
+
+func (service *Service) PreviewAssisted(ctx context.Context, id, revision string, request EditRequest) (Checkpoint, error) {
+	return service.previewAssisted(ctx, id, revision, request)
+}
+
+func (service *Service) ApproveAssisted(ctx context.Context, id, revision, previewRevision string, request EditRequest) (Checkpoint, error) {
+	if strings.TrimSpace(previewRevision) == "" || invalidText(previewRevision) {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	checkpoint, err := service.previewAssisted(ctx, id, revision, request)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.Revision != previewRevision {
+		return Checkpoint{}, ErrCheckpointRevisionChanged
+	}
+	checkpoint.Status = StatusApproved
+	checkpoint, metadata, err := finalizeCheckpoint(checkpoint)
+	if err != nil {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	if err := service.save(ctx, checkpoint, metadata); err != nil {
+		return Checkpoint{}, err
+	}
+	return checkpoint, nil
+}
+
+func (service *Service) previewAssisted(ctx context.Context, id, revision string, request EditRequest) (Checkpoint, error) {
+	if strings.TrimSpace(revision) == "" || invalidText(revision) || invalidRedactions(request.RedactPaths, request.RedactText) {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	checkpoint, err := service.Show(ctx, id)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.Status != StatusDraft || checkpoint.Source != SourceRepositoryFirst || checkpoint.Revision != revision {
+		return Checkpoint{}, ErrCheckpointRevisionChanged
+	}
+	if err := service.applyEdit(&checkpoint, request); err != nil {
+		return Checkpoint{}, err
+	}
+	checkpoint.Source = SourceTranscriptAssisted
+	checkpoint.ExpiresAt = checkpoint.CreatedAt.Add(7 * 24 * time.Hour)
+	if !service.now().UTC().Before(checkpoint.ExpiresAt) {
+		return Checkpoint{}, ErrHandoffNotReady
+	}
+	checkpoint, _, err = prepareCheckpoint(checkpoint)
+	if err != nil {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	if checkpoint.SizeBytes > MaxCheckpointBytes {
+		return Checkpoint{}, ErrCheckpointOversize
+	}
+	return checkpoint, nil
+}
+
+func (service *Service) applyEdit(checkpoint *Checkpoint, request EditRequest) error {
+	fields, err := sanitizeFields(request.Fields, service.home, request.RedactText)
+	if err != nil {
+		return err
+	}
+	checkpoint.Fields = fields
+	redactedPaths := normalizedRedactions(request.RedactPaths)
+	if checkpoint.Repository.Staged.Value, err = sanitizePaths(checkpoint.Repository.Staged.Value, redactedPaths); err != nil {
+		return err
+	}
+	if checkpoint.Repository.Modified.Value, err = sanitizePaths(checkpoint.Repository.Modified.Value, redactedPaths); err != nil {
+		return err
+	}
+	if checkpoint.Repository.Untracked.Value, err = sanitizePaths(checkpoint.Repository.Untracked.Value, redactedPaths); err != nil {
+		return err
+	}
+	for index, command := range checkpoint.Repository.ConfiguredCommands.Value {
+		checkpoint.Repository.ConfiguredCommands.Value[index] = sanitizeText(command, service.home, request.RedactText)
+	}
+	return nil
 }
 
 func (service *Service) Approve(ctx context.Context, id, revision string) (Checkpoint, error) {

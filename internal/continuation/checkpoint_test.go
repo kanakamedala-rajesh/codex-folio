@@ -3,6 +3,7 @@ package continuation
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +173,61 @@ func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) 
 	}
 }
 
+func TestTranscriptAssistancePersistsOnlyTheApprovedSanitizedRevisionForSevenDays(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	checkpoint := Checkpoint{
+		ID: "checkpoint-1", Status: StatusDraft, Project: Project{ID: "project-1"}, Source: SourceRepositoryFirst,
+		Fields: CheckpointFields{Goal: userField("repository goal")}, CreatedAt: now, ExpiresAt: now.Add(30 * 24 * time.Hour),
+	}
+	var err error
+	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{
+		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusDraft, Metadata: metadata, ExpiresAt: &checkpoint.ExpiresAt},
+		source: SourceLaunch{ProfileID: "source-profile", State: SourceExited}, historyHome: filepath.Join(t.TempDir(), "source"),
+	}
+	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }, HomeDirectory: "/home/alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.source.State = SourceRunning
+	if _, err := service.PrepareHistory(context.Background(), checkpoint.ID, checkpoint.Revision); !errors.Is(err, ErrHistoryUnavailable) {
+		t.Fatalf("PrepareHistory(active) error = %v, want ErrHistoryUnavailable", err)
+	}
+	repository.source.State = SourceExited
+	history, err := service.PrepareHistory(context.Background(), checkpoint.ID, checkpoint.Revision)
+	if err != nil || history.IdentityHome != repository.historyHome || history.SourceProfileID != "source-profile" {
+		t.Fatalf("PrepareHistory() = %#v, %v", history, err)
+	}
+	edit := EditRequest{Fields: CheckpointFields{
+		Goal: userField("approved /home/alice goal without token"), NextAction: userField("run tests"),
+	}, RedactText: []string{"token"}}
+	preview, err := service.PreviewAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, edit)
+	if err != nil {
+		t.Fatalf("PreviewAssisted() error = %v", err)
+	}
+	if repository.saveCalls != 0 || preview.Status != StatusDraft || preview.Source != SourceTranscriptAssisted || preview.Fields.Goal.Value != "approved [HOME] goal without [REDACTED]" || !preview.ExpiresAt.Equal(now.Add(7*24*time.Hour)) {
+		t.Fatalf("preview/save calls = %#v/%d", preview, repository.saveCalls)
+	}
+	if _, err := service.ApproveAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, preview.Revision+"changed", edit); !errors.Is(err, ErrCheckpointRevisionChanged) || repository.saveCalls != 0 {
+		t.Fatalf("ApproveAssisted(changed preview) error/save calls = %v/%d", err, repository.saveCalls)
+	}
+	approved, err := service.ApproveAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, preview.Revision, edit)
+	if err != nil {
+		t.Fatalf("ApproveAssisted() error = %v", err)
+	}
+	if repository.saveCalls != 1 || approved.Status != StatusApproved || repository.saved.Status != StatusApproved || repository.saved.Metadata != mustEncodeCheckpoint(t, approved) || !approved.ExpiresAt.Equal(now.Add(7*24*time.Hour)) {
+		t.Fatalf("approved/saved = %#v/%#v; calls %d", approved, repository.saved, repository.saveCalls)
+	}
+	for _, forbidden := range []string{"/home/alice", "token"} {
+		if strings.Contains(repository.saved.Metadata, forbidden) {
+			t.Fatalf("persisted assisted checkpoint contains %q", forbidden)
+		}
+	}
+}
+
 func TestShowLoadsEncryptedRecordProjection(t *testing.T) {
 	want := Checkpoint{ID: "checkpoint-1", Status: StatusDraft, Project: Project{ID: "project-1", Alias: "Folio", Basename: "folio"}, Source: SourceRepositoryFirst}
 	metadata, err := encodeCheckpoint(want)
@@ -285,10 +341,11 @@ func (stub *inspectorStub) Inspect(_ context.Context, path string) (RepositoryIn
 }
 
 type checkpointRepositoryStub struct {
-	saved     CheckpointRecord
-	loaded    CheckpointRecord
-	source    SourceLaunch
-	saveCalls int
+	saved       CheckpointRecord
+	loaded      CheckpointRecord
+	source      SourceLaunch
+	historyHome string
+	saveCalls   int
 }
 
 func (stub *checkpointRepositoryStub) SaveCheckpoint(_ context.Context, record CheckpointRecord) error {
@@ -303,6 +360,19 @@ func (stub *checkpointRepositoryStub) LoadCheckpoint(context.Context, string) (C
 
 func (stub *checkpointRepositoryStub) LatestSourceLaunch(context.Context, string) (SourceLaunch, error) {
 	return stub.source, nil
+}
+
+func (stub *checkpointRepositoryStub) SourceIdentityHome(context.Context, string) (string, error) {
+	return stub.historyHome, nil
+}
+
+func mustEncodeCheckpoint(t *testing.T, checkpoint Checkpoint) string {
+	t.Helper()
+	encoded, err := encodeCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func intPointer(value int) *int { return &value }

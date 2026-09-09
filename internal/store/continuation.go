@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/continuation"
@@ -68,4 +70,39 @@ func (store *Store) LatestSourceLaunch(ctx context.Context, projectID string) (c
 		result.State = continuation.SourceRunning
 	}
 	return result, nil
+}
+
+func (store *Store) SourceIdentityHome(ctx context.Context, profileID string) (string, error) {
+	if store == nil || store.db == nil || strings.TrimSpace(profileID) == "" {
+		return "", continuation.ErrHistoryUnavailable
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var homeID string
+	var ciphertext []byte
+	err := store.db.QueryRowContext(ctx, `SELECT h.identity_home_id, h.location_ciphertext
+		FROM identity_profiles p
+		JOIN identity_homes h ON h.identity_home_id = p.identity_home_id
+		WHERE p.profile_id = ?
+		AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = p.profile_id)`, profileID).Scan(&homeID, &ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", continuation.ErrHistoryUnavailable
+	}
+	if err != nil {
+		return "", coded(apperrors.StoreReadFailed, err)
+	}
+	secureVault, err := store.requireVault()
+	if err != nil {
+		return "", err
+	}
+	home, err := decryptField(ctx, secureVault, ciphertext, identityHomeAAD(homeID))
+	if err != nil {
+		return "", err
+	}
+	home = filepath.Clean(home)
+	if !filepath.IsAbs(home) {
+		return "", continuation.ErrHistoryUnavailable
+	}
+	return home, nil
 }

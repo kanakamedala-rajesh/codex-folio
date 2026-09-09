@@ -27,19 +27,33 @@ func TestCommandCheckpointCaptureAndShowUseAuthorizedService(t *testing.T) {
 	if _, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "approve", ID: "checkpoint-1", Revision: "revision-1"}); err != nil || service.approveID != "checkpoint-1" || service.revision != "revision-1" {
 		t.Fatalf("approve = %q/%q, %v", service.approveID, service.revision, err)
 	}
+	history, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "history-source", ID: "checkpoint-1", Revision: "revision-1"})
+	if err != nil || history.HistorySource == nil || history.HistorySource.IdentityHome != "/source-home" {
+		t.Fatalf("history source = %#v, %v", history.HistorySource, err)
+	}
+	preview, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "preview-assisted", ID: "checkpoint-1", Revision: "revision-1", Fields: &fields, RedactText: []string{"secret"}})
+	if err != nil || preview.Checkpoint.ID != "checkpoint-1" || service.previewID != "checkpoint-1" {
+		t.Fatalf("assisted preview = %#v/%q, %v", preview.Checkpoint, service.previewID, err)
+	}
+	if _, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "approve-assisted", ID: "checkpoint-1", Revision: "revision-1", PreviewRevision: "preview-1", Fields: &fields, RedactText: []string{"secret"}}); err != nil || service.assistedID != "checkpoint-1" || service.previewRevision != "preview-1" {
+		t.Fatalf("assisted approval = %q/%q, %v", service.assistedID, service.previewRevision, err)
+	}
 	if _, err := NewCommandClient(server.Origin(), "wrong", nil).Checkpoint(context.Background(), request); apperrors.Code(err) != apperrors.HTTPAPISessionInvalid {
 		t.Fatalf("unauthorized error = %v", err)
 	}
 }
 
 type checkpointServiceStub struct {
-	checkpoint continuation.Checkpoint
-	capture    continuation.CaptureRequest
-	showID     string
-	editID     string
-	edit       continuation.EditRequest
-	approveID  string
-	revision   string
+	checkpoint      continuation.Checkpoint
+	capture         continuation.CaptureRequest
+	showID          string
+	editID          string
+	edit            continuation.EditRequest
+	approveID       string
+	revision        string
+	previewID       string
+	assistedID      string
+	previewRevision string
 }
 
 func (stub *checkpointServiceStub) Capture(_ context.Context, request continuation.CaptureRequest) (continuation.Checkpoint, error) {
@@ -59,5 +73,19 @@ func (stub *checkpointServiceStub) Edit(_ context.Context, id string, request co
 
 func (stub *checkpointServiceStub) Approve(_ context.Context, id, revision string) (continuation.Checkpoint, error) {
 	stub.approveID, stub.revision = id, revision
+	return stub.checkpoint, nil
+}
+
+func (stub *checkpointServiceStub) PrepareHistory(context.Context, string, string) (continuation.HistorySource, error) {
+	return continuation.HistorySource{SourceProfileID: "source-profile", IdentityHome: "/source-home"}, nil
+}
+
+func (stub *checkpointServiceStub) PreviewAssisted(_ context.Context, id, _ string, _ continuation.EditRequest) (continuation.Checkpoint, error) {
+	stub.previewID = id
+	return stub.checkpoint, nil
+}
+
+func (stub *checkpointServiceStub) ApproveAssisted(_ context.Context, id, _, previewRevision string, _ continuation.EditRequest) (continuation.Checkpoint, error) {
+	stub.assistedID, stub.previewRevision = id, previewRevision
 	return stub.checkpoint, nil
 }
