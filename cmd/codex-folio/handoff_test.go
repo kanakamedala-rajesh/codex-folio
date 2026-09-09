@@ -18,6 +18,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
 
 func TestHandoffCLIReviewsApprovedContextAndLaunchesFreshTargetInSourceRepository(t *testing.T) {
@@ -103,16 +104,19 @@ func TestHandoffCLIReviewsApprovedContextAndLaunchesFreshTargetInSourceRepositor
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code := runHandoffWithDependencies(
-		[]string{"Personal", repository, "--goal", "draft goal", "--next-action", "continue"}, strings.NewReader("approve\n"), &stdout, &stderr,
-		resolvePaths, resolver, openStore,
-		func(got launch.Plan, _ io.Reader, _, _ io.Writer) (foregroundProcess, error) {
-			plan = got
-			return process, nil
-		}, nil,
-		editor, authenticator, platform.OwnerOptions{},
-	)
-	if code != 130 || !process.started || stderr.String() != "Type 'approve' to approve this sanitized revision; anything else cancels: " {
+	reader := bufferedReader(strings.NewReader("1\napprove\n"))
+	code := runSafeContinuationOffer(23, &launch.SafeContinuationOffer{Alternatives: []launch.SafeContinuationAlternative{{Alias: "Personal", CapacityState: usage.FreshnessFresh, Provenance: usage.ProvenanceProvider, Recommended: true}}}, reader, &stdout, &stderr, func(target string) int {
+		return runHandoffWithDependencies(
+			[]string{target, repository, "--goal", "draft goal", "--next-action", "continue"}, reader, &stdout, &stderr,
+			resolvePaths, resolver, openStore,
+			func(got launch.Plan, _ io.Reader, _, _ io.Writer) (foregroundProcess, error) {
+				plan = got
+				return process, nil
+			}, nil,
+			editor, authenticator, platform.OwnerOptions{},
+		)
+	})
+	if code != 130 || !process.started || stderr.String() != "Choose an alternative to review a repository-first checkpoint, or press Enter to decline: Type 'approve' to approve this sanitized revision; anything else cancels: " {
 		t.Fatalf("handoff = code:%d started:%t stdout:%q stderr:%q", code, process.started, stdout.String(), stderr.String())
 	}
 	if plan.WorkingDirectory != repository || plan.Environment["CODEX_HOME"] != filepath.Join(paths.Root, "personal-home") || len(plan.Arguments) != 1 {

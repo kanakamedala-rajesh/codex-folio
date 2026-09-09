@@ -23,7 +23,7 @@ type CommandLaunchService interface {
 	Prepare(context.Context, launch.PrepareRequest, string) (launch.Plan, string, error)
 	PrepareHandoff(context.Context, launch.PrepareRequest, string, string, string) (launch.Plan, error)
 	MarkStarted(context.Context, string, int) error
-	MarkExited(context.Context, string, int, string, string) error
+	MarkExited(context.Context, string, int, string, string) (*launch.SafeContinuationOffer, error)
 	MarkAbandoned(context.Context, string) error
 }
 
@@ -42,8 +42,9 @@ type CommandLaunchRequest struct {
 }
 
 type CommandLaunchResponse struct {
-	Plan    *launch.Plan `json:"plan,omitempty"`
-	Warning string       `json:"warning,omitempty"`
+	Plan    *launch.Plan                  `json:"plan,omitempty"`
+	Warning string                        `json:"warning,omitempty"`
+	Offer   *launch.SafeContinuationOffer `json:"safe_continuation_offer,omitempty"`
 }
 
 func (client *CommandClient) Launch(ctx context.Context, input CommandLaunchRequest) (CommandLaunchResponse, error) {
@@ -129,7 +130,7 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 	case "started":
 		err = server.launches.MarkStarted(request.Context(), input.LeaseID, input.ProcessID)
 	case "exited":
-		err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
+		result.Offer, err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
 	case "abandoned":
 		err = server.launches.MarkAbandoned(request.Context(), input.LeaseID)
 	default:

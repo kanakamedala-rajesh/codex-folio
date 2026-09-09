@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/activity"
@@ -19,6 +20,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/store"
 )
 
 type launchOptions struct {
@@ -53,6 +55,10 @@ func runLaunchWithInputAndDependenciesAndOwnerOptions(args []string, input io.Re
 }
 
 func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions) (resultCode int) {
+	return runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticatorAndContinuation(args, input, stdout, stderr, resolvePaths, resolver, openStore, newProcess, diagnosticSink, newAuthenticator, editCheckpointFile, newUsageCommandService, ownerOptions)
+}
+
+func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticatorAndContinuation(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, editor func(string, io.Reader, io.Writer, io.Writer) error, newUsage func(*store.Store, launch.ExecutableResolver) (*usageCommandService, error), ownerOptions platform.OwnerOptions) (resultCode int) {
 	alias, options, err := parseLaunchArguments(args)
 	if err != nil {
 		return writeLaunchUsageDiagnostic(stderr, apperrors.CLIUsage, "invalid launch arguments", diagnosticSink)
@@ -75,7 +81,7 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	report, err := launch.Discover(resolver, options.codexBin)
-	return withLaunchCommandService(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
+	return withLaunchCommandServiceAndUsage(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, newUsage, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
@@ -92,37 +98,44 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(args []str
 		if prepared.Warning != "" {
 			_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", prepared.Warning)
 		}
-		return runForegroundLaunch(client, *prepared.Plan, report, childInput, stdout, stderr, newProcess, diagnosticSink)
+		exitStatus, offer := runForegroundLaunch(client, *prepared.Plan, report, childInput, stdout, stderr, newProcess, diagnosticSink)
+		if offer == nil {
+			return exitStatus
+		}
+		continuationInput := bufferedReader(childInput)
+		return runSafeContinuationOffer(exitStatus, offer, continuationInput, stdout, stderr, func(target string) int {
+			return runHandoffJourney(client, target, httpapi.CommandCheckpointRequest{Action: "capture", Path: workingDirectory}, report, continuationInput, stdout, stderr, newProcess, diagnosticSink, editor)
+		})
 	})
 }
 
-func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink) int {
+func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink) (int, *launch.SafeContinuationOffer) {
 	abandon := func() {
 		_, _ = client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "abandoned", LeaseID: plan.LeaseID})
 	}
 	if newProcess == nil {
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink), nil
 	}
 	process, err := newProcess(plan, input, stdout, stderr)
 	if err != nil || process == nil {
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink), nil
 	}
 	if err := process.Start(); err != nil {
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink), nil
 	}
 	processID := process.PID()
 	if processID <= 0 {
 		_ = process.Kill()
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink), nil
 	}
 	if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "started", LeaseID: plan.LeaseID, ProcessID: processID}); err != nil {
 		_ = process.Kill()
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink), nil
 	}
 	stopForwarding := forwardForegroundSignals(process)
 	_ = process.Wait()
@@ -130,15 +143,55 @@ func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report
 	exitStatus := process.ExitStatus()
 	if !launch.ValidProcessStatus(exitStatus) {
 		abandon()
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink)
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStatusInvalid, launch.ErrProcessStatusInvalid), diagnosticSink), nil
 	}
-	if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version}); err != nil {
+	result, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "exited", LeaseID: plan.LeaseID, ExitStatus: exitStatus, Executable: report.Executable, Version: report.Version})
+	if err != nil {
 		_ = writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		return exitStatus, nil
 	}
-	return exitStatus
+	return exitStatus, result.Offer
+}
+
+func bufferedReader(input io.Reader) *bufio.Reader {
+	if reader, ok := input.(*bufio.Reader); ok {
+		return reader
+	}
+	if input == nil {
+		input = strings.NewReader("")
+	}
+	return bufio.NewReader(input)
+}
+
+func runSafeContinuationOffer(sourceExitStatus int, offer *launch.SafeContinuationOffer, input *bufio.Reader, stdout, stderr io.Writer, continueWith func(string) int) int {
+	if offer == nil || len(offer.Alternatives) == 0 || input == nil || continueWith == nil {
+		return sourceExitStatus
+	}
+	io.WriteString(stdout, "Safe Continuation is available after an observed quota condition:\n")
+	for index, alternative := range offer.Alternatives {
+		best := ""
+		if alternative.Recommended {
+			best = "; best"
+		}
+		fmt.Fprintf(stdout, "  %d. %s — capacity %s; %s%s\n", index+1, alternative.Alias, alternative.CapacityState, alternative.Provenance, best)
+	}
+	io.WriteString(stderr, "Choose an alternative to review a repository-first checkpoint, or press Enter to decline: ")
+	line, err := input.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return sourceExitStatus
+	}
+	choice, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || choice < 1 || choice > len(offer.Alternatives) {
+		return sourceExitStatus
+	}
+	return continueWith(offer.Alternatives[choice-1].Alias)
 }
 
 func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.Paths, options launchOptions, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, ownerOptions platform.OwnerOptions, action func(*httpapi.CommandClient, io.Reader) int) int {
+	return withLaunchCommandServiceAndUsage(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, newUsageCommandService, ownerOptions, action)
+}
+
+func withLaunchCommandServiceAndUsage(input io.Reader, stderr io.Writer, paths platform.Paths, options launchOptions, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, newAuthenticator profileAuthenticatorFactory, newUsage func(*store.Store, launch.ExecutableResolver) (*usageCommandService, error), ownerOptions platform.OwnerOptions, action func(*httpapi.CommandClient, io.Reader) int) int {
 	status, err := platform.Discover(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -190,7 +243,7 @@ func withLaunchCommandService(input io.Reader, stderr io.Writer, paths platform.
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProfileAuthenticationUnavailable, errors.New("profile authenticator is unavailable")), diagnosticSink)
 		}
 	}
-	usageCommands, err := newUsageCommandService(stateStore, nil)
+	usageCommands, err := newUsage(stateStore, nil)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

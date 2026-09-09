@@ -53,6 +53,17 @@ type ManagedLaunch struct {
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
 }
 
+type SafeContinuationAlternative struct {
+	Alias         string `json:"alias"`
+	CapacityState string `json:"capacity_state"`
+	Provenance    string `json:"provenance"`
+	Recommended   bool   `json:"recommended"`
+}
+
+type SafeContinuationOffer struct {
+	Alternatives []SafeContinuationAlternative `json:"alternatives"`
+}
+
 type ProcessInspector interface {
 	IsRunning(processID int) (bool, error)
 	BootSessionID() (string, error)

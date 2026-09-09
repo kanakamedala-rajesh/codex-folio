@@ -36,34 +36,39 @@ func runHandoffWithDependencies(args []string, input io.Reader, stdout, stderr i
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	return withLaunchCommandService(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
-		captured, err := client.Checkpoint(context.Background(), capture)
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		approved, ok, err := reviewCheckpoint(childInput, stdout, stderr, client, httpapi.CommandCheckpointRequest{Action: "review", ID: captured.Checkpoint.ID}, func(path string) error {
-			if editor == nil {
-				return errors.New("checkpoint editor is unavailable")
-			}
-			return editor(path, childInput, stdout, stderr)
-		})
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		if !ok {
-			return exitSuccess
-		}
-		prepared, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
-			Action: "prepare-handoff", Alias: target, Executable: report.Executable, Version: report.Version,
-			CheckpointID: approved.ID, Revision: approved.Revision,
-		})
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		if prepared.Plan == nil {
-			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
-		}
-		return runForegroundLaunch(client, *prepared.Plan, report, childInput, stdout, stderr, newProcess, diagnosticSink)
+		return runHandoffJourney(client, target, capture, report, childInput, stdout, stderr, newProcess, diagnosticSink, editor)
 	})
+}
+
+func runHandoffJourney(client *httpapi.CommandClient, target string, capture httpapi.CommandCheckpointRequest, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, editor func(string, io.Reader, io.Writer, io.Writer) error) int {
+	captured, err := client.Checkpoint(context.Background(), capture)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	approved, ok, err := reviewCheckpoint(input, stdout, stderr, client, httpapi.CommandCheckpointRequest{Action: "review", ID: captured.Checkpoint.ID}, func(path string) error {
+		if editor == nil {
+			return errors.New("checkpoint editor is unavailable")
+		}
+		return editor(path, input, stdout, stderr)
+	})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if !ok {
+		return exitSuccess
+	}
+	prepared, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
+		Action: "prepare-handoff", Alias: target, Executable: report.Executable, Version: report.Version,
+		CheckpointID: approved.ID, Revision: approved.Revision,
+	})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if prepared.Plan == nil {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
+	}
+	exitStatus, _ := runForegroundLaunch(client, *prepared.Plan, report, input, stdout, stderr, newProcess, diagnosticSink)
+	return exitStatus
 }
 
 func parseHandoffArguments(args []string) (string, httpapi.CommandCheckpointRequest, launchOptions, error) {

@@ -159,6 +159,10 @@ func TestInteractiveSelectionUpdatesDefaultThenUsesForegroundLauncher(t *testing
 }
 
 func seedSecondReadyProfile(t *testing.T, paths platform.Paths, secureVault vault.Vault) {
+	seedAdditionalReadyProfile(t, paths, secureVault, "profile-2", "Personal", "personal-home")
+}
+
+func seedAdditionalReadyProfile(t *testing.T, paths platform.Paths, secureVault vault.Vault, id, alias, homeName string) {
 	t.Helper()
 	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
 	if err != nil {
@@ -166,22 +170,22 @@ func seedSecondReadyProfile(t *testing.T, paths platform.Paths, secureVault vaul
 	}
 	defer func() { _ = stateStore.Close() }()
 	ctx := context.Background()
-	home := filepath.Join(paths.Root, "personal-home")
+	home := filepath.Join(paths.Root, homeName)
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("MkdirAll(home) error = %v", err)
 	}
-	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: "profile-2", Alias: "Personal", DisplayName: "Personal"}); err != nil {
+	if err := stateStore.CreatePendingProfile(ctx, profile.PendingProfile{ID: id, Alias: alias, DisplayName: alias}); err != nil {
 		t.Fatalf("CreatePendingProfile() error = %v", err)
 	}
-	if err := stateStore.SetManagedHome(ctx, "profile-2", "profile-2", home); err != nil {
+	if err := stateStore.SetManagedHome(ctx, id, id, home); err != nil {
 		t.Fatalf("SetManagedHome() error = %v", err)
 	}
 	for _, stage := range []profile.SetupStage{profile.StageDiscovery, profile.StageHome, profile.StageAuthentication, profile.StageValidation} {
-		if err := stateStore.SaveSetupStage(ctx, "profile-2", stage); err != nil {
+		if err := stateStore.SaveSetupStage(ctx, id, stage); err != nil {
 			t.Fatalf("SaveSetupStage(%s) error = %v", stage, err)
 		}
 	}
-	if _, err := stateStore.PromotePendingProfile(ctx, "profile-2"); err != nil {
+	if _, err := stateStore.PromotePendingProfile(ctx, id); err != nil {
 		t.Fatalf("PromotePendingProfile() error = %v", err)
 	}
 }

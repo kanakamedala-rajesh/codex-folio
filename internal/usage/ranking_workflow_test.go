@@ -32,3 +32,22 @@ func TestViewUsesOneRankingAcrossScopesAndPreservesCaptureAge(t *testing.T) {
 		t.Fatalf("incompatible capability view = %#v/%v", combined, err)
 	}
 }
+
+func TestRankAlternativesExcludesSourceBeforeChoosingBest(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	state := &recordingStore{profiles: []ProfileTarget{
+		{ID: "source", Alias: "Work", Eligible: true, Selected: true},
+		{ID: "target", Alias: "Personal", Eligible: true},
+	}, snapshots: map[string]Snapshot{
+		"source": rankingSnapshot("source", now, 0, 100),
+		"target": rankingSnapshot("target", now, 20, 20),
+	}}
+	service, err := NewService(state, &recordingCollector{}, fixedClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, recommended, err := service.RankAlternatives(context.Background(), "source", true)
+	if err != nil || len(candidates) != 1 || candidates[0].ProfileID != "target" || recommended != "target" {
+		t.Fatalf("alternatives/recommended = %#v/%q, error = %v", candidates, recommended, err)
+	}
+}
