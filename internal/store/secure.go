@@ -3,12 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
@@ -262,12 +264,14 @@ func (store *Store) UpdateProjectAlias(ctx context.Context, id, alias string, up
 // PutCheckpoint inserts or replaces one checkpoint. Each sensitive field is
 // encrypted with field-specific associated data before any row mutation.
 func (store *Store) PutCheckpoint(ctx context.Context, checkpoint Checkpoint) error {
+	return store.putCheckpoint(ctx, checkpoint, "", "")
+}
+
+func (store *Store) putCheckpoint(ctx context.Context, checkpoint Checkpoint, expectedStatus, expectedRevision string) error {
 	secureVault, err := store.requireVault()
 	if err != nil {
 		return err
 	}
-	store.operationMu.RLock()
-	defer store.operationMu.RUnlock()
 	ctx = contextOrBackground(ctx)
 	fields := []struct {
 		value *string
@@ -296,7 +300,45 @@ func (store *Store) PutCheckpoint(ctx context.Context, checkpoint Checkpoint) er
 	if checkpoint.ExpiresAt != nil {
 		expiresAt = formatStoredTime(*checkpoint.ExpiresAt)
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO checkpoints (
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrSensitiveWrite, err))
+	}
+	rollback := func() { _ = tx.Rollback() }
+	if expectedStatus != "" || expectedRevision != "" {
+		if expectedStatus == "" || expectedRevision == "" {
+			rollback()
+			return continuation.ErrCheckpointInvalid
+		}
+		var currentStatus string
+		var metadataCiphertext []byte
+		if err := tx.QueryRowContext(ctx, `SELECT status, recovery_metadata_ciphertext FROM checkpoints WHERE checkpoint_id = ?`, checkpoint.CheckpointID).Scan(&currentStatus, &metadataCiphertext); err != nil {
+			rollback()
+			if errors.Is(err, sql.ErrNoRows) {
+				return continuation.ErrCheckpointNotFound
+			}
+			return coded(apperrors.StoreReadFailed, errors.Join(ErrSensitiveRead, err))
+		}
+		if currentStatus != expectedStatus {
+			rollback()
+			return continuation.ErrHandoffNotReady
+		}
+		metadata, err := decryptField(ctx, secureVault, metadataCiphertext, checkpointAAD(checkpoint.CheckpointID, checkpointRecoveryField))
+		if err != nil {
+			rollback()
+			return err
+		}
+		var current struct {
+			Revision string `json:"revision"`
+		}
+		if json.Unmarshal([]byte(metadata), &current) != nil || current.Revision != expectedRevision {
+			rollback()
+			return continuation.ErrCheckpointRevisionChanged
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO checkpoints (
 		checkpoint_id, project_identity_id, status,
 		goal_ciphertext, completed_work_ciphertext, pending_work_ciphertext,
 		validation_ciphertext, risks_ciphertext, next_action_ciphertext,
@@ -328,6 +370,11 @@ func (store *Store) PutCheckpoint(ctx context.Context, checkpoint Checkpoint) er
 		expiresAt,
 	)
 	if err != nil {
+		rollback()
+		return coded(apperrors.StoreWriteFailed, errors.Join(ErrSensitiveWrite, err))
+	}
+	if err := tx.Commit(); err != nil {
+		rollback()
 		return coded(apperrors.StoreWriteFailed, errors.Join(ErrSensitiveWrite, err))
 	}
 	return nil

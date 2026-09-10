@@ -465,6 +465,21 @@ func TestHandoffCLIUsesConsentedHistoryOnlyAfterSanitizedApproval(t *testing.T) 
 	}
 }
 
+func TestEditAssistedCheckpointFieldsRejectsControlCharactersBeforeRendering(t *testing.T) {
+	unsafe := "candidate\x1b[2Jspoof"
+	fields := continuation.CheckpointFields{Goal: continuation.Evidence[string]{Value: unsafe}}
+	var stdout, stderr strings.Builder
+
+	_, err := editAssistedCheckpointFields(bufferedReader(strings.NewReader("replacement\n")), &stdout, &stderr, fields)
+
+	if !errors.Is(err, continuation.ErrHistoryUnavailable) {
+		t.Fatalf("edit assisted fields error = %v, want history unavailable", err)
+	}
+	if strings.Contains(stdout.String(), unsafe) || strings.Contains(stderr.String(), unsafe) {
+		t.Fatalf("unsafe candidate was rendered: stdout %q, stderr %q", stdout.String(), stderr.String())
+	}
+}
+
 type historyReaderStub struct {
 	request continuation.HistoryReadRequest
 	fields  continuation.CheckpointFields

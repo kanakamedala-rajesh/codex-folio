@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/term"
+
 	gitadapter "venkatasudha.com/codex-folio/internal/adapters/git"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/continuation"
@@ -52,6 +54,16 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 	if !ok {
 		buffered = bufio.NewReader(input)
 	}
+	readPassphrase := func() (string, error) {
+		return readCheckpointExportLine(buffered)
+	}
+	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		readPassphrase = func() (string, error) {
+			passphrase, err := term.ReadPassword(int(file.Fd()))
+			fmt.Fprintln(stderr)
+			return string(passphrase), err
+		}
+	}
 	return withSelectionService(buffered, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options.selectionOptions, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		if request.Action == "review" {
 			_, _, err := reviewCheckpoint(buffered, stdout, stderr, client, request, editor)
@@ -72,7 +84,7 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 			if result.Export == nil {
 				return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
 			}
-			return exportCheckpoint(buffered, stdout, stderr, *result.Export, options)
+			return exportCheckpoint(buffered, stdout, stderr, *result.Export, options, readPassphrase)
 		}
 		if options.json {
 			return writeServiceJSON(stdout, result.Checkpoint)
@@ -82,7 +94,7 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 	})
 }
 
-func exportCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, exported continuation.CheckpointExport, options checkpointOptions) error {
+func exportCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, exported continuation.CheckpointExport, options checkpointOptions, readPassphrase func() (string, error)) error {
 	var contents []byte
 	if options.plaintext {
 		encoded, err := json.MarshalIndent(exported, "", "  ")
@@ -106,12 +118,12 @@ func exportCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, exported co
 		fmt.Fprintln(stderr, "Checkpoint export preview:")
 		writeCheckpoint(stderr, exported.Checkpoint)
 		fmt.Fprint(stderr, "Export passphrase: ")
-		passphrase, err := readCheckpointExportLine(input)
+		passphrase, err := readPassphrase()
 		if err != nil || passphrase == "" {
 			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
 		}
 		fmt.Fprint(stderr, "Confirm export passphrase: ")
-		confirmation, err := readCheckpointExportLine(input)
+		confirmation, err := readPassphrase()
 		if err != nil || confirmation != passphrase {
 			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
 		}
@@ -152,33 +164,8 @@ func readCheckpointExportLine(input *bufio.Reader) (string, error) {
 	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), nil
 }
 
-func writeCheckpointExport(path string, contents []byte) (err error) {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || len(contents) == 0 {
-		return continuation.ErrCheckpointExportInvalid
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".codex-folio-export-*")
-	if err != nil {
-		return err
-	}
-	temporary := file.Name()
-	defer func() {
-		_ = file.Close()
-		_ = os.Remove(temporary)
-	}()
-	if err = file.Chmod(0o600); err == nil {
-		_, err = file.Write(contents)
-	}
-	if err == nil {
-		err = file.Sync()
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Link(temporary, path)
+func writeCheckpointExport(path string, contents []byte) error {
+	return writePlaintextCheckpointExport(path, contents)
 }
 
 func writePlaintextCheckpointExport(path string, contents []byte) (err error) {
@@ -470,6 +457,12 @@ func splitEditorCommand(value string) ([]string, error) {
 		}
 		if character == '\\' && index+1 < len(runes) {
 			next := runes[index+1]
+			if next == '\\' && current.Len() == 0 {
+				current.WriteString(`\\`)
+				token = true
+				index++
+				continue
+			}
 			if next == '\\' || next == quote || (quote == 0 && (next == '\'' || next == '"' || unicode.IsSpace(next))) {
 				current.WriteRune(next)
 				token = true
@@ -589,7 +582,10 @@ func validationValue(values []continuation.ValidationEvidence) string {
 }
 
 func newCheckpointService(stateStore *store.Store, projects continuation.Projects) (*continuation.Service, error) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory: %w", err)
+	}
 	return continuation.NewService(continuation.ServiceOptions{Repository: stateStore, Projects: projects, Inspector: gitadapter.NewInspector(), HomeDirectory: home})
 }
 

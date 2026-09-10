@@ -53,6 +53,48 @@ func TestInspectorReadsDirtyLinkedWorktreeWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestInspectorReportsNetDiffForUnbornRepository(t *testing.T) {
+	repository := t.TempDir()
+	runTestGit(t, repository, "init")
+	path := filepath.Join(repository, "tracked.txt")
+	if err := os.WriteFile(path, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, repository, "add", "tracked.txt")
+	if err := os.WriteFile(path, []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	inventory, err := NewInspector().Inspect(context.Background(), repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Diff.FilesChanged != 1 || inventory.Diff.Insertions != 1 || inventory.Diff.Deletions != 0 {
+		t.Fatalf("diff = %#v", inventory.Diff)
+	}
+}
+
+func TestRunGitDisablesOptionalLocks(t *testing.T) {
+	directory := t.TempDir()
+	executable, contents := filepath.Join(directory, "git"), "#!/bin/sh\nprintf '%s' \"$GIT_OPTIONAL_LOCKS\"\n"
+	if runtime.GOOS == "windows" {
+		executable += ".cmd"
+		contents = "@echo off\r\n<nul set /p =%GIT_OPTIONAL_LOCKS%\r\n"
+	}
+	if err := os.WriteFile(executable, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	output, err := runGit(context.Background(), directory, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != "0" {
+		t.Fatalf("GIT_OPTIONAL_LOCKS = %q, want 0", output)
+	}
+}
+
 func TestInspectorUsesMetadataOnlyGitCommands(t *testing.T) {
 	responses := map[string]response{
 		"symbolic-ref --quiet --short HEAD":                           {output: "feature/checkpoint\n"},

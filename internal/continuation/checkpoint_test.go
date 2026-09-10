@@ -14,10 +14,10 @@ import (
 
 func TestCapturePersistsSanitizedRepositoryFirstDraft(t *testing.T) {
 	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
-	projects := &projectStub{project: activity.ProjectIdentity{ID: "project-1", Alias: "Folio", Basename: "codex-folio"}, path: "/home/alice/codex-folio"}
+	projects := &projectStub{project: activity.ProjectIdentity{ID: "project-1", Alias: "Folio token-value", Basename: "codex-token-value"}, path: "/home/alice/codex-folio"}
 	repository := &checkpointRepositoryStub{}
 	inspector := &inspectorStub{inventory: RepositoryInventory{
-		Branch: "feature", Head: "abc123", Upstream: &UpstreamDivergence{Ahead: 2, Behind: 1},
+		Branch: "feature/token-value", Head: "abc123", Upstream: &UpstreamDivergence{Ahead: 2, Behind: 1},
 		Staged: []string{"safe.go", "private/secret.txt"}, Modified: []string{"README.md"}, Untracked: []string{"notes.txt"},
 		Diff: DiffStatistics{FilesChanged: 2, Insertions: 8, Deletions: 3},
 	}}
@@ -39,7 +39,7 @@ func TestCapturePersistsSanitizedRepositoryFirstDraft(t *testing.T) {
 	if repository.saved.Status != StatusDraft || repository.saved.ProjectIdentityID != "project-1" || repository.saved.ExpiresAt == nil || !repository.saved.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
 		t.Fatalf("saved record = %#v", repository.saved)
 	}
-	if checkpoint.Project.Alias != "Folio" || checkpoint.Repository.Staged.Value[1] != RedactedValue || checkpoint.Fields.Goal.Value != "finish [HOME]/codex-folio without [REDACTED]" {
+	if checkpoint.Project.Alias != "Folio [REDACTED]" || checkpoint.Project.Basename != "codex-[REDACTED]" || checkpoint.Repository.Branch.Value != "feature/[REDACTED]" || checkpoint.Repository.Staged.Value[1] != RedactedValue || checkpoint.Fields.Goal.Value != "finish [HOME]/codex-folio without [REDACTED]" {
 		t.Fatalf("checkpoint projection = %#v", checkpoint)
 	}
 	if checkpoint.Fields.PendingWork.Completeness != CompletenessUnknown || checkpoint.Fields.Goal.Provenance != ProvenanceUserConfirmed || checkpoint.Repository.Branch.Provenance != ProvenanceLocalObserved {
@@ -58,6 +58,21 @@ func TestCapturePersistsSanitizedRepositoryFirstDraft(t *testing.T) {
 	for _, forbidden := range []string{"/home/alice", "private/secret.txt", "token-value"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("persisted metadata contains %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestSanitizeTextRedactsWindowsHomeCaseInsensitively(t *testing.T) {
+	got := sanitizeText(`finish c:\USERS\alice\repo without Secret`, `C:\Users\Alice`, []string{"secret"})
+	if got != `finish [HOME]\repo without Secret` {
+		t.Fatalf("sanitizeText() = %q", got)
+	}
+}
+
+func TestSanitizePathsRejectsControlCharacters(t *testing.T) {
+	for _, path := range []string{"line\nbreak.txt", "tab\tname.txt", "escape\x1bname.txt"} {
+		if _, err := sanitizePaths([]string{path}, nil); !errors.Is(err, ErrCheckpointInvalid) {
+			t.Errorf("sanitizePaths(%q) error = %v, want ErrCheckpointInvalid", path, err)
 		}
 	}
 }
@@ -94,17 +109,41 @@ func TestCheckpointRetentionControlsOriginExpiryAndExpiredLifecycle(t *testing.T
 	expires := now
 	completed := checkpoint
 	completed.Status, completed.ExpiresAt = StatusCompleted, &expires
+	completed.Project.Alias = "private project"
+	completed.Repository.Branch = observed("private branch", CompletenessComplete)
+	completed.Fields.Goal = userField("private goal")
 	completed, repository.loaded.Metadata, err = finalizeCheckpoint(completed)
 	if err != nil {
 		t.Fatal(err)
 	}
+	activeMetadata := repository.loaded.Metadata
 	repository.loaded.Status, repository.loaded.ExpiresAt = StatusCompleted, &expires
 	shown, err := service.Show(context.Background(), checkpoint.ID)
-	if err != nil || shown.Status != StatusExpired || repository.saved.Status != StatusExpired || repository.saved.ExpiresAt == nil || !repository.saved.ExpiresAt.Equal(expires) {
+	if err != nil || shown.Status != StatusExpired || repository.saved.Status != StatusExpired || repository.saved.ExpiresAt == nil || !repository.saved.ExpiresAt.Equal(expires) || repository.saved.ExpectedStatus != StatusCompleted || repository.saved.ExpectedRevision != completed.Revision {
 		t.Fatalf("Show(expired completed) = %#v, saved %#v, %v", shown, repository.saved, err)
+	}
+	if repository.saved.Goal != nil || repository.saved.CompletedWork != nil || repository.saved.PendingWork != nil || repository.saved.Validation != nil || repository.saved.Risks != nil || repository.saved.NextAction != nil || strings.Contains(repository.saved.Metadata, "private") {
+		t.Fatalf("expired persistence retained sensitive content: %#v", repository.saved)
+	}
+	if shown.Project.Alias != "" || shown.Repository.Branch.Value != "" || shown.Fields.Goal.Value != "" {
+		t.Fatalf("expired projection retained sensitive content: %#v", shown)
 	}
 	if _, err := service.PrepareHandoff(context.Background(), checkpoint.ID, shown.Revision, "target"); !errors.Is(err, ErrHandoffNotReady) {
 		t.Fatalf("PrepareHandoff(expired) error = %v", err)
+	}
+
+	repository.loaded.Status = StatusLaunching
+	repository.loaded.Metadata = activeMetadata
+	before := repository.saveCalls
+	launching, err := service.Show(context.Background(), checkpoint.ID)
+	if err != nil || launching.Status != StatusLaunching || repository.saveCalls != before {
+		t.Fatalf("Show(expired launching) = %#v, save calls %d -> %d, %v", launching, before, repository.saveCalls, err)
+	}
+
+	repository.loaded.Status = StatusExpired
+	legacy, err := service.Show(context.Background(), checkpoint.ID)
+	if err != nil || legacy.Status != StatusExpired || repository.saveCalls != before+1 || strings.Contains(repository.saved.Metadata, "private") {
+		t.Fatalf("Show(legacy expired) = %#v, saved %#v, %v", legacy, repository.saved, err)
 	}
 }
 
@@ -215,8 +254,8 @@ func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) 
 		t.Fatal(err)
 	}
 	checkpoint := Checkpoint{
-		ID: "checkpoint-1", Status: StatusApproved, Source: SourceRepositoryFirst,
-		Repository: RepositoryState{Modified: observed([]string{"private/secret.txt"}, CompletenessComplete)},
+		ID: "checkpoint-1", Status: StatusApproved, Source: SourceRepositoryFirst, Project: Project{Alias: "token project", Basename: "token-repo"},
+		Repository: RepositoryState{Branch: observed("feature/token", CompletenessComplete), Modified: observed([]string{"private/secret.txt"}, CompletenessComplete)},
 		Fields:     CheckpointFields{Goal: userField("old goal")},
 	}
 	checkpoint, repository.loaded.Metadata, err = finalizeCheckpoint(checkpoint)
@@ -232,17 +271,20 @@ func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Edit() error = %v", err)
 	}
-	if edited.Status != StatusDraft || edited.Fields.Goal.Value != "finish [HOME] without [REDACTED]" || edited.Repository.Modified.Value[0] != RedactedValue || edited.Revision == "" {
+	if edited.Status != StatusDraft || edited.Project.Alias != "[REDACTED] project" || edited.Project.Basename != "[REDACTED]-repo" || edited.Repository.Branch.Value != "feature/[REDACTED]" || edited.Fields.Goal.Value != "finish [HOME] without [REDACTED]" || edited.Repository.Modified.Value[0] != RedactedValue || edited.Revision == "" {
 		t.Fatalf("edited checkpoint = %#v", edited)
 	}
-	if repository.saved.Status != StatusDraft {
-		t.Fatalf("saved edit status = %q, want draft", repository.saved.Status)
+	if repository.saved.Status != StatusDraft || repository.saved.ExpectedStatus != StatusApproved || repository.saved.ExpectedRevision != checkpoint.Revision {
+		t.Fatalf("saved edit = %#v, want draft conditional on approved revision %q", repository.saved, checkpoint.Revision)
 	}
 
 	repository.loaded = repository.saved
 	approved, err := service.Approve(context.Background(), checkpoint.ID, edited.Revision)
 	if err != nil || approved.Status != StatusApproved || repository.saved.Status != StatusApproved {
 		t.Fatalf("Approve() = %#v, %v; saved status %q", approved, err, repository.saved.Status)
+	}
+	if repository.saved.ExpectedStatus != StatusDraft || repository.saved.ExpectedRevision != edited.Revision {
+		t.Fatalf("saved approval condition = %q/%q, want draft/%q", repository.saved.ExpectedStatus, repository.saved.ExpectedRevision, edited.Revision)
 	}
 	repository.loaded = repository.saved
 	if _, err := service.Approve(context.Background(), checkpoint.ID, "stale-revision"); !errors.Is(err, ErrCheckpointRevisionChanged) {
@@ -268,6 +310,85 @@ func TestEditSanitizesDraftAndApprovalRequiresTheReviewedRevision(t *testing.T) 
 	}
 	if _, err := service.Approve(context.Background(), checkpoint.ID, repository.loaded.Metadata); !errors.Is(err, ErrHandoffNotReady) {
 		t.Fatalf("Approve(completed) error = %v, want ErrHandoffNotReady", err)
+	}
+}
+
+func TestApprovalRejectsCheckpointMadeOversizeByApprovedStatus(t *testing.T) {
+	checkpoint := Checkpoint{ID: "checkpoint-1", Status: StatusDraft, Source: SourceRepositoryFirst, Fields: CheckpointFields{Goal: userField("")}}
+	var metadata string
+	var err error
+	for low, high := 0, MaxCheckpointBytes; low <= high; {
+		length := low + (high-low)/2
+		checkpoint.Fields.Goal.Value = strings.Repeat("x", length)
+		checkpoint, metadata, err = prepareCheckpoint(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if checkpoint.SizeBytes == MaxCheckpointBytes {
+			break
+		}
+		if checkpoint.SizeBytes > MaxCheckpointBytes {
+			high = length - 1
+		} else {
+			low = length + 1
+		}
+	}
+	if checkpoint.SizeBytes != MaxCheckpointBytes {
+		t.Fatalf("checkpoint size = %d, want %d", checkpoint.SizeBytes, MaxCheckpointBytes)
+	}
+	repository := &checkpointRepositoryStub{loaded: CheckpointRecord{ID: checkpoint.ID, Status: checkpoint.Status, Metadata: metadata}}
+	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{}, Inspector: &inspectorStub{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Approve(context.Background(), checkpoint.ID, checkpoint.Revision); !errors.Is(err, ErrCheckpointOversize) {
+		t.Fatalf("Approve() error = %v, want ErrCheckpointOversize", err)
+	}
+	if repository.saveCalls != 0 {
+		t.Fatalf("SaveCheckpoint calls = %d, want 0", repository.saveCalls)
+	}
+}
+
+func TestAssistedApprovalRejectsCheckpointMadeOversizeByApprovedStatus(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	checkpoint := Checkpoint{ID: "checkpoint-1", Status: StatusDraft, Source: SourceRepositoryFirst, CreatedAt: now}
+	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{loaded: CheckpointRecord{ID: checkpoint.ID, Status: checkpoint.Status, Metadata: metadata}}
+	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := EditRequest{Fields: CheckpointFields{Goal: userField("")}}
+	var preview Checkpoint
+	for low, high := 0, MaxCheckpointBytes; low <= high; {
+		length := low + (high-low)/2
+		request.Fields.Goal.Value = strings.Repeat("x", length)
+		preview, err = service.PreviewAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, request)
+		if errors.Is(err, ErrCheckpointOversize) {
+			high = length - 1
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preview.SizeBytes == MaxCheckpointBytes {
+			break
+		}
+		low = length + 1
+	}
+	if preview.SizeBytes != MaxCheckpointBytes {
+		t.Fatalf("PreviewAssisted() size = %d, want %d", preview.SizeBytes, MaxCheckpointBytes)
+	}
+
+	if _, err := service.ApproveAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, preview.Revision, request); !errors.Is(err, ErrCheckpointOversize) {
+		t.Fatalf("ApproveAssisted() error = %v, want ErrCheckpointOversize", err)
+	}
+	if repository.saveCalls != 0 {
+		t.Fatalf("SaveCheckpoint calls = %d, want 0", repository.saveCalls)
 	}
 }
 
@@ -316,7 +437,7 @@ func TestTranscriptAssistancePersistsOnlyTheApprovedSanitizedRevisionForSevenDay
 	if err != nil {
 		t.Fatalf("ApproveAssisted() error = %v", err)
 	}
-	if repository.saveCalls != 1 || approved.Status != StatusApproved || repository.saved.Status != StatusApproved || repository.saved.Metadata != mustEncodeCheckpoint(t, approved) || !approved.ExpiresAt.Equal(now.Add(7*24*time.Hour)) {
+	if repository.saveCalls != 1 || approved.Status != StatusApproved || repository.saved.Status != StatusApproved || repository.saved.Metadata != mustEncodeCheckpoint(t, approved) || !approved.ExpiresAt.Equal(now.Add(7*24*time.Hour)) || repository.saved.ExpectedStatus != StatusDraft || repository.saved.ExpectedRevision != checkpoint.Revision {
 		t.Fatalf("approved/saved = %#v/%#v; calls %d", approved, repository.saved, repository.saveCalls)
 	}
 	for _, forbidden := range []string{"/home/alice", "token"} {

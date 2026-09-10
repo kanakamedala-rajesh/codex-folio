@@ -129,6 +129,8 @@ func purgeSelections(scope usage.HistoryScope) []historySelection {
 	updates.args = append(updates.args, correlations.args...)
 	aggregates := selectClass("aggregates", "usage_aggregates", "aggregate_id", "g", "g.profile_id", "g.project_identity_id", "g.bucket_start", "g.bucket_end", true)
 	checkpoints := selectClass("checkpoints", "checkpoints", "checkpoint_id", "c", "NULL", "c.project_identity_id", "c.created_at", "c.created_at", false)
+	checkpoints.query += ` AND c.status <> 'launching'
+ AND NOT EXISTS (SELECT 1 FROM managed_launches m WHERE m.continuation_checkpoint_id = c.checkpoint_id AND m.state IN ('pending', 'running'))`
 	return []historySelection{updates, correlations, sessions, launches, observations, availability, provenance, snapshots, aggregates, checkpoints}
 }
 

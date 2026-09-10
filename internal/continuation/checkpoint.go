@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -172,6 +173,7 @@ type EditRequest struct {
 
 type CheckpointRecord struct {
 	ID, ProjectIdentityID, Status, Metadata                         string
+	ExpectedStatus, ExpectedRevision                                string
 	Goal, CompletedWork, PendingWork, Validation, Risks, NextAction *string
 	CreatedAt                                                       time.Time
 	ExpiresAt                                                       *time.Time
@@ -235,6 +237,8 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	if err != nil {
 		return Checkpoint{}, err
 	}
+	project.Alias = sanitizeText(project.Alias, service.home, request.RedactText)
+	project.Basename = sanitizeText(project.Basename, service.home, request.RedactText)
 	path, err := service.projects.CanonicalLocation(ctx, project.ID)
 	if err != nil {
 		return Checkpoint{}, err
@@ -243,6 +247,7 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	if err != nil {
 		return Checkpoint{}, errors.Join(ErrRepositoryInspection, err)
 	}
+	inventory.Branch = sanitizeText(inventory.Branch, service.home, request.RedactText)
 	redactedPaths := normalizedRedactions(request.RedactPaths)
 	if inventory.Staged, err = sanitizePaths(inventory.Staged, redactedPaths); err != nil {
 		return Checkpoint{}, err
@@ -291,7 +296,7 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	if checkpoint.SizeBytes > MaxCheckpointBytes {
 		return Checkpoint{}, ErrCheckpointOversize
 	}
-	if err := service.save(ctx, checkpoint, metadata); err != nil {
+	if err := service.save(ctx, checkpoint, metadata, "", ""); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
@@ -337,6 +342,7 @@ func (service *Service) show(ctx context.Context, id string) (Checkpoint, error)
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
 	checkpoint.Status = record.Status
+	expectedStatus, expectedRevision := checkpoint.Status, checkpoint.Revision
 	if checkpoint.Retention == "" {
 		if checkpoint.Source == SourceTranscriptAssisted {
 			checkpoint.Retention = DefaultTranscriptRetention
@@ -344,15 +350,36 @@ func (service *Service) show(ctx context.Context, id string) (Checkpoint, error)
 			checkpoint.Retention = DefaultRepositoryRetention
 		}
 	}
-	if checkpoint.ExpiresAt != nil && !service.now().UTC().Before(checkpoint.ExpiresAt.UTC()) && checkpoint.Status != StatusExpired {
-		checkpoint.Status = StatusExpired
-		updated, metadata, finalizeErr := finalizeCheckpoint(checkpoint)
-		if finalizeErr != nil {
+	if checkpoint.ExpiresAt != nil && !service.now().UTC().Before(checkpoint.ExpiresAt.UTC()) && checkpoint.Status != StatusLaunching {
+		checkpoint = Checkpoint{
+			ID: checkpoint.ID, Status: StatusExpired, Project: Project{ID: record.ProjectIdentityID},
+			Source: checkpoint.Source, Retention: checkpoint.Retention, CreatedAt: checkpoint.CreatedAt, ExpiresAt: checkpoint.ExpiresAt, Revision: checkpoint.Revision,
+		}
+		metadata, encodeErr := json.Marshal(struct {
+			ID      string `json:"id"`
+			Status  string `json:"status"`
+			Project struct {
+				ID string `json:"id"`
+			} `json:"project"`
+			Source    string     `json:"source"`
+			Retention string     `json:"retention"`
+			CreatedAt time.Time  `json:"created_at"`
+			ExpiresAt *time.Time `json:"expires_at"`
+			Revision  string     `json:"revision"`
+		}{checkpoint.ID, checkpoint.Status, struct {
+			ID string `json:"id"`
+		}{checkpoint.Project.ID}, checkpoint.Source, checkpoint.Retention, checkpoint.CreatedAt, checkpoint.ExpiresAt, checkpoint.Revision})
+		if encodeErr != nil {
 			return Checkpoint{}, ErrCheckpointInvalid
 		}
-		checkpoint = updated
-		if err := service.save(ctx, checkpoint, metadata); err != nil {
-			return Checkpoint{}, err
+		sensitivePersisted := record.Goal != nil || record.CompletedWork != nil || record.PendingWork != nil || record.Validation != nil || record.Risks != nil || record.NextAction != nil
+		if record.Status != StatusExpired || record.Metadata != string(metadata) || sensitivePersisted {
+			if err := service.repository.SaveCheckpoint(ctx, CheckpointRecord{
+				ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: checkpoint.Status, Metadata: string(metadata),
+				ExpectedStatus: expectedStatus, ExpectedRevision: expectedRevision, CreatedAt: checkpoint.CreatedAt, ExpiresAt: checkpoint.ExpiresAt,
+			}); err != nil {
+				return Checkpoint{}, err
+			}
 		}
 	}
 	return checkpoint, nil
@@ -393,6 +420,7 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted || checkpoint.Status == StatusExpired {
 		return Checkpoint{}, ErrHandoffNotReady
 	}
+	expectedStatus, expectedRevision := checkpoint.Status, checkpoint.Revision
 	if err := service.applyEdit(&checkpoint, request); err != nil {
 		return Checkpoint{}, err
 	}
@@ -404,7 +432,7 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 	if checkpoint.SizeBytes > MaxCheckpointBytes {
 		return Checkpoint{}, ErrCheckpointOversize
 	}
-	if err := service.save(ctx, checkpoint, metadata); err != nil {
+	if err := service.save(ctx, checkpoint, metadata, expectedStatus, expectedRevision); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
@@ -434,7 +462,10 @@ func (service *Service) ApproveAssisted(ctx context.Context, id, revision, previ
 	if err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
-	if err := service.save(ctx, checkpoint, metadata); err != nil {
+	if checkpoint.SizeBytes > MaxCheckpointBytes {
+		return Checkpoint{}, ErrCheckpointOversize
+	}
+	if err := service.save(ctx, checkpoint, metadata, StatusDraft, revision); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
@@ -485,6 +516,9 @@ func (service *Service) applyEdit(checkpoint *Checkpoint, request EditRequest) e
 		return err
 	}
 	checkpoint.Fields = fields
+	checkpoint.Project.Alias = sanitizeText(checkpoint.Project.Alias, service.home, request.RedactText)
+	checkpoint.Project.Basename = sanitizeText(checkpoint.Project.Basename, service.home, request.RedactText)
+	checkpoint.Repository.Branch.Value = sanitizeText(checkpoint.Repository.Branch.Value, service.home, request.RedactText)
 	redactedPaths := normalizedRedactions(request.RedactPaths)
 	if checkpoint.Repository.Staged.Value, err = sanitizePaths(checkpoint.Repository.Staged.Value, redactedPaths); err != nil {
 		return err
@@ -517,12 +551,16 @@ func (service *Service) Approve(ctx context.Context, id, revision string) (Check
 	if checkpoint.Revision != revision {
 		return Checkpoint{}, ErrCheckpointRevisionChanged
 	}
+	expectedStatus, expectedRevision := checkpoint.Status, checkpoint.Revision
 	checkpoint.Status = StatusApproved
 	checkpoint, metadata, err := finalizeCheckpoint(checkpoint)
 	if err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
-	if err := service.save(ctx, checkpoint, metadata); err != nil {
+	if checkpoint.SizeBytes > MaxCheckpointBytes {
+		return Checkpoint{}, ErrCheckpointOversize
+	}
+	if err := service.save(ctx, checkpoint, metadata, expectedStatus, expectedRevision); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
@@ -560,10 +598,11 @@ func (service *Service) PrepareHandoff(ctx context.Context, id, revision, target
 	}, nil
 }
 
-func (service *Service) save(ctx context.Context, checkpoint Checkpoint, metadata string) error {
+func (service *Service) save(ctx context.Context, checkpoint Checkpoint, metadata, expectedStatus, expectedRevision string) error {
 	validation, _ := json.Marshal(checkpoint.Fields.Validation.Value)
 	return service.repository.SaveCheckpoint(ctx, CheckpointRecord{
 		ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: checkpoint.Status, Metadata: metadata,
+		ExpectedStatus: expectedStatus, ExpectedRevision: expectedRevision,
 		Goal: pointerOrNil(checkpoint.Fields.Goal.Value), CompletedWork: pointerOrNil(checkpoint.Fields.CompletedWork.Value), PendingWork: pointerOrNil(checkpoint.Fields.PendingWork.Value),
 		Validation: pointerOrNil(string(validation)), Risks: pointerOrNil(checkpoint.Fields.Risks.Value), NextAction: pointerOrNil(checkpoint.Fields.NextAction.Value), CreatedAt: checkpoint.CreatedAt, ExpiresAt: checkpoint.ExpiresAt,
 	})
@@ -661,8 +700,13 @@ func validationField(value *ValidationEvidence, home string, redactions []string
 
 func sanitizeText(value, home string, redactions []string) string {
 	if home != "" {
-		value = strings.ReplaceAll(value, home, "[HOME]")
-		value = strings.ReplaceAll(value, filepath.ToSlash(home), "[HOME]")
+		for _, candidate := range []string{home, strings.ReplaceAll(home, `\`, "/"), strings.ReplaceAll(home, "/", `\`)} {
+			if isWindowsPath(home) {
+				value = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(candidate)).ReplaceAllLiteralString(value, "[HOME]")
+			} else {
+				value = strings.ReplaceAll(value, candidate, "[HOME]")
+			}
+		}
 	}
 	for _, redaction := range redactions {
 		value = strings.ReplaceAll(value, redaction, RedactedValue)
@@ -670,11 +714,15 @@ func sanitizeText(value, home string, redactions []string) string {
 	return value
 }
 
+func isWindowsPath(path string) bool {
+	return len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') || strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//")
+}
+
 func sanitizePaths(paths, redactions []string) ([]string, error) {
 	result := make([]string, 0, len(paths))
 	for _, path := range paths {
 		normalized := filepath.ToSlash(filepath.Clean(path))
-		if filepath.IsAbs(path) || normalized == ".." || strings.HasPrefix(normalized, "../") {
+		if invalidRelativePath(path, normalized) {
 			return nil, ErrCheckpointInvalid
 		}
 		if slices.Contains(redactions, normalized) {
@@ -696,7 +744,7 @@ func normalizedRedactions(values []string) []string {
 func invalidRedactions(paths, text []string) bool {
 	for _, value := range paths {
 		normalized := filepath.ToSlash(filepath.Clean(value))
-		if filepath.IsAbs(value) || normalized == ".." || strings.HasPrefix(normalized, "../") {
+		if invalidRelativePath(value, normalized) {
 			return true
 		}
 	}
@@ -706,6 +754,10 @@ func invalidRedactions(paths, text []string) bool {
 		}
 	}
 	return false
+}
+
+func invalidRelativePath(value, normalized string) bool {
+	return filepath.IsAbs(value) || normalized == ".." || strings.HasPrefix(normalized, "../") || strings.IndexFunc(value, unicode.IsControl) >= 0
 }
 
 func invalidCaptureText(request CaptureRequest) bool {

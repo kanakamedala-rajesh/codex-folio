@@ -51,6 +51,17 @@ func TestParseCheckpointCaptureAndShow(t *testing.T) {
 	}
 }
 
+func TestNewCheckpointServiceFailsClosedWithoutHomeDirectory(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	if _, err := newCheckpointService(nil, nil); err == nil || !strings.Contains(err.Error(), "home directory") {
+		t.Fatalf("newCheckpointService() error = %v, want home directory error", err)
+	}
+}
+
 func TestParseCheckpointRetention(t *testing.T) {
 	request, options, err := parseCheckpointRequest([]string{"retention", "repository-first", "1", "--json"})
 	if err != nil || !options.json || request.Source != continuation.SourceRepositoryFirst || request.Setting != "1" {
@@ -98,9 +109,43 @@ func TestWriteCheckpointExportPreservesExistingDestination(t *testing.T) {
 	}
 }
 
+func TestEncryptedCheckpointExportUsesInjectedPassphraseReader(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "checkpoint.cfolio")
+	input := bufio.NewReader(strings.NewReader("must remain unread\n"))
+	exported := continuation.CheckpointExport{
+		FormatVersion: continuation.CheckpointExportVersion,
+		Checkpoint: continuation.Checkpoint{
+			ID: "checkpoint-1", Status: continuation.StatusApproved,
+			Project: continuation.Project{ID: "project-1", Alias: "folio", Basename: "codex-folio"},
+		},
+	}
+	reads := 0
+	err := exportCheckpoint(input, io.Discard, io.Discard, exported, checkpointOptions{output: destination}, func() (string, error) {
+		reads++
+		return "portable passphrase", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads != 2 {
+		t.Fatalf("passphrase reads = %d, want 2", reads)
+	}
+	line, err := input.ReadString('\n')
+	if err != nil || line != "must remain unread\n" {
+		t.Fatalf("ordinary input = %q, %v; want unread", line, err)
+	}
+	artifact, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := continuation.OpenCheckpointExport(artifact, "portable passphrase"); err != nil {
+		t.Fatalf("OpenCheckpointExport() error = %v", err)
+	}
+}
+
 func TestPlaintextCheckpointExportRequiresCompletePreview(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "checkpoint.json")
-	err := exportCheckpoint(bufio.NewReader(strings.NewReader("export plaintext\n")), io.Discard, shortWriter{}, continuation.CheckpointExport{}, checkpointOptions{plaintext: true, output: destination})
+	err := exportCheckpoint(bufio.NewReader(strings.NewReader("export plaintext\n")), io.Discard, shortWriter{}, continuation.CheckpointExport{}, checkpointOptions{plaintext: true, output: destination}, nil)
 	if err == nil {
 		t.Fatal("exportCheckpoint() error = nil")
 	}
@@ -194,6 +239,17 @@ func TestEditCheckpointFilePassesEditorArgumentsAndPath(t *testing.T) {
 	}
 	if stdout.String() != "editor stdin" || stderr.String() != "editor stderr" {
 		t.Fatalf("editor streams = stdout %q stderr %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestSplitEditorCommandPreservesWindowsUNCPath(t *testing.T) {
+	arguments, err := splitEditorCommand(`\\server\share\editor.exe --wait "profile name"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`\\server\share\editor.exe`, "--wait", "profile name"}
+	if strings.Join(arguments, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("splitEditorCommand() = %#v, want %#v", arguments, want)
 	}
 }
 

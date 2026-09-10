@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -158,6 +159,11 @@ func reviewAssistedCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, cli
 }
 
 func editAssistedCheckpointFields(input *bufio.Reader, stdout, stderr io.Writer, fields continuation.CheckpointFields) (continuation.CheckpointFields, error) {
+	for _, value := range []string{fields.Goal.Value, fields.CompletedWork.Value, fields.PendingWork.Value, fields.Risks.Value, fields.NextAction.Value} {
+		if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return continuation.CheckpointFields{}, continuation.ErrHistoryUnavailable
+		}
+	}
 	io.WriteString(stdout, "Transcript candidates (edited in memory; blank keeps the current value):\n")
 	entries := []struct {
 		label string

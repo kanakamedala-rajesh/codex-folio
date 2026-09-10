@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -46,7 +47,11 @@ func (inspector *Inspector) Inspect(ctx context.Context, path string) (continuat
 	files := map[string]struct{}{}
 	diffCommands := [][]string{{"diff", "--no-ext-diff", "HEAD", "--numstat", "--"}}
 	if inventory.Head == "" {
-		diffCommands = [][]string{{"diff", "--no-ext-diff", "--numstat", "--"}, {"diff", "--no-ext-diff", "--cached", "--numstat", "--"}}
+		emptyTree, runErr := inspector.run(ctx, path, "hash-object", "-t", "tree", "--stdin")
+		if runErr != nil || strings.TrimSpace(string(emptyTree)) == "" {
+			return continuation.RepositoryInventory{}, errors.Join(continuation.ErrRepositoryInspection, runErr)
+		}
+		diffCommands = [][]string{{"diff", "--no-ext-diff", strings.TrimSpace(string(emptyTree)), "--numstat", "--"}}
 	}
 	for _, args := range diffCommands {
 		output, runErr := inspector.run(ctx, path, args...)
@@ -63,7 +68,9 @@ func (inspector *Inspector) Inspect(ctx context.Context, path string) (continuat
 
 func runGit(ctx context.Context, path string, args ...string) ([]byte, error) {
 	commandArgs := append([]string{"-c", "core.fsmonitor=false", "-C", path}, args...)
-	output, err := exec.CommandContext(ctx, "git", commandArgs...).Output()
+	command := exec.CommandContext(ctx, "git", commandArgs...)
+	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	output, err := command.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git metadata command failed: %w", err)
 	}

@@ -133,8 +133,6 @@ func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report
 		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, launch.ErrProcessStartFailed), diagnosticSink), nil
 	}
 	if _, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{Action: "started", LeaseID: plan.LeaseID, ProcessID: processID}); err != nil {
-		_ = process.Kill()
-		abandon()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink), nil
 	}
 	stopForwarding := forwardForegroundSignals(process)

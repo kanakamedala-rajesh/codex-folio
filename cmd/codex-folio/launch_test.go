@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,6 +34,10 @@ type launchTestResolver struct{ candidate launch.Candidate }
 func (resolver launchTestResolver) Resolve(string) (launch.Candidate, error) {
 	return resolver.candidate, nil
 }
+
+type launchHTTPDoerFunc func(*http.Request) (*http.Response, error)
+
+func (do launchHTTPDoerFunc) Do(request *http.Request) (*http.Response, error) { return do(request) }
 
 type launchTestProcess struct {
 	pid        int
@@ -69,6 +74,23 @@ func (process *launchTestProcess) Kill() error {
 }
 
 func (process *launchTestProcess) ExitStatus() int { return process.exitStatus }
+
+func TestForegroundLaunchKeepsStartedProcessLeaseUncertainWhenStartReportFails(t *testing.T) {
+	process := &launchTestProcess{pid: 7777}
+	requests := 0
+	client := httpapi.NewCommandClient("http://localhost", "token", launchHTTPDoerFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("started report unavailable")
+	}))
+
+	code, offer := runForegroundLaunch(client, launch.Plan{LeaseID: "lease-1"}, launch.Discovery{}, nil, io.Discard, io.Discard, func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+		return process, nil
+	}, nil)
+
+	if code != exitFailure || offer != nil || !process.started || process.killed || requests != 1 {
+		t.Fatalf("result = code:%d offer:%#v started:%t killed:%t requests:%d, want started process and one failed report with lease retained", code, offer, process.started, process.killed, requests)
+	}
+}
 
 func TestForegroundProcessInspectorReportsBootSession(t *testing.T) {
 	bootSessionID, err := (foregroundProcessInspector{}).BootSessionID()
