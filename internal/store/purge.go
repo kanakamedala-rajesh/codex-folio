@@ -69,6 +69,16 @@ func (store *Store) PurgeAnalytics(ctx context.Context, scope usage.HistoryScope
 			}
 			_, err = tx.ExecContext(ctx, `UPDATE observed_sessions SET correlation_state = 'uncorrelated' WHERE observed_session_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+`)`, args...)
 		} else {
+			if selection.table == "checkpoints" {
+				args := make([]any, len(ids[i]))
+				for j, id := range ids[i] {
+					args[j] = id
+				}
+				_, err = tx.ExecContext(ctx, `UPDATE managed_launches SET continuation_checkpoint_id = NULL, continuation_revision = NULL WHERE continuation_checkpoint_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+`)`, args...)
+				if err != nil {
+					return result, coded(apperrors.StoreWriteFailed, err)
+				}
+			}
 			_, err = deleteHistoryIDs(ctx, tx, selection.table, selection.column, ids[i])
 		}
 		if err != nil {

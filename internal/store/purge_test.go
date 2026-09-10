@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -127,12 +128,12 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 			t.Fatal(err)
 		}
 		goal := "sanitized checkpoint fixture"
-		checkpoint := Checkpoint{CheckpointID: "checkpoint-" + projectID, ProjectIdentityID: projectID, Status: "approved", Goal: &goal, CreatedAt: at}
+		checkpoint := Checkpoint{CheckpointID: "checkpoint-" + projectID, ProjectIdentityID: projectID, Status: "completed", Goal: &goal, CreatedAt: at}
 		if err := state.PutCheckpoint(ctx, checkpoint); err != nil {
 			t.Fatal(err)
 		}
 		checkpoints = append(checkpoints, checkpoint)
-		if _, err := state.db.Exec(`INSERT INTO managed_launches (managed_launch_id, profile_id, lease_id, project_identity_id, state, started_at, ended_at, expected_session_id) VALUES (?, 'work', ?, ?, 'exited', ?, ?, ?)`, "launch-"+projectID, "lease-"+projectID, projectID, formatStoredTime(at), formatStoredTime(at.Add(time.Minute)), "session-"+projectID); err != nil {
+		if _, err := state.db.Exec(`INSERT INTO managed_launches (managed_launch_id, profile_id, lease_id, project_identity_id, state, started_at, ended_at, expected_session_id, continuation_checkpoint_id, continuation_revision) VALUES (?, 'work', ?, ?, 'exited', ?, ?, ?, ?, 'revision')`, "launch-"+projectID, "lease-"+projectID, projectID, formatStoredTime(at), formatStoredTime(at.Add(time.Minute)), "session-"+projectID, checkpoint.CheckpointID); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{{ProfileID: "work", ProfileAlias: "Work", SourceSessionID: "session-" + projectID, ProjectID: projectID, Source: usage.SourceLocalMetadata, SourceVersion: "v5", StartedAt: at, LastObservedAt: at.Add(time.Minute)}}); err != nil {
@@ -224,6 +225,15 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 	}
 	if checkpoint, err := state.GetCheckpoint(ctx, checkpoints[1].CheckpointID); err != nil || !reflect.DeepEqual(checkpoint, checkpoints[1]) {
 		t.Fatal("unrelated encrypted checkpoint or vault changed")
+	}
+	checkpointScope := usage.HistoryScope{ProfileID: "*", ProjectID: "project-b", From: "all", To: "all", Classes: []string{"checkpoints"}}
+	if _, err := state.PurgeAnalytics(ctx, checkpointScope, checkpointScope.Confirmation()); err != nil {
+		t.Fatalf("completed checkpoint purge: %v", err)
+	}
+	var retainedLaunch int
+	var checkpointID, revision sql.NullString
+	if err := state.db.QueryRow(`SELECT COUNT(*), continuation_checkpoint_id, continuation_revision FROM managed_launches WHERE managed_launch_id = 'launch-project-b'`).Scan(&retainedLaunch, &checkpointID, &revision); err != nil || retainedLaunch != 1 || checkpointID.Valid || revision.Valid {
+		t.Fatalf("retained launch after checkpoint purge = %d/%#v/%#v, %v", retainedLaunch, checkpointID, revision, err)
 	}
 	afterProfiles, err := state.ListProfiles(ctx)
 	if err != nil || !reflect.DeepEqual(profiles, afterProfiles) {

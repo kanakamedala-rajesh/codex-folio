@@ -50,6 +50,13 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 		if err != nil {
 			return err
 		}
+		if request.Action == "retention" {
+			if options.json {
+				return writeServiceJSON(stdout, result.Retention)
+			}
+			fmt.Fprintf(stdout, "Repository-first: %s\nTranscript-assisted: %s\n", result.Retention.RepositoryFirst, result.Retention.TranscriptAssisted)
+			return nil
+		}
 		if options.json {
 			return writeServiceJSON(stdout, result.Checkpoint)
 		}
@@ -59,7 +66,7 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 }
 
 func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, checkpointOptions, error) {
-	if len(args) == 0 || (args[0] != "capture" && args[0] != "show" && args[0] != "review") {
+	if len(args) == 0 || (args[0] != "capture" && args[0] != "show" && args[0] != "review" && args[0] != "retention") {
 		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint action is required")
 	}
 	request := httpapi.CommandCheckpointRequest{Action: args[0]}
@@ -124,6 +131,18 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, ch
 		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, err
 	}
 	resultOptions := checkpointOptions{selectionOptions: options, nonInteractive: nonInteractive}
+	if request.Action == "retention" {
+		if len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 || nonInteractive || (len(operands) != 0 && len(operands) != 2) {
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("retention accepts an origin and setting")
+		}
+		if len(operands) == 2 {
+			request.Source, request.Setting = operands[0], operands[1]
+			if _, _, err := continuation.ParseRetention(request.Setting); err != nil || (request.Source != continuation.SourceRepositoryFirst && request.Source != continuation.SourceTranscriptAssisted) {
+				return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint retention is invalid")
+			}
+		}
+		return request, resultOptions, nil
+	}
 	if request.Action == "show" {
 		if len(operands) != 1 || len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 || nonInteractive {
 			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("show requires one checkpoint ID")
@@ -355,7 +374,11 @@ func writeCheckpoint(output io.Writer, checkpoint continuation.Checkpoint) {
 	fmt.Fprintf(output, "Known validation [%s/%s]: %s\n", checkpoint.Fields.Validation.Provenance, checkpoint.Fields.Validation.Completeness, validationValue(checkpoint.Fields.Validation.Value))
 	fmt.Fprintf(output, "Risks [%s/%s]: %s\n", checkpoint.Fields.Risks.Provenance, checkpoint.Fields.Risks.Completeness, checkpoint.Fields.Risks.Value)
 	fmt.Fprintf(output, "Next action [%s/%s]: %s\n", checkpoint.Fields.NextAction.Provenance, checkpoint.Fields.NextAction.Completeness, checkpoint.Fields.NextAction.Value)
-	fmt.Fprintf(output, "Created: %s; expires: %s\n", checkpoint.CreatedAt.Format(time.RFC3339), checkpoint.ExpiresAt.Format(time.RFC3339))
+	expires := "unlimited"
+	if checkpoint.ExpiresAt != nil {
+		expires = checkpoint.ExpiresAt.Format(time.RFC3339)
+	}
+	fmt.Fprintf(output, "Created: %s; retention: %s; expires: %s\n", checkpoint.CreatedAt.Format(time.RFC3339), checkpoint.Retention, expires)
 }
 
 func evidenceValue(value continuation.Evidence[string]) string {
@@ -400,6 +423,6 @@ func newCheckpointService(stateStore *store.Store, projects continuation.Project
 func writeCheckpointUsage(stderr io.Writer, sink diagnostics.Sink) int {
 	recordServiceDiagnostic(sink, apperrors.CLIUsage, diagnostics.SeverityWarning)
 	fmt.Fprintf(stderr, "codex-folio [%s]: invalid checkpoint arguments\n", apperrors.CLIUsage)
-	io.WriteString(stderr, "Usage: codex-folio checkpoint {capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID|review ID [--redact-path PATH] [--redact-text TEXT] [--non-interactive]} [--state-root PATH] [--vault-mode MODE] [--json]\n")
+	io.WriteString(stderr, "Usage: codex-folio checkpoint {retention [repository-first|transcript-assisted DAYS|unlimited]|capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID|review ID [--redact-path PATH] [--redact-text TEXT] [--non-interactive]} [--state-root PATH] [--vault-mode MODE] [--json]\n")
 	return exitUsage
 }

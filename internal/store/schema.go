@@ -320,6 +320,23 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 18,
+			name:    "checkpoint-retention",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN checkpoint_repository_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_repository_retention_mode IN ('days', 'unlimited'))`,
+					`ALTER TABLE settings ADD COLUMN checkpoint_repository_retention_days INTEGER DEFAULT 30 CHECK (checkpoint_repository_retention_days IS NULL OR checkpoint_repository_retention_days >= 1)`,
+					`ALTER TABLE settings ADD COLUMN checkpoint_transcript_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_transcript_retention_mode IN ('days', 'unlimited'))`,
+					`ALTER TABLE settings ADD COLUMN checkpoint_transcript_retention_days INTEGER DEFAULT 7 CHECK (checkpoint_transcript_retention_days IS NULL OR checkpoint_transcript_retention_days >= 1)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -587,7 +604,7 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},

@@ -61,6 +61,52 @@ func TestCapturePersistsSanitizedRepositoryFirstDraft(t *testing.T) {
 	}
 }
 
+func TestCheckpointRetentionControlsOriginExpiryAndExpiredLifecycle(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	repository := &checkpointRepositoryStub{retention: RetentionPolicy{RepositoryFirst: "1", TranscriptAssisted: "unlimited"}}
+	service, err := NewService(ServiceOptions{
+		Repository: repository,
+		Projects:   &projectStub{project: activity.ProjectIdentity{ID: "project-1"}, path: "/repo"},
+		Inspector:  &inspectorStub{},
+		Now:        func() time.Time { return now },
+		Random:     strings.NewReader(strings.Repeat("a", 16)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := service.Retention(context.Background(), "", "")
+	if err != nil || policy.RepositoryFirst != "1" || policy.TranscriptAssisted != "unlimited" {
+		t.Fatalf("Retention() = %#v, %v", policy, err)
+	}
+	checkpoint, err := service.Capture(context.Background(), CaptureRequest{Path: "/repo"})
+	if err != nil || checkpoint.Retention != "1" || checkpoint.ExpiresAt == nil || !checkpoint.ExpiresAt.Equal(now.AddDate(0, 0, 1)) {
+		t.Fatalf("Capture() = %#v, %v", checkpoint, err)
+	}
+
+	repository.loaded = repository.saved
+	assisted, err := service.PreviewAssisted(context.Background(), checkpoint.ID, checkpoint.Revision, EditRequest{})
+	if err != nil || assisted.Retention != "unlimited" || assisted.ExpiresAt != nil {
+		t.Fatalf("PreviewAssisted() = %#v, %v", assisted, err)
+	}
+
+	expires := now
+	completed := checkpoint
+	completed.Status, completed.ExpiresAt = StatusCompleted, &expires
+	completed, repository.loaded.Metadata, err = finalizeCheckpoint(completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.loaded.Status, repository.loaded.ExpiresAt = StatusCompleted, &expires
+	shown, err := service.Show(context.Background(), checkpoint.ID)
+	if err != nil || shown.Status != StatusExpired || repository.saved.Status != StatusExpired || repository.saved.ExpiresAt == nil || !repository.saved.ExpiresAt.Equal(expires) {
+		t.Fatalf("Show(expired completed) = %#v, saved %#v, %v", shown, repository.saved, err)
+	}
+	if _, err := service.PrepareHandoff(context.Background(), checkpoint.ID, shown.Revision, "target"); !errors.Is(err, ErrHandoffNotReady) {
+		t.Fatalf("PrepareHandoff(expired) error = %v", err)
+	}
+}
+
 func TestCaptureMarksMissingValidationAttributesPartialAndExplicit(t *testing.T) {
 	repository := &checkpointRepositoryStub{}
 	service, err := NewService(ServiceOptions{
@@ -177,7 +223,7 @@ func TestTranscriptAssistancePersistsOnlyTheApprovedSanitizedRevisionForSevenDay
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	checkpoint := Checkpoint{
 		ID: "checkpoint-1", Status: StatusDraft, Project: Project{ID: "project-1"}, Source: SourceRepositoryFirst,
-		Fields: CheckpointFields{Goal: userField("repository goal")}, CreatedAt: now, ExpiresAt: now.Add(30 * 24 * time.Hour),
+		Fields: CheckpointFields{Goal: userField("repository goal")}, CreatedAt: now, ExpiresAt: timePointer(now.Add(30 * 24 * time.Hour)),
 	}
 	var err error
 	checkpoint, metadata, err := prepareCheckpoint(checkpoint)
@@ -185,7 +231,7 @@ func TestTranscriptAssistancePersistsOnlyTheApprovedSanitizedRevisionForSevenDay
 		t.Fatal(err)
 	}
 	repository := &checkpointRepositoryStub{
-		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusDraft, Metadata: metadata, ExpiresAt: &checkpoint.ExpiresAt},
+		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusDraft, Metadata: metadata, ExpiresAt: checkpoint.ExpiresAt},
 		source: SourceLaunch{ProfileID: "source-profile", State: SourceExited}, historyHome: filepath.Join(t.TempDir(), "source"),
 	}
 	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }, HomeDirectory: "/home/alice"})
@@ -250,14 +296,14 @@ func TestPrepareHandoffUsesOnlyApprovedCurrentCheckpointAfterExitedSource(t *tes
 		ID: "checkpoint-1", Status: StatusApproved, Revision: "revision-1",
 		Project: Project{ID: "project-1", Alias: "Folio", Basename: "folio"},
 		Fields:  CheckpointFields{Goal: userField("finish ticket 50")},
-		Source:  SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(24 * time.Hour),
+		Source:  SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: timePointer(now.Add(24 * time.Hour)),
 	}
 	metadata, err := encodeCheckpoint(checkpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &checkpointRepositoryStub{
-		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusApproved, Metadata: metadata, ExpiresAt: &checkpoint.ExpiresAt},
+		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusApproved, Metadata: metadata, ExpiresAt: checkpoint.ExpiresAt},
 		source: SourceLaunch{ProfileID: "source-profile", State: SourceExited},
 	}
 	service, err := NewService(ServiceOptions{
@@ -280,15 +326,15 @@ func TestPrepareHandoffRejectsUnapprovedExpiredChangedOrUnstoppedState(t *testin
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	base := Checkpoint{
 		ID: "checkpoint-1", Status: StatusApproved, Revision: "revision-1", Project: Project{ID: "project-1"},
-		Source: SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour),
+		Source: SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour), ExpiresAt: timePointer(now.Add(time.Hour)),
 	}
 	for _, test := range []struct {
 		name, status, revision, target string
-		expires                        time.Time
+		expires                        *time.Time
 		source                         SourceLaunch
 	}{
 		{name: "draft", status: StatusDraft, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
-		{name: "expired", status: StatusApproved, revision: base.Revision, target: "target", expires: now, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
+		{name: "expired", status: StatusApproved, revision: base.Revision, target: "target", expires: timePointer(now), source: SourceLaunch{ProfileID: "source", State: SourceExited}},
 		{name: "changed", status: StatusApproved, revision: "changed", target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceExited}},
 		{name: "running", status: StatusApproved, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceRunning}},
 		{name: "uncertain", status: StatusApproved, revision: base.Revision, target: "target", expires: base.ExpiresAt, source: SourceLaunch{ProfileID: "source", State: SourceUncertain}},
@@ -302,7 +348,7 @@ func TestPrepareHandoffRejectsUnapprovedExpiredChangedOrUnstoppedState(t *testin
 				t.Fatal(err)
 			}
 			repository := &checkpointRepositoryStub{loaded: CheckpointRecord{
-				ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: test.status, Metadata: metadata, ExpiresAt: &test.expires,
+				ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: test.status, Metadata: metadata, ExpiresAt: test.expires,
 			}, source: test.source}
 			service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{path: "/repo"}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }})
 			if err != nil {
@@ -346,6 +392,7 @@ type checkpointRepositoryStub struct {
 	source      SourceLaunch
 	historyHome string
 	saveCalls   int
+	retention   RetentionPolicy
 }
 
 func (stub *checkpointRepositoryStub) SaveCheckpoint(_ context.Context, record CheckpointRecord) error {
@@ -366,6 +413,19 @@ func (stub *checkpointRepositoryStub) SourceIdentityHome(context.Context, string
 	return stub.historyHome, nil
 }
 
+func (stub *checkpointRepositoryStub) CheckpointRetention(context.Context) (RetentionPolicy, error) {
+	return stub.retention, nil
+}
+
+func (stub *checkpointRepositoryStub) SetCheckpointRetention(_ context.Context, source, setting string) (RetentionPolicy, error) {
+	if source == SourceRepositoryFirst {
+		stub.retention.RepositoryFirst = setting
+	} else {
+		stub.retention.TranscriptAssisted = setting
+	}
+	return stub.retention, nil
+}
+
 func mustEncodeCheckpoint(t *testing.T, checkpoint Checkpoint) string {
 	t.Helper()
 	encoded, err := encodeCheckpoint(checkpoint)
@@ -375,4 +435,5 @@ func mustEncodeCheckpoint(t *testing.T, checkpoint Checkpoint) string {
 	return encoded
 }
 
-func intPointer(value int) *int { return &value }
+func intPointer(value int) *int              { return &value }
+func timePointer(value time.Time) *time.Time { return &value }

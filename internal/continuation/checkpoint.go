@@ -25,6 +25,7 @@ const (
 	StatusApproved           = "approved"
 	StatusLaunching          = "launching"
 	StatusCompleted          = "completed"
+	StatusExpired            = "expired"
 	SourceRepositoryFirst    = "repository-first"
 	SourceTranscriptAssisted = "transcript-assisted"
 	ProvenanceLocalObserved  = "local-observed"
@@ -147,8 +148,9 @@ type Checkpoint struct {
 	Repository RepositoryState  `json:"repository"`
 	Fields     CheckpointFields `json:"fields"`
 	Source     string           `json:"source"`
+	Retention  string           `json:"retention"`
 	CreatedAt  time.Time        `json:"created_at"`
-	ExpiresAt  time.Time        `json:"expires_at"`
+	ExpiresAt  *time.Time       `json:"expires_at"`
 	SizeBytes  int              `json:"size_bytes"`
 	Revision   string           `json:"revision"`
 }
@@ -180,6 +182,8 @@ type Repository interface {
 	LoadCheckpoint(context.Context, string) (CheckpointRecord, error)
 	LatestSourceLaunch(context.Context, string) (SourceLaunch, error)
 	SourceIdentityHome(context.Context, string) (string, error)
+	CheckpointRetention(context.Context) (RetentionPolicy, error)
+	SetCheckpointRetention(context.Context, string, string) (RetentionPolicy, error)
 }
 
 type Projects interface {
@@ -254,13 +258,25 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	}
 
 	now := service.now().UTC()
+	policy, err := service.repository.CheckpointRetention(ctx)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	setting, err := policy.setting(SourceRepositoryFirst)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	expiresAt, err := retentionExpiry(now, setting)
+	if err != nil {
+		return Checkpoint{}, err
+	}
 	id, err := newID(service.random)
 	if err != nil {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
 	checkpoint := Checkpoint{
 		ID: id, Status: StatusDraft, Project: Project{ID: project.ID, Alias: project.Alias, Basename: project.Basename}, Source: SourceRepositoryFirst,
-		Repository: repositoryState(inventory), CreatedAt: now, ExpiresAt: now.Add(30 * 24 * time.Hour),
+		Repository: repositoryState(inventory), Retention: setting, CreatedAt: now, ExpiresAt: expiresAt,
 	}
 	checkpoint.Fields.Goal = userField(sanitizeText(request.Goal, service.home, request.RedactText))
 	checkpoint.Fields.CompletedWork = userField(sanitizeText(request.CompletedWork, service.home, request.RedactText))
@@ -281,7 +297,34 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	return checkpoint, nil
 }
 
+func (service *Service) Retention(ctx context.Context, source, setting string) (RetentionPolicy, error) {
+	if source == "" && setting == "" {
+		policy, err := service.repository.CheckpointRetention(ctx)
+		if err != nil {
+			return RetentionPolicy{}, err
+		}
+		policy.RepositoryFirst, err = policy.setting(SourceRepositoryFirst)
+		if err == nil {
+			policy.TranscriptAssisted, err = policy.setting(SourceTranscriptAssisted)
+		}
+		return policy, err
+	}
+	if source == "" || setting == "" {
+		return RetentionPolicy{}, ErrCheckpointInvalid
+	}
+	if _, _, err := ParseRetention(setting); err != nil {
+		return RetentionPolicy{}, err
+	}
+	return service.repository.SetCheckpointRetention(ctx, source, setting)
+}
+
 func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	return service.show(ctx, id)
+}
+
+func (service *Service) show(ctx context.Context, id string) (Checkpoint, error) {
 	if strings.TrimSpace(id) == "" || invalidText(id) {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
@@ -294,6 +337,24 @@ func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error)
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
 	checkpoint.Status = record.Status
+	if checkpoint.Retention == "" {
+		if checkpoint.Source == SourceTranscriptAssisted {
+			checkpoint.Retention = DefaultTranscriptRetention
+		} else {
+			checkpoint.Retention = DefaultRepositoryRetention
+		}
+	}
+	if checkpoint.ExpiresAt != nil && !service.now().UTC().Before(checkpoint.ExpiresAt.UTC()) && checkpoint.Status != StatusExpired {
+		checkpoint.Status = StatusExpired
+		updated, metadata, finalizeErr := finalizeCheckpoint(checkpoint)
+		if finalizeErr != nil {
+			return Checkpoint{}, ErrCheckpointInvalid
+		}
+		checkpoint = updated
+		if err := service.save(ctx, checkpoint, metadata); err != nil {
+			return Checkpoint{}, err
+		}
+	}
 	return checkpoint, nil
 }
 
@@ -325,11 +386,11 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 	}
 	service.mutationMu.Lock()
 	defer service.mutationMu.Unlock()
-	checkpoint, err := service.Show(ctx, id)
+	checkpoint, err := service.show(ctx, id)
 	if err != nil {
 		return Checkpoint{}, err
 	}
-	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted {
+	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted || checkpoint.Status == StatusExpired {
 		return Checkpoint{}, ErrHandoffNotReady
 	}
 	if err := service.applyEdit(&checkpoint, request); err != nil {
@@ -350,6 +411,8 @@ func (service *Service) Edit(ctx context.Context, id string, request EditRequest
 }
 
 func (service *Service) PreviewAssisted(ctx context.Context, id, revision string, request EditRequest) (Checkpoint, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.previewAssisted(ctx, id, revision, request)
 }
 
@@ -381,7 +444,7 @@ func (service *Service) previewAssisted(ctx context.Context, id, revision string
 	if strings.TrimSpace(revision) == "" || invalidText(revision) || invalidRedactions(request.RedactPaths, request.RedactText) {
 		return Checkpoint{}, ErrCheckpointInvalid
 	}
-	checkpoint, err := service.Show(ctx, id)
+	checkpoint, err := service.show(ctx, id)
 	if err != nil {
 		return Checkpoint{}, err
 	}
@@ -391,9 +454,19 @@ func (service *Service) previewAssisted(ctx context.Context, id, revision string
 	if err := service.applyEdit(&checkpoint, request); err != nil {
 		return Checkpoint{}, err
 	}
+	policy, err := service.repository.CheckpointRetention(ctx)
+	if err != nil {
+		return Checkpoint{}, err
+	}
 	checkpoint.Source = SourceTranscriptAssisted
-	checkpoint.ExpiresAt = checkpoint.CreatedAt.Add(7 * 24 * time.Hour)
-	if !service.now().UTC().Before(checkpoint.ExpiresAt) {
+	checkpoint.Retention, err = policy.setting(SourceTranscriptAssisted)
+	if err == nil {
+		checkpoint.ExpiresAt, err = retentionExpiry(checkpoint.CreatedAt, checkpoint.Retention)
+	}
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if checkpoint.ExpiresAt != nil && !service.now().UTC().Before(checkpoint.ExpiresAt.UTC()) {
 		return Checkpoint{}, ErrHandoffNotReady
 	}
 	checkpoint, _, err = prepareCheckpoint(checkpoint)
@@ -434,11 +507,11 @@ func (service *Service) Approve(ctx context.Context, id, revision string) (Check
 	}
 	service.mutationMu.Lock()
 	defer service.mutationMu.Unlock()
-	checkpoint, err := service.Show(ctx, id)
+	checkpoint, err := service.show(ctx, id)
 	if err != nil {
 		return Checkpoint{}, err
 	}
-	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted {
+	if checkpoint.Status == StatusLaunching || checkpoint.Status == StatusCompleted || checkpoint.Status == StatusExpired {
 		return Checkpoint{}, ErrHandoffNotReady
 	}
 	if checkpoint.Revision != revision {
@@ -467,7 +540,7 @@ func (service *Service) PrepareHandoff(ctx context.Context, id, revision, target
 	if err := json.Unmarshal([]byte(record.Metadata), &checkpoint); err != nil {
 		return PreparedHandoff{}, ErrCheckpointInvalid
 	}
-	if record.Status != StatusApproved || checkpoint.Status != StatusApproved || checkpoint.Revision != revision || record.ProjectIdentityID == "" || checkpoint.Project.ID != record.ProjectIdentityID || record.ExpiresAt == nil || !service.now().UTC().Before(record.ExpiresAt.UTC()) || !checkpoint.ExpiresAt.Equal(*record.ExpiresAt) {
+	if record.Status != StatusApproved || checkpoint.Status != StatusApproved || checkpoint.Revision != revision || record.ProjectIdentityID == "" || checkpoint.Project.ID != record.ProjectIdentityID || (record.ExpiresAt != nil && !service.now().UTC().Before(record.ExpiresAt.UTC())) || !sameExpiry(checkpoint.ExpiresAt, record.ExpiresAt) {
 		return PreparedHandoff{}, ErrHandoffNotReady
 	}
 	source, err := service.repository.LatestSourceLaunch(ctx, record.ProjectIdentityID)
@@ -492,7 +565,7 @@ func (service *Service) save(ctx context.Context, checkpoint Checkpoint, metadat
 	return service.repository.SaveCheckpoint(ctx, CheckpointRecord{
 		ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: checkpoint.Status, Metadata: metadata,
 		Goal: pointerOrNil(checkpoint.Fields.Goal.Value), CompletedWork: pointerOrNil(checkpoint.Fields.CompletedWork.Value), PendingWork: pointerOrNil(checkpoint.Fields.PendingWork.Value),
-		Validation: pointerOrNil(string(validation)), Risks: pointerOrNil(checkpoint.Fields.Risks.Value), NextAction: pointerOrNil(checkpoint.Fields.NextAction.Value), CreatedAt: checkpoint.CreatedAt, ExpiresAt: &checkpoint.ExpiresAt,
+		Validation: pointerOrNil(string(validation)), Risks: pointerOrNil(checkpoint.Fields.Risks.Value), NextAction: pointerOrNil(checkpoint.Fields.NextAction.Value), CreatedAt: checkpoint.CreatedAt, ExpiresAt: checkpoint.ExpiresAt,
 	})
 }
 
@@ -688,15 +761,20 @@ func prepareCheckpoint(checkpoint Checkpoint) (Checkpoint, string, error) {
 		Repository RepositoryState  `json:"repository"`
 		Fields     CheckpointFields `json:"fields"`
 		Source     string           `json:"source"`
+		Retention  string           `json:"retention"`
 		CreatedAt  time.Time        `json:"created_at"`
-		ExpiresAt  time.Time        `json:"expires_at"`
-	}{checkpoint.Project, checkpoint.Repository, checkpoint.Fields, checkpoint.Source, checkpoint.CreatedAt, checkpoint.ExpiresAt})
+		ExpiresAt  *time.Time       `json:"expires_at"`
+	}{checkpoint.Project, checkpoint.Repository, checkpoint.Fields, checkpoint.Source, checkpoint.Retention, checkpoint.CreatedAt, checkpoint.ExpiresAt})
 	if err != nil {
 		return Checkpoint{}, "", err
 	}
 	digest := sha256.Sum256(content)
 	checkpoint.Revision = hex.EncodeToString(digest[:])
 	return finalizeCheckpoint(checkpoint)
+}
+
+func sameExpiry(left, right *time.Time) bool {
+	return left == nil && right == nil || left != nil && right != nil && left.Equal(*right)
 }
 
 func newID(random io.Reader) (string, error) {

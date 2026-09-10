@@ -13,6 +13,10 @@ func TestCommandCheckpointCaptureAndShowUseAuthorizedService(t *testing.T) {
 	server, _, _ := startTestServer(t, Options{Checkpoints: service, CommandToken: "checkpoint-token"})
 	client := NewCommandClient(server.Origin(), "checkpoint-token", nil)
 	request := CommandCheckpointRequest{Action: "capture", Path: "/repo", Goal: "ship checkpoint"}
+	retention, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "retention", Source: continuation.SourceRepositoryFirst, Setting: "1"})
+	if err != nil || retention.Retention == nil || retention.Retention.RepositoryFirst != "1" {
+		t.Fatalf("retention = %#v, %v", retention.Retention, err)
+	}
 	result, err := client.Checkpoint(context.Background(), request)
 	if err != nil || result.Checkpoint.ID != "checkpoint-1" || service.capture.Path != "/repo" {
 		t.Fatalf("capture = %#v/%#v, %v", result, service.capture, err)
@@ -54,6 +58,10 @@ type checkpointServiceStub struct {
 	previewID       string
 	assistedID      string
 	previewRevision string
+}
+
+func (stub *checkpointServiceStub) Retention(_ context.Context, source, setting string) (continuation.RetentionPolicy, error) {
+	return continuation.RetentionPolicy{RepositoryFirst: setting, TranscriptAssisted: "7"}, nil
 }
 
 func (stub *checkpointServiceStub) Capture(_ context.Context, request continuation.CaptureRequest) (continuation.Checkpoint, error) {

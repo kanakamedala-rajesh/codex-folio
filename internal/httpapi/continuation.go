@@ -16,6 +16,7 @@ import (
 )
 
 type CommandCheckpointService interface {
+	Retention(context.Context, string, string) (continuation.RetentionPolicy, error)
 	Capture(context.Context, continuation.CaptureRequest) (continuation.Checkpoint, error)
 	Show(context.Context, string) (continuation.Checkpoint, error)
 	Edit(context.Context, string, continuation.EditRequest) (continuation.Checkpoint, error)
@@ -27,6 +28,8 @@ type CommandCheckpointService interface {
 
 type CommandCheckpointRequest struct {
 	Action          string                           `json:"action"`
+	Source          string                           `json:"source,omitempty"`
+	Setting         string                           `json:"setting,omitempty"`
 	ID              string                           `json:"id,omitempty"`
 	Path            string                           `json:"path,omitempty"`
 	Alias           string                           `json:"alias,omitempty"`
@@ -45,8 +48,9 @@ type CommandCheckpointRequest struct {
 }
 
 type CommandCheckpointResponse struct {
-	Checkpoint    continuation.Checkpoint     `json:"checkpoint"`
-	HistorySource *continuation.HistorySource `json:"history_source,omitempty"`
+	Checkpoint    continuation.Checkpoint       `json:"checkpoint"`
+	Retention     *continuation.RetentionPolicy `json:"retention,omitempty"`
+	HistorySource *continuation.HistorySource   `json:"history_source,omitempty"`
 }
 
 func (client *CommandClient) Checkpoint(ctx context.Context, input CommandCheckpointRequest) (CommandCheckpointResponse, error) {
@@ -110,10 +114,18 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 		return
 	}
 	var checkpoint continuation.Checkpoint
+	var retention *continuation.RetentionPolicy
 	var historySource *continuation.HistorySource
 	switch input.Action {
+	case "retention":
+		if input.ID != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
+			err = continuation.ErrCheckpointInvalid
+		} else {
+			value, retentionErr := server.checkpoints.Retention(request.Context(), input.Source, input.Setting)
+			retention, err = &value, retentionErr
+		}
 	case "capture":
-		if input.ID != "" || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
+		if input.Source != "" || input.Setting != "" || input.ID != "" || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.Capture(request.Context(), continuation.CaptureRequest{
@@ -123,25 +135,25 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 			})
 		}
 	case "show":
-		if input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
+		if input.Source != "" || input.Setting != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.Show(request.Context(), input.ID)
 		}
 	case "edit":
-		if input.ID == "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || input.Revision != "" || input.PreviewRevision != "" {
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || input.Revision != "" || input.PreviewRevision != "" {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.Edit(request.Context(), input.ID, continuation.EditRequest{Fields: *input.Fields, RedactPaths: input.RedactPaths, RedactText: input.RedactText})
 		}
 	case "approve":
-		if input.ID == "" || input.Revision == "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.PreviewRevision != "" {
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Revision == "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.PreviewRevision != "" {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.Approve(request.Context(), input.ID, input.Revision)
 		}
 	case "history-source":
-		if input.ID == "" || input.Revision == "" || input.PreviewRevision != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil {
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Revision == "" || input.PreviewRevision != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			prepared, prepareErr := server.checkpoints.PrepareHistory(request.Context(), input.ID, input.Revision)
@@ -149,13 +161,13 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 			historySource = &prepared
 		}
 	case "preview-assisted":
-		if input.ID == "" || input.Revision == "" || input.PreviewRevision != "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 {
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Revision == "" || input.PreviewRevision != "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.PreviewAssisted(request.Context(), input.ID, input.Revision, continuation.EditRequest{Fields: *input.Fields, RedactPaths: input.RedactPaths, RedactText: input.RedactText})
 		}
 	case "approve-assisted":
-		if input.ID == "" || input.Revision == "" || input.PreviewRevision == "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 {
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Revision == "" || input.PreviewRevision == "" || input.Fields == nil || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 {
 			err = continuation.ErrCheckpointInvalid
 		} else {
 			checkpoint, err = server.checkpoints.ApproveAssisted(request.Context(), input.ID, input.Revision, input.PreviewRevision, continuation.EditRequest{Fields: *input.Fields, RedactPaths: input.RedactPaths, RedactText: input.RedactText})
@@ -168,7 +180,7 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 		server.writeAPIError(response, status, diagnostics.CodeFor(err, code))
 		return
 	}
-	writeJSON(response, http.StatusOK, CommandCheckpointResponse{Checkpoint: checkpoint, HistorySource: historySource})
+	writeJSON(response, http.StatusOK, CommandCheckpointResponse{Checkpoint: checkpoint, Retention: retention, HistorySource: historySource})
 }
 
 func checkpointError(err error) (int, string) {

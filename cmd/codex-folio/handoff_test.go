@@ -125,7 +125,7 @@ func TestHandoffCLIReviewsApprovedContextAndLaunchesFreshTargetInSourceRepositor
 		t.Fatalf("target plan = %#v", plan)
 	}
 	var supplied continuation.Checkpoint
-	if err := json.Unmarshal([]byte(plan.Arguments[0]), &supplied); err != nil || supplied.Status != continuation.StatusApproved || supplied.Fields.Goal.Value != "approved goal" || strings.Contains(plan.Arguments[0], "draft goal") {
+	if err := json.Unmarshal([]byte(plan.Arguments[0]), &supplied); err != nil || supplied.Status != continuation.StatusApproved || supplied.Retention != continuation.DefaultRepositoryRetention || supplied.Fields.Goal.Value != "approved goal" || strings.Contains(plan.Arguments[0], "draft goal") {
 		t.Fatalf("supplied checkpoint = %#v, %v; context %q", supplied, err, plan.Arguments[0])
 	}
 	assertSelectedAlias(t, paths, secureVault, "Work")
@@ -356,7 +356,7 @@ func TestHandoffCLIUsesConsentedHistoryOnlyAfterSanitizedApproval(t *testing.T) 
 		t.Fatalf("assisted handoff = code %d, calls %d, home %q, input %q, process %#v, stdout %q, stderr %q", code, historyCalls, historyHome, historyInput, process, assistedOutput.String(), assistedErrors.String())
 	}
 	var supplied continuation.Checkpoint
-	if len(plan.Arguments) != 1 || json.Unmarshal([]byte(plan.Arguments[0]), &supplied) != nil || supplied.Source != continuation.SourceTranscriptAssisted || supplied.Status != continuation.StatusApproved || supplied.Fields.Goal.Value != "approved [REDACTED] goal" || supplied.ExpiresAt.Sub(supplied.CreatedAt) != 7*24*time.Hour {
+	if len(plan.Arguments) != 1 || json.Unmarshal([]byte(plan.Arguments[0]), &supplied) != nil || supplied.Source != continuation.SourceTranscriptAssisted || supplied.Status != continuation.StatusApproved || supplied.Retention != continuation.DefaultTranscriptRetention || supplied.Fields.Goal.Value != "approved [REDACTED] goal" || supplied.ExpiresAt.Sub(supplied.CreatedAt) != 7*24*time.Hour {
 		t.Fatalf("supplied assisted checkpoint = %#v; plan %#v", supplied, plan)
 	}
 	for _, forbidden := range []string{"candidate secret-sentinel goal", "approved secret-sentinel goal", "raw prompt sentinel", "raw response sentinel", "credential sentinel"} {

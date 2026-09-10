@@ -107,16 +107,23 @@ func (store *Store) PrepareLaunch(ctx context.Context, request launch.PrepareReq
 			rollback()
 			return launch.Plan{}, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid)
 		}
-		var checkpointStatus, checkpointProjectID, expiresAt string
+		var checkpointStatus, checkpointProjectID string
+		var expiresAt sql.NullString
 		var metadataCiphertext []byte
 		if err := tx.QueryRowContext(ctx, `SELECT status, project_identity_id, expires_at, recovery_metadata_ciphertext FROM checkpoints WHERE checkpoint_id = ?`, request.CheckpointID).Scan(&checkpointStatus, &checkpointProjectID, &expiresAt, &metadataCiphertext); err != nil {
 			rollback()
 			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
 		}
-		expiry, err := parseStoredTime(expiresAt)
-		if err != nil || checkpointStatus != continuation.StatusApproved || checkpointProjectID != request.ProjectID || !now.Before(expiry) {
+		if checkpointStatus != continuation.StatusApproved || checkpointProjectID != request.ProjectID {
 			rollback()
 			return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+		}
+		if expiresAt.Valid {
+			expiry, err := parseStoredTime(expiresAt.String)
+			if err != nil || !now.Before(expiry) {
+				rollback()
+				return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+			}
 		}
 		metadata, err := decryptField(ctx, secureVault, metadataCiphertext, checkpointAAD(request.CheckpointID, checkpointRecoveryField))
 		if err != nil {

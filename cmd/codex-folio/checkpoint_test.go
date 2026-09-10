@@ -50,6 +50,22 @@ func TestParseCheckpointCaptureAndShow(t *testing.T) {
 	}
 }
 
+func TestParseCheckpointRetention(t *testing.T) {
+	request, options, err := parseCheckpointRequest([]string{"retention", "repository-first", "1", "--json"})
+	if err != nil || !options.json || request.Source != continuation.SourceRepositoryFirst || request.Setting != "1" {
+		t.Fatalf("retention = %#v/%#v, %v", request, options, err)
+	}
+	request, _, err = parseCheckpointRequest([]string{"retention"})
+	if err != nil || request.Action != "retention" || request.Source != "" || request.Setting != "" {
+		t.Fatalf("retention query = %#v, %v", request, err)
+	}
+	for _, invalid := range [][]string{{"retention", "repository-first"}, {"retention", "other", "1"}, {"retention", "transcript-assisted", "0"}} {
+		if _, _, err := parseCheckpointRequest(invalid); err == nil {
+			t.Fatalf("parseCheckpointRequest(%q) error = nil", invalid)
+		}
+	}
+}
+
 func TestPartialValidationUsesExplicitUnknowns(t *testing.T) {
 	request, _, err := parseCheckpointRequest([]string{"capture", "/repo", "--validation-command", "go test ./..."})
 	if err != nil {
@@ -154,9 +170,15 @@ func TestCheckpointCLICapturesAndShowsThroughServiceAndEncryptedStore(t *testing
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := runCheckpoint([]string{"capture", repository, "--goal", "finish " + filepath.Dir(repository) + " without token-value", "--project-command", "touch project-command-ran", "--redact-text", "token-value", "--json"}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil })
+	code := runCheckpoint([]string{"retention", "repository-first", "1", "--json"}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil })
+	var retention continuation.RetentionPolicy
+	if decodeErr := json.Unmarshal(stdout.Bytes(), &retention); code != exitSuccess || stderr.Len() != 0 || decodeErr != nil || retention.RepositoryFirst != "1" || retention.TranscriptAssisted != "7" {
+		t.Fatalf("retention CLI = code %d stdout %q stderr %q policy %#v error %v", code, stdout.String(), stderr.String(), retention, decodeErr)
+	}
+	stdout.Reset()
+	code = runCheckpoint([]string{"capture", repository, "--goal", "finish " + filepath.Dir(repository) + " without token-value", "--project-command", "touch project-command-ran", "--redact-text", "token-value", "--json"}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil })
 	var captured continuation.Checkpoint
-	if decodeErr := json.Unmarshal(stdout.Bytes(), &captured); code != exitSuccess || stderr.Len() != 0 || decodeErr != nil || captured.ID == "" || captured.Project.Alias != "repository" || captured.Fields.Goal.Value != "finish [HOME] without [REDACTED]" || len(captured.Repository.ConfiguredCommands.Value) != 1 {
+	if decodeErr := json.Unmarshal(stdout.Bytes(), &captured); code != exitSuccess || stderr.Len() != 0 || decodeErr != nil || captured.ID == "" || captured.Project.Alias != "repository" || captured.Fields.Goal.Value != "finish [HOME] without [REDACTED]" || len(captured.Repository.ConfiguredCommands.Value) != 1 || captured.Retention != "1" || captured.ExpiresAt == nil || !captured.ExpiresAt.Equal(time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("capture CLI = code %d stdout %q stderr %q checkpoint %#v error %v", code, stdout.String(), stderr.String(), captured, decodeErr)
 	}
 	stdout.Reset()

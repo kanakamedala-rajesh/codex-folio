@@ -148,6 +148,51 @@ func TestHandoffLaunchReservesApprovedCheckpointAndCompletesItOnStart(t *testing
 	}
 }
 
+func TestHandoffLaunchReservesUnlimitedCheckpointAndCompletesItOnStart(t *testing.T) {
+	stateStore, _, sourceProfileID, home := readyLaunchStore(t)
+	defer func() { _ = stateStore.Close() }()
+	_, targetHome := addReadyLaunchProfile(t, stateStore, "profile-2", "Personal")
+	projectPath := filepath.Join(home, "repository")
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	project := activity.ProjectRecord{ID: "project-1", Alias: "Folio", Basename: "repository", CanonicalPath: projectPath, CreatedAt: now, UpdatedAt: now}
+	if err := stateStore.SaveProjectRecord(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	source, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: projectPath, ProjectID: project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), source.LeaseID, 4001); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchExited(context.Background(), source.LeaseID, 0); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := continuation.CheckpointRecord{ID: "checkpoint-1", ProjectIdentityID: project.ID, Status: continuation.StatusApproved, Metadata: `{"status":"approved","revision":"revision-1"}`, CreatedAt: now}
+	if err := stateStore.SaveCheckpoint(context.Background(), checkpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath,
+		Arguments: []string{checkpoint.Metadata}, ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-a",
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch(handoff) error = %v", err)
+	}
+	reserved, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || reserved.Status != continuation.StatusLaunching || reserved.ExpiresAt != nil {
+		t.Fatalf("reserved checkpoint = %#v, %v", reserved, err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), plan.LeaseID, 4002); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted(handoff) error = %v", err)
+	}
+	completed, err := stateStore.LoadCheckpoint(context.Background(), checkpoint.ID)
+	if err != nil || completed.Status != continuation.StatusCompleted || completed.ExpiresAt != nil {
+		t.Fatalf("completed checkpoint = %#v, %v", completed, err)
+	}
+}
+
 func TestReconcilePendingHandoffRecoversOnlyAfterBootSessionChanges(t *testing.T) {
 	stateStore, _, sourceProfileID, home := readyLaunchStore(t)
 	defer func() { _ = stateStore.Close() }()
