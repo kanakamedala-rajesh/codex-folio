@@ -79,7 +79,7 @@ func TestRunGitDisablesOptionalLocks(t *testing.T) {
 	executable, contents := filepath.Join(directory, "git"), "#!/bin/sh\nprintf '%s' \"$GIT_OPTIONAL_LOCKS\"\n"
 	if runtime.GOOS == "windows" {
 		executable += ".cmd"
-		contents = "@echo off\r\n<nul set /p =%GIT_OPTIONAL_LOCKS%\r\n"
+		contents = "@echo off\r\n<nul set /p =%GIT_OPTIONAL_LOCKS%\r\nexit /b 0\r\n"
 	}
 	if err := os.WriteFile(executable, []byte(contents), 0o700); err != nil {
 		t.Fatal(err)
