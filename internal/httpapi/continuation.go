@@ -21,6 +21,7 @@ type CommandCheckpointService interface {
 	Show(context.Context, string) (continuation.Checkpoint, error)
 	Edit(context.Context, string, continuation.EditRequest) (continuation.Checkpoint, error)
 	Approve(context.Context, string, string) (continuation.Checkpoint, error)
+	Export(context.Context, string) (continuation.CheckpointExport, error)
 	PrepareHistory(context.Context, string, string) (continuation.HistorySource, error)
 	PreviewAssisted(context.Context, string, string, continuation.EditRequest) (continuation.Checkpoint, error)
 	ApproveAssisted(context.Context, string, string, string, continuation.EditRequest) (continuation.Checkpoint, error)
@@ -48,9 +49,10 @@ type CommandCheckpointRequest struct {
 }
 
 type CommandCheckpointResponse struct {
-	Checkpoint    continuation.Checkpoint       `json:"checkpoint"`
-	Retention     *continuation.RetentionPolicy `json:"retention,omitempty"`
-	HistorySource *continuation.HistorySource   `json:"history_source,omitempty"`
+	Checkpoint    continuation.Checkpoint        `json:"checkpoint"`
+	Retention     *continuation.RetentionPolicy  `json:"retention,omitempty"`
+	HistorySource *continuation.HistorySource    `json:"history_source,omitempty"`
+	Export        *continuation.CheckpointExport `json:"export,omitempty"`
 }
 
 func (client *CommandClient) Checkpoint(ctx context.Context, input CommandCheckpointRequest) (CommandCheckpointResponse, error) {
@@ -116,6 +118,7 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 	var checkpoint continuation.Checkpoint
 	var retention *continuation.RetentionPolicy
 	var historySource *continuation.HistorySource
+	var checkpointExport *continuation.CheckpointExport
 	switch input.Action {
 	case "retention":
 		if input.ID != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
@@ -152,6 +155,13 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 		} else {
 			checkpoint, err = server.checkpoints.Approve(request.Context(), input.ID, input.Revision)
 		}
+	case "export":
+		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil || input.Revision != "" || input.PreviewRevision != "" {
+			err = continuation.ErrCheckpointInvalid
+		} else {
+			value, exportErr := server.checkpoints.Export(request.Context(), input.ID)
+			checkpointExport, err = &value, exportErr
+		}
 	case "history-source":
 		if input.Source != "" || input.Setting != "" || input.ID == "" || input.Revision == "" || input.PreviewRevision != "" || input.Path != "" || input.Alias != "" || input.Goal != "" || input.CompletedWork != "" || input.PendingWork != "" || input.Validation != nil || input.Risks != "" || input.NextAction != "" || len(input.ProjectCommands) != 0 || len(input.RedactPaths) != 0 || len(input.RedactText) != 0 || input.Fields != nil {
 			err = continuation.ErrCheckpointInvalid
@@ -180,7 +190,7 @@ func (server *Server) commandCheckpoint(response http.ResponseWriter, request *h
 		server.writeAPIError(response, status, diagnostics.CodeFor(err, code))
 		return
 	}
-	writeJSON(response, http.StatusOK, CommandCheckpointResponse{Checkpoint: checkpoint, Retention: retention, HistorySource: historySource})
+	writeJSON(response, http.StatusOK, CommandCheckpointResponse{Checkpoint: checkpoint, Retention: retention, HistorySource: historySource, Export: checkpointExport})
 }
 
 func checkpointError(err error) (int, string) {

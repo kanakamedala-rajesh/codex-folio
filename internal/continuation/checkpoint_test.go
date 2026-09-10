@@ -2,6 +2,7 @@ package continuation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,57 @@ func TestCheckpointRetentionControlsOriginExpiryAndExpiredLifecycle(t *testing.T
 	}
 	if _, err := service.PrepareHandoff(context.Background(), checkpoint.ID, shown.Revision, "target"); !errors.Is(err, ErrHandoffNotReady) {
 		t.Fatalf("PrepareHandoff(expired) error = %v", err)
+	}
+}
+
+func TestExportProjectsOnlyApprovedSanitizedCheckpoint(t *testing.T) {
+	now := time.Date(2026, 9, 10, 13, 0, 0, 0, time.UTC)
+	checkpoint := Checkpoint{
+		ID: "checkpoint-1", Status: StatusApproved,
+		Project:    Project{ID: "project-1", Alias: "folio", Basename: "codex-folio"},
+		Repository: RepositoryState{Branch: observed("feature/export", CompletenessComplete), Modified: observed([]string{"safe.go"}, CompletenessComplete)},
+		Fields:     CheckpointFields{Goal: userField("ship the approved checkpoint")},
+		Source:     SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour),
+	}
+	var err error
+	checkpoint, metadata, err := finalizeCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{loaded: CheckpointRecord{ID: checkpoint.ID, Status: checkpoint.Status, Metadata: metadata}}
+	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{path: "/private/repository"}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exported, err := service.Export(context.Background(), checkpoint.ID)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if exported.FormatVersion != CheckpointExportVersion || !exported.ExportedAt.Equal(now) || exported.Checkpoint.Status != StatusApproved || exported.Checkpoint.Project.Alias != "folio" || exported.Checkpoint.Project.Basename != "codex-folio" {
+		t.Fatalf("Export() = %#v", exported)
+	}
+	encoded, err := json.Marshal(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "/private/repository") {
+		t.Fatalf("export contains canonical path: %s", encoded)
+	}
+
+	for _, status := range []string{StatusDraft, StatusLaunching, StatusExpired} {
+		checkpoint.Status, repository.loaded.Status = status, status
+		checkpoint, repository.loaded.Metadata, err = finalizeCheckpoint(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.Export(context.Background(), checkpoint.ID); !errors.Is(err, ErrHandoffNotReady) {
+			t.Fatalf("Export(%s) error = %v, want ErrHandoffNotReady", status, err)
+		}
+	}
+	repository.loaded.Status = StatusCompleted
+	if _, err := service.Export(context.Background(), checkpoint.ID); err != nil {
+		t.Fatalf("Export(completed) error = %v", err)
 	}
 }
 

@@ -31,6 +31,10 @@ func TestCommandCheckpointCaptureAndShowUseAuthorizedService(t *testing.T) {
 	if _, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "approve", ID: "checkpoint-1", Revision: "revision-1"}); err != nil || service.approveID != "checkpoint-1" || service.revision != "revision-1" {
 		t.Fatalf("approve = %q/%q, %v", service.approveID, service.revision, err)
 	}
+	exported, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "export", ID: "checkpoint-1"})
+	if err != nil || exported.Export == nil || exported.Export.Checkpoint.ID != "checkpoint-1" || service.exportID != "checkpoint-1" {
+		t.Fatalf("export = %#v/%q, %v", exported.Export, service.exportID, err)
+	}
 	history, err := client.Checkpoint(context.Background(), CommandCheckpointRequest{Action: "history-source", ID: "checkpoint-1", Revision: "revision-1"})
 	if err != nil || history.HistorySource == nil || history.HistorySource.IdentityHome != "/source-home" {
 		t.Fatalf("history source = %#v, %v", history.HistorySource, err)
@@ -54,6 +58,7 @@ type checkpointServiceStub struct {
 	editID          string
 	edit            continuation.EditRequest
 	approveID       string
+	exportID        string
 	revision        string
 	previewID       string
 	assistedID      string
@@ -82,6 +87,11 @@ func (stub *checkpointServiceStub) Edit(_ context.Context, id string, request co
 func (stub *checkpointServiceStub) Approve(_ context.Context, id, revision string) (continuation.Checkpoint, error) {
 	stub.approveID, stub.revision = id, revision
 	return stub.checkpoint, nil
+}
+
+func (stub *checkpointServiceStub) Export(_ context.Context, id string) (continuation.CheckpointExport, error) {
+	stub.exportID = id
+	return continuation.CheckpointExport{FormatVersion: continuation.CheckpointExportVersion, Checkpoint: stub.checkpoint}, nil
 }
 
 func (stub *checkpointServiceStub) PrepareHistory(context.Context, string, string) (continuation.HistorySource, error) {

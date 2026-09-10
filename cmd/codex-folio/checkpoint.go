@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,9 @@ import (
 type checkpointOptions struct {
 	selectionOptions
 	nonInteractive bool
+	plaintext      bool
+	yes            bool
+	output         string
 }
 
 func runCheckpoint(args []string, stdout, stderr io.Writer, resolvePaths servicePathResolver) int {
@@ -38,12 +42,19 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 	if err != nil {
 		return writeCheckpointUsage(stderr, newServiceDiagnosticSink())
 	}
-	if request.Action == "review" && options.nonInteractive {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ContinuationCheckpointInvalid, errors.New("checkpoint review requires interactive approval")), newServiceDiagnosticSink())
+	if (request.Action == "review" || request.Action == "export") && options.nonInteractive {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ContinuationCheckpointInvalid, errors.New("checkpoint operation requires interactive approval")), newServiceDiagnosticSink())
 	}
-	return withSelectionService(input, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options.selectionOptions, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
+	if input == nil {
+		input = strings.NewReader("")
+	}
+	buffered, ok := input.(*bufio.Reader)
+	if !ok {
+		buffered = bufio.NewReader(input)
+	}
+	return withSelectionService(buffered, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink(), options.selectionOptions, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
 		if request.Action == "review" {
-			_, _, err := reviewCheckpoint(input, stdout, stderr, client, request, editor)
+			_, _, err := reviewCheckpoint(buffered, stdout, stderr, client, request, editor)
 			return err
 		}
 		result, err := client.Checkpoint(context.Background(), request)
@@ -57,6 +68,12 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 			fmt.Fprintf(stdout, "Repository-first: %s\nTranscript-assisted: %s\n", result.Retention.RepositoryFirst, result.Retention.TranscriptAssisted)
 			return nil
 		}
+		if request.Action == "export" {
+			if result.Export == nil {
+				return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
+			}
+			return exportCheckpoint(buffered, stdout, stderr, *result.Export, options)
+		}
 		if options.json {
 			return writeServiceJSON(stdout, result.Checkpoint)
 		}
@@ -65,13 +82,143 @@ func runCheckpointWithDependencies(args []string, input io.Reader, stdout, stder
 	})
 }
 
+func exportCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, exported continuation.CheckpointExport, options checkpointOptions) error {
+	var contents []byte
+	if options.plaintext {
+		encoded, err := json.MarshalIndent(exported, "", "  ")
+		if err != nil {
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, err)
+		}
+		contents = append(encoded, '\n')
+		preview := "Checkpoint export preview:\n" + string(contents) + "Type 'export plaintext' to write this unencrypted checkpoint; anything else cancels: "
+		written, err := io.WriteString(stderr, preview)
+		if err != nil || written != len(preview) {
+			if err == nil {
+				err = io.ErrShortWrite
+			}
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, err)
+		}
+		confirmation, err := readCheckpointExportLine(input)
+		if err != nil || confirmation != "export plaintext" {
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
+		}
+	} else {
+		fmt.Fprintln(stderr, "Checkpoint export preview:")
+		writeCheckpoint(stderr, exported.Checkpoint)
+		fmt.Fprint(stderr, "Export passphrase: ")
+		passphrase, err := readCheckpointExportLine(input)
+		if err != nil || passphrase == "" {
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
+		}
+		fmt.Fprint(stderr, "Confirm export passphrase: ")
+		confirmation, err := readCheckpointExportLine(input)
+		if err != nil || confirmation != passphrase {
+			return apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointExportInvalid)
+		}
+		contents, err = continuation.SealCheckpointExport(exported, passphrase, nil)
+		if err != nil {
+			return apperrors.New(apperrors.VaultEncryptionFailed, err)
+		}
+	}
+	var err error
+	if options.plaintext {
+		err = writePlaintextCheckpointExport(options.output, contents)
+	} else {
+		err = writeCheckpointExport(options.output, contents)
+	}
+	if err != nil {
+		return apperrors.New(apperrors.CLIInternal, err)
+	}
+	result := struct {
+		Path          string `json:"path"`
+		FormatVersion string `json:"format_version"`
+		Plaintext     bool   `json:"plaintext"`
+	}{Path: options.output, FormatVersion: exported.FormatVersion, Plaintext: options.plaintext}
+	if !options.plaintext {
+		result.FormatVersion = continuation.PortableCheckpointVersion
+	}
+	if options.json {
+		return writeServiceJSON(stdout, result)
+	}
+	fmt.Fprintf(stdout, "Exported checkpoint to %s (%s).\n", options.output, map[bool]string{true: "plaintext", false: "encrypted"}[options.plaintext])
+	return nil
+}
+
+func readCheckpointExportLine(input *bufio.Reader) (string, error) {
+	line, err := input.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), nil
+}
+
+func writeCheckpointExport(path string, contents []byte) (err error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || len(contents) == 0 {
+		return continuation.ErrCheckpointExportInvalid
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".codex-folio-export-*")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(temporary)
+	}()
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.Write(contents)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Link(temporary, path)
+}
+
+func writePlaintextCheckpointExport(path string, contents []byte) (err error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || len(contents) == 0 {
+		return continuation.ErrCheckpointExportInvalid
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		err = errors.Join(err, file.Close())
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			err = errors.Join(err, removeErr)
+		}
+	}()
+	written, err := file.Write(contents)
+	if err == nil && written != len(contents) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if err == nil {
+		err = file.Close()
+	}
+	return err
+}
+
 func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, checkpointOptions, error) {
-	if len(args) == 0 || (args[0] != "capture" && args[0] != "show" && args[0] != "review" && args[0] != "retention") {
+	if len(args) == 0 || (args[0] != "capture" && args[0] != "show" && args[0] != "review" && args[0] != "retention" && args[0] != "export") {
 		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint action is required")
 	}
 	request := httpapi.CommandCheckpointRequest{Action: args[0]}
 	values, seen, operands, common := map[string]string{}, map[string]bool{}, []string{}, []string{}
-	nonInteractive := false
+	nonInteractive, plaintext, yes := false, false, false
 	for index := 1; index < len(args); index++ {
 		arg := args[index]
 		if arg == "--json" {
@@ -83,6 +230,18 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, ch
 				return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("non-interactive may be supplied only once")
 			}
 			nonInteractive = true
+			continue
+		}
+		if arg == "--plaintext" || arg == "--yes" {
+			value := arg == "--plaintext"
+			if value && plaintext || !value && yes {
+				return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("checkpoint flag may be supplied only once")
+			}
+			if value {
+				plaintext = true
+			} else {
+				yes = true
+			}
 			continue
 		}
 		name, value, hasValue := strings.Cut(arg, "=")
@@ -130,7 +289,21 @@ func parseCheckpointRequest(args []string) (httpapi.CommandCheckpointRequest, ch
 	if err != nil {
 		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, err
 	}
-	resultOptions := checkpointOptions{selectionOptions: options, nonInteractive: nonInteractive}
+	resultOptions := checkpointOptions{selectionOptions: options, nonInteractive: nonInteractive, plaintext: plaintext, yes: yes}
+	if request.Action == "export" {
+		if len(operands) != 2 || strings.TrimSpace(operands[1]) == "" || len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 {
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("export requires a checkpoint ID and destination")
+		}
+		extension := filepath.Ext(operands[1])
+		if plaintext && !strings.EqualFold(extension, ".json") || !plaintext && !strings.EqualFold(extension, ".cfolio") {
+			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("export destination extension does not match its format")
+		}
+		request.ID, resultOptions.output = operands[0], operands[1]
+		return request, resultOptions, nil
+	}
+	if plaintext || yes {
+		return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("plaintext flags apply only to export")
+	}
 	if request.Action == "retention" {
 		if len(values) != 0 || len(request.RedactPaths) != 0 || len(request.RedactText) != 0 || len(request.ProjectCommands) != 0 || nonInteractive || (len(operands) != 0 && len(operands) != 2) {
 			return httpapi.CommandCheckpointRequest{}, checkpointOptions{}, errors.New("retention accepts an origin and setting")
@@ -423,6 +596,6 @@ func newCheckpointService(stateStore *store.Store, projects continuation.Project
 func writeCheckpointUsage(stderr io.Writer, sink diagnostics.Sink) int {
 	recordServiceDiagnostic(sink, apperrors.CLIUsage, diagnostics.SeverityWarning)
 	fmt.Fprintf(stderr, "codex-folio [%s]: invalid checkpoint arguments\n", apperrors.CLIUsage)
-	io.WriteString(stderr, "Usage: codex-folio checkpoint {retention [repository-first|transcript-assisted DAYS|unlimited]|capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID|review ID [--redact-path PATH] [--redact-text TEXT] [--non-interactive]} [--state-root PATH] [--vault-mode MODE] [--json]\n")
+	io.WriteString(stderr, "Usage: codex-folio checkpoint {retention [repository-first|transcript-assisted DAYS|unlimited]|capture [PATH] [--goal TEXT] [--completed-work TEXT] [--pending-work TEXT] [--validation-command COMMAND] [--validation-at RFC3339] [--validation-exit STATUS] [--validation-source SOURCE] [--validation-freshness fresh|stale|unknown] [--risks TEXT] [--next-action TEXT] [--project-command DESCRIPTION] [--redact-path PATH] [--redact-text TEXT]|show ID|review ID [--redact-path PATH] [--redact-text TEXT] [--non-interactive]|export ID DESTINATION [--plaintext] [--yes] [--non-interactive]} [--state-root PATH] [--vault-mode MODE] [--json]\n")
 	return exitUsage
 }

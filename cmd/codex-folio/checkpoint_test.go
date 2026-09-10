@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,83 @@ func TestParseCheckpointRetention(t *testing.T) {
 			t.Fatalf("parseCheckpointRequest(%q) error = nil", invalid)
 		}
 	}
+}
+
+func TestParseCheckpointExport(t *testing.T) {
+	request, options, err := parseCheckpointRequest([]string{"export", "checkpoint-1", "portable checkpoint.json", "--plaintext", "--yes"})
+	if err != nil || request.ID != "checkpoint-1" || options.output != "portable checkpoint.json" || !options.plaintext || !options.yes {
+		t.Fatalf("export = %#v/%#v, %v", request, options, err)
+	}
+	for _, invalid := range [][]string{{"export"}, {"export", "checkpoint-1"}, {"export", "checkpoint-1", "out", "extra"}, {"export", "checkpoint-1", "out.json"}, {"export", "checkpoint-1", "out.cfolio", "--plaintext"}, {"export", "checkpoint-1", "out.cfolio", "--redact-text", "secret"}} {
+		if _, _, err := parseCheckpointRequest(invalid); err == nil {
+			t.Fatalf("parseCheckpointRequest(%q) error = nil", invalid)
+		}
+	}
+}
+
+func TestWriteCheckpointExportPreservesExistingDestination(t *testing.T) {
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "checkpoint.cfolio")
+	if err := os.WriteFile(destination, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCheckpointExport(destination, []byte("replacement")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("writeCheckpointExport() error = %v, want os.ErrExist", err)
+	}
+	kept, err := os.ReadFile(destination)
+	if err != nil || string(kept) != "keep" {
+		t.Fatalf("destination = %q, %v", kept, err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("directory after failed export = %#v, %v", entries, err)
+	}
+}
+
+func TestPlaintextCheckpointExportRequiresCompletePreview(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "checkpoint.json")
+	err := exportCheckpoint(bufio.NewReader(strings.NewReader("export plaintext\n")), io.Discard, shortWriter{}, continuation.CheckpointExport{}, checkpointOptions{plaintext: true, output: destination})
+	if err == nil {
+		t.Fatal("exportCheckpoint() error = nil")
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("destination after incomplete preview: %v", statErr)
+	}
+}
+
+func TestWritePlaintextCheckpointExportPreservesExistingDestination(t *testing.T) {
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "checkpoint.json")
+	if err := writePlaintextCheckpointExport(destination, []byte("plaintext")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(destination) {
+		t.Fatalf("plaintext export files = %#v, %v", entries, err)
+	}
+	if err := os.Remove(destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePlaintextCheckpointExport(destination, []byte("replacement")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("writePlaintextCheckpointExport() error = %v, want os.ErrExist", err)
+	}
+	kept, err := os.ReadFile(destination)
+	if err != nil || string(kept) != "keep" {
+		t.Fatalf("destination = %q, %v", kept, err)
+	}
+	entries, err = os.ReadDir(directory)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("directory after failed plaintext export = %#v, %v", entries, err)
+	}
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(value []byte) (int, error) {
+	return len(value) - 1, nil
 }
 
 func TestPartialValidationUsesExplicitUnknowns(t *testing.T) {
@@ -219,6 +297,58 @@ func TestCheckpointCLICapturesAndShowsThroughServiceAndEncryptedStore(t *testing
 	}
 	if _, err := os.Stat(editedPath); !os.IsNotExist(err) {
 		t.Fatalf("editor material was not cleaned up: %v", err)
+	}
+
+	encryptedPath := filepath.Join(repository, "portable checkpoint.cfolio")
+	stdout.Reset()
+	stderr.Reset()
+	code = runCheckpointWithDependencies([]string{"export", captured.ID, encryptedPath}, strings.NewReader("portable passphrase\nportable passphrase\n"), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil)
+	artifact, readErr := os.ReadFile(encryptedPath)
+	opened, openErr := continuation.OpenCheckpointExport(artifact, "portable passphrase")
+	if code != exitSuccess || readErr != nil || openErr != nil || opened.Checkpoint.ID != captured.ID || opened.Checkpoint.Project.Alias != "repository" || opened.Checkpoint.Fields.Goal.Value != "approved [REDACTED]" || !strings.Contains(stderr.String(), "Checkpoint export preview:") {
+		t.Fatalf("encrypted export = code %d stdout %q stderr %q read %v open %#v/%v", code, stdout.String(), stderr.String(), readErr, opened, openErr)
+	}
+	if bytes.Contains(artifact, []byte("approved [REDACTED]")) || bytes.Contains(artifact, []byte("portable passphrase")) {
+		t.Fatalf("encrypted artifact contains protected material: %s", artifact)
+	}
+	if info, statErr := os.Stat(encryptedPath); statErr != nil {
+		t.Fatal(statErr)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("encrypted export mode = %o, want 600", info.Mode().Perm())
+	}
+	if err := os.Remove(encryptedPath); err != nil {
+		t.Fatal(err)
+	}
+	mismatchPath := filepath.Join(filepath.Dir(paths.Root), "mismatch.cfolio")
+	code = runCheckpointWithDependencies([]string{"export", captured.ID, mismatchPath}, strings.NewReader("first passphrase\nsecond passphrase\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, nil)
+	if _, statErr := os.Stat(mismatchPath); code == exitSuccess || !os.IsNotExist(statErr) {
+		t.Fatalf("mismatched passphrase = code %d stat %v", code, statErr)
+	}
+
+	plaintextPath := filepath.Join(filepath.Dir(paths.Root), "plain checkpoint.json")
+	stdout.Reset()
+	stderr.Reset()
+	code = runCheckpointWithDependencies([]string{"export", captured.ID, plaintextPath, "--plaintext", "--yes"}, strings.NewReader("cancel\n"), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil)
+	_, statErr := os.Stat(plaintextPath)
+	if code == exitSuccess || !os.IsNotExist(statErr) || !strings.Contains(stderr.String(), `"format_version": "codex-folio.checkpoint.v1"`) {
+		t.Fatalf("plaintext refusal = code %d stderr %q stat %v", code, stderr.String(), statErr)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runCheckpointWithDependencies([]string{"export", captured.ID, plaintextPath, "--plaintext", "--yes"}, strings.NewReader("export plaintext\n"), &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }, nil)
+	plain, readErr := os.ReadFile(plaintextPath)
+	var plainExport continuation.CheckpointExport
+	decodeErr := json.Unmarshal(plain, &plainExport)
+	if code != exitSuccess || readErr != nil || decodeErr != nil || plainExport.Checkpoint.ID != captured.ID {
+		t.Fatalf("plaintext export = code %d stdout %q stderr %q export %#v errors %v/%v", code, stdout.String(), stderr.String(), plainExport, readErr, decodeErr)
+	}
+	for _, forbidden := range []string{repository, "raw prompt sentinel", "raw response sentinel", "tool output sentinel", "environment-value-sentinel", "credential-sentinel", "token-value", `"canonical_path"`, `"identity_home"`, `"raw_transcript"`, `"raw_diff"`} {
+		if bytes.Contains(plain, []byte(forbidden)) {
+			t.Fatalf("plaintext export contains excluded content %q: %s", forbidden, plain)
+		}
+	}
+	if code := runCheckpointWithDependencies([]string{"export", captured.ID, filepath.Join(t.TempDir(), "blocked.cfolio"), "--non-interactive"}, strings.NewReader("portable passphrase\nportable passphrase\n"), &bytes.Buffer{}, &bytes.Buffer{}, func(*string) (platform.Paths, error) { return paths, nil }, nil); code == exitSuccess {
+		t.Fatal("non-interactive export succeeded")
 	}
 
 	stdout.Reset()
