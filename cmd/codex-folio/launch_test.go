@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -378,6 +379,19 @@ func TestLaunchCLIAutomaticallyOffersAndRunsApprovedSafeContinuation(t *testing.
 				t.Fatal(err)
 			}
 			runCheckpointGit(t, repository, "init")
+			if err := os.WriteFile(filepath.Join(repository, "private-notes.txt"), []byte("raw repository content sentinel\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			workHome := filepath.Join(paths.Root, "managed-home")
+			personalHome := filepath.Join(paths.Root, "personal-home")
+			for _, home := range []string{workHome, personalHome} {
+				if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte("credential sentinel\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			repositoryBefore := snapshotHandoffTree(t, repository, true)
+			workHomeBefore := snapshotHandoffTree(t, workHome, false)
+			personalHomeBefore := snapshotHandoffTree(t, personalHome, false)
 			t.Chdir(repository)
 
 			clock := &composedUsageClock{now: time.Now().UTC()}
@@ -485,8 +499,10 @@ func TestLaunchCLIAutomaticallyOffersAndRunsApprovedSafeContinuation(t *testing.
 			if test.wantOffer && (!strings.Contains(stdout.String(), "Stale — capacity stale") || !strings.Contains(stdout.String(), "Missing — capacity partial")) {
 				t.Fatalf("eligible capacity evidence missing from offer: %q", stdout.String())
 			}
-			if strings.Contains(stderr.String(), repository) || strings.Contains(stderr.String(), paths.Root) {
-				t.Fatalf("diagnostic disclosed local paths: %q", stderr.String())
+			for _, excluded := range []string{repository, paths.Root, "raw repository content sentinel", "credential sentinel", "approved automatic continuation"} {
+				if strings.Contains(stderr.String(), excluded) {
+					t.Fatalf("diagnostic disclosed excluded content %q: %q", excluded, stderr.String())
+				}
 			}
 			if got := len(plans) == 2; got != test.wantTarget {
 				t.Fatalf("target launched = %t, want %t; plans=%#v stderr=%q", got, test.wantTarget, plans, stderr.String())
@@ -516,8 +532,28 @@ func TestLaunchCLIAutomaticallyOffersAndRunsApprovedSafeContinuation(t *testing.
 				t.Fatalf("automatic continuation = code:%d plans:%#v stdout:%q stderr:%q", code, plans, stdout.String(), stderr.String())
 			}
 			var supplied continuation.Checkpoint
-			if err := json.Unmarshal([]byte(plans[1].Arguments[0]), &supplied); err != nil || supplied.Status != continuation.StatusApproved || supplied.Fields.Goal.Value != "approved automatic continuation" {
+			if err := json.Unmarshal([]byte(plans[1].Arguments[0]), &supplied); err != nil || supplied.Status != continuation.StatusApproved || supplied.Fields.Goal.Value != "approved automatic continuation" || strings.Contains(plans[1].Arguments[0], "raw repository content sentinel") || strings.Contains(plans[1].Arguments[0], "credential sentinel") {
 				t.Fatalf("approved target context = %#v, %v", supplied, err)
+			}
+			stateStore, err = store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := stateStore.LoadCheckpoint(context.Background(), supplied.ID)
+			if err != nil || stored.Status != continuation.StatusCompleted || stored.ExpiresAt == nil {
+				t.Fatalf("completed retained checkpoint = %#v, %v", stored, err)
+			}
+			if err := stateStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := snapshotHandoffTree(t, repository, true); !reflect.DeepEqual(got, repositoryBefore) {
+				t.Fatalf("repository changed across automatic continuation: before=%v after=%v", repositoryBefore, got)
+			}
+			if got := snapshotHandoffTree(t, workHome, false); !reflect.DeepEqual(got, workHomeBefore) {
+				t.Fatalf("source Identity Home changed: before=%v after=%v", workHomeBefore, got)
+			}
+			if got := snapshotHandoffTree(t, personalHome, false); !reflect.DeepEqual(got, personalHomeBefore) {
+				t.Fatalf("target Identity Home changed: before=%v after=%v", personalHomeBefore, got)
 			}
 		})
 	}
