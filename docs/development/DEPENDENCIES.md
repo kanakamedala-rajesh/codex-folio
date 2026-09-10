@@ -73,6 +73,14 @@ a local implementation (rejected for security and maintenance risk). A future
 replacement must preserve the versioned vault format or provide an explicit
 migration.
 
+## Reviewed terminal dependency
+
+Ticket #54 uses `golang.org/x/term` at `v0.45.0` to read export passphrases
+without terminal echo on Unix and Windows. The standard library has no
+portable no-echo reader, and platform-specific console handling would duplicate
+the maintained implementation. The module is BSD-3-Clause licensed, runs only
+against the local terminal, and is pinned in `go.mod` and `go.sum`.
+
 ## Reviewed TOML dependency
 
 PR #34 adds `github.com/pelletier/go-toml/v2` at `v2.2.4` so configuration

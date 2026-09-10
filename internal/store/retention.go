@@ -4,11 +4,68 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
+
+func (store *Store) CheckpointRetention(ctx context.Context) (continuation.RetentionPolicy, error) {
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var repositoryMode, transcriptMode string
+	var repositoryDays, transcriptDays sql.NullInt64
+	err := store.db.QueryRowContext(contextOrBackground(ctx), `SELECT checkpoint_repository_retention_mode, checkpoint_repository_retention_days,
+ checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days FROM settings WHERE settings_id = 1`).Scan(&repositoryMode, &repositoryDays, &transcriptMode, &transcriptDays)
+	if errors.Is(err, sql.ErrNoRows) {
+		return continuation.RetentionPolicy{RepositoryFirst: continuation.DefaultRepositoryRetention, TranscriptAssisted: continuation.DefaultTranscriptRetention}, nil
+	}
+	if err != nil {
+		return continuation.RetentionPolicy{}, coded(apperrors.StoreReadFailed, err)
+	}
+	return continuation.RetentionPolicy{RepositoryFirst: checkpointRetentionSetting(repositoryMode, repositoryDays), TranscriptAssisted: checkpointRetentionSetting(transcriptMode, transcriptDays)}, nil
+}
+
+func checkpointRetentionSetting(mode string, days sql.NullInt64) string {
+	if mode == "unlimited" {
+		return "unlimited"
+	}
+	return fmt.Sprint(days.Int64)
+}
+
+func (store *Store) SetCheckpointRetention(ctx context.Context, source, setting string) (continuation.RetentionPolicy, error) {
+	days, unlimited, err := continuation.ParseRetention(setting)
+	if err != nil || (source != continuation.SourceRepositoryFirst && source != continuation.SourceTranscriptAssisted) {
+		return continuation.RetentionPolicy{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointInvalid)
+	}
+	mode := "days"
+	var storedDays any = days
+	if unlimited {
+		mode, storedDays = "unlimited", nil
+	}
+	query := `INSERT INTO settings (settings_id, checkpoint_repository_retention_mode, checkpoint_repository_retention_days, updated_at)
+ VALUES (1, ?, ?, ?) ON CONFLICT(settings_id) DO UPDATE SET checkpoint_repository_retention_mode = excluded.checkpoint_repository_retention_mode, checkpoint_repository_retention_days = excluded.checkpoint_repository_retention_days, updated_at = excluded.updated_at`
+	if source == continuation.SourceTranscriptAssisted {
+		query = `INSERT INTO settings (settings_id, checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days, updated_at)
+ VALUES (1, ?, ?, ?) ON CONFLICT(settings_id) DO UPDATE SET checkpoint_transcript_retention_mode = excluded.checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days = excluded.checkpoint_transcript_retention_days, updated_at = excluded.updated_at`
+	}
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	_, err = store.db.ExecContext(contextOrBackground(ctx), query, mode, storedDays, formatStoredTime(store.clock.Now()))
+	if err != nil {
+		return continuation.RetentionPolicy{}, coded(apperrors.StoreWriteFailed, err)
+	}
+	var repositoryMode, transcriptMode string
+	var repositoryDays, transcriptDays sql.NullInt64
+	err = store.db.QueryRowContext(contextOrBackground(ctx), `SELECT checkpoint_repository_retention_mode, checkpoint_repository_retention_days,
+ checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days FROM settings WHERE settings_id = 1`).Scan(&repositoryMode, &repositoryDays, &transcriptMode, &transcriptDays)
+	if err != nil {
+		return continuation.RetentionPolicy{}, coded(apperrors.StoreReadFailed, err)
+	}
+	return continuation.RetentionPolicy{RepositoryFirst: checkpointRetentionSetting(repositoryMode, repositoryDays), TranscriptAssisted: checkpointRetentionSetting(transcriptMode, transcriptDays)}, nil
+}
 
 func (store *Store) AnalyticsRetention(ctx context.Context) (usage.Retention, error) {
 	store.operationMu.RLock()

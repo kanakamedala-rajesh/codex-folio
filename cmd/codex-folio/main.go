@@ -72,6 +72,10 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runActivity(args[1:], stdout, stderr, resolvePaths)
 	case "analytics":
 		return runAnalyticsWithDependencies(args[1:], os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink())
+	case "checkpoint":
+		return runCheckpoint(args[1:], stdout, stderr, resolvePaths)
+	case "handoff":
+		return runHandoff(args[1:], stdout, stderr, resolvePaths, resolver)
 	case "shell":
 		return runShell(args[1:], stdout, stderr, resolvePaths, metadata.Version)
 	case "help", "--help", "-h":
@@ -132,6 +136,8 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio project {resolve|list|edit|reconcile} ...")
 	fmt.Fprintln(stdout, "  codex-folio activity {refresh ALIAS|list [--profile ALIAS] [--project ID]} ...")
 	fmt.Fprintln(stdout, "  codex-folio analytics {retention|purge|aggregates} ...")
+	fmt.Fprintln(stdout, "  codex-folio checkpoint {retention|capture|show|review|export} ...")
+	fmt.Fprintln(stdout, "  codex-folio handoff TARGET [PATH] [checkpoint capture options] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE]")
 	fmt.Fprintln(stdout, "  codex-folio shell {generate|remove} [--shell bash|zsh|powershell] [--wrapper] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio --help")
 }

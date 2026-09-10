@@ -386,12 +386,25 @@ func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, err
 }
 
 func (service *Service) View(ctx context.Context, scope string, capabilityCompatible bool) (DashboardView, error) {
+	return service.view(ctx, scope, capabilityCompatible, "")
+}
+
+func (service *Service) view(ctx context.Context, scope string, capabilityCompatible bool, excludedProfileID string) (DashboardView, error) {
 	if service == nil || service.store == nil || service.clock == nil || (scope != "" && scope != ScopeSelectedProfile && scope != ScopeCombinedIdentity) {
 		return DashboardView{}, ErrInvalid
 	}
 	profiles, err := service.store.ListUsageProfiles(ctx)
 	if err != nil {
 		return DashboardView{}, err
+	}
+	if excludedProfileID != "" {
+		filtered := profiles[:0]
+		for _, target := range profiles {
+			if target.ID != excludedProfileID {
+				filtered = append(filtered, target)
+			}
+		}
+		profiles = filtered
 	}
 	now := service.clock.Now().UTC()
 	if now.IsZero() {
@@ -444,6 +457,14 @@ func (service *Service) View(ctx context.Context, scope string, capabilityCompat
 		return view, nil
 	}
 	return DashboardView{}, ErrProfileUnavailable
+}
+
+func (service *Service) RankAlternatives(ctx context.Context, excludedProfileID string, capabilityCompatible bool) ([]Candidate, string, error) {
+	if excludedProfileID == "" {
+		return nil, "", ErrInvalid
+	}
+	view, err := service.view(ctx, ScopeCombinedIdentity, capabilityCompatible, excludedProfileID)
+	return view.Candidates, view.RecommendedProfileID, err
 }
 
 func NewUnavailableSnapshot(sourceVersion string, capturedAt time.Time, state, reason string) Snapshot {

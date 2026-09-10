@@ -9,6 +9,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
@@ -24,6 +25,58 @@ type launchCommandService struct {
 	authenticator      profile.Authenticator
 	projects           *activity.ProjectService
 	usage              *usageCommandService
+	continuations      *continuation.Service
+}
+
+func (service *launchCommandService) PrepareHandoff(ctx context.Context, request launch.PrepareRequest, version, checkpointID, revision string) (launch.Plan, error) {
+	if service.continuations == nil || service.authenticator == nil {
+		return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)
+	}
+	item, err := service.store.GetProfile(ctx, request.Alias)
+	if err != nil {
+		return launch.Plan{}, err
+	}
+	if err := service.workflow.Reconcile(ctx, foregroundProcessInspector{}); err != nil {
+		return launch.Plan{}, err
+	}
+	if _, err := service.continuations.PrepareHandoff(ctx, checkpointID, revision, item.ID); err != nil {
+		return launch.Plan{}, err
+	}
+	item, err = profile.VerifyAuthentication(ctx, service.store, service.authenticator, profile.AuthenticationCheckRequest{
+		Alias: request.Alias, Discovery: profile.Discovery{Executable: request.Executable, Version: version}, Stdout: io.Discard, Stderr: io.Discard,
+	})
+	if err != nil {
+		return launch.Plan{}, err
+	}
+	if item.IdentityHomeOwnership == profile.HomeOwnershipManaged && service.configurationPacks != nil {
+		if _, err := service.configurationPacks.Project(ctx, request.Alias); err != nil && !errors.Is(err, configpack.ErrNoAssignment) {
+			return launch.Plan{}, err
+		}
+	}
+	if service.usage != nil {
+		refreshCtx, cancel := context.WithTimeout(ctx, usageRefreshTimeout)
+		_, _ = service.usage.RefreshWithCandidate(refreshCtx, request.Alias, request.Executable, version, usagefeature.TriggerPreLaunch)
+		cancel()
+	}
+	if err := service.workflow.Reconcile(ctx, foregroundProcessInspector{}); err != nil {
+		return launch.Plan{}, err
+	}
+	prepared, err := service.continuations.PrepareHandoff(ctx, checkpointID, revision, item.ID)
+	if err != nil {
+		return launch.Plan{}, err
+	}
+	bootSessionID, err := (foregroundProcessInspector{}).BootSessionID()
+	if err != nil {
+		return launch.Plan{}, apperrors.New(apperrors.LaunchPlanInvalid, err)
+	}
+	request.WorkingDirectory = prepared.WorkingDirectory
+	request.Arguments = []string{prepared.Context}
+	request.ProjectID = prepared.ProjectID
+	request.CheckpointID = prepared.CheckpointID
+	request.CheckpointRevision = prepared.Revision
+	request.SourceProfileID = prepared.SourceProfileID
+	request.BootSessionID = bootSessionID
+	return service.workflow.Prepare(ctx, request)
 }
 
 func newLaunchCommandService(stateStore *store.Store, configurationPacks *configpack.Service, authenticator profile.Authenticator, projects *activity.ProjectService, usage *usageCommandService) (*launchCommandService, error) {
@@ -90,24 +143,63 @@ func (service *launchCommandService) MarkStarted(ctx context.Context, leaseID st
 	return service.workflow.MarkStarted(ctx, leaseID, processID)
 }
 
-func (service *launchCommandService) MarkExited(ctx context.Context, leaseID string, exitStatus int, executable, version string) error {
-	var alias string
+func (service *launchCommandService) MarkExited(ctx context.Context, leaseID string, exitStatus int, executable, version string) (*launch.SafeContinuationOffer, error) {
+	var record launch.ManagedLaunch
 	if service.usage != nil {
-		record, err := service.store.GetManagedLaunch(ctx, leaseID)
+		var err error
+		record, err = service.store.GetManagedLaunch(ctx, leaseID)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		alias = record.ProfileAlias
 	}
 	if err := service.workflow.MarkExited(ctx, leaseID, exitStatus); err != nil {
-		return err
+		return nil, err
 	}
 	if service.usage != nil {
 		refreshCtx, cancel := context.WithTimeout(ctx, usageRefreshTimeout)
-		_, _ = service.usage.RefreshWithCandidate(refreshCtx, alias, executable, version, usagefeature.TriggerPostExit)
+		snapshot, refreshErr := service.usage.RefreshWithCandidate(refreshCtx, record.ProfileAlias, executable, version, usagefeature.TriggerPostExit)
 		cancel()
+		if refreshErr != nil || !supportedQuotaCondition(snapshot, record.ProfileID) {
+			return nil, nil
+		}
+		candidates, recommended, err := service.usage.workflow.RankAlternatives(ctx, record.ProfileID, true)
+		if err != nil {
+			return nil, nil
+		}
+		offer := &launch.SafeContinuationOffer{Alternatives: []launch.SafeContinuationAlternative{}}
+		for _, candidate := range candidates {
+			if !candidate.Eligible {
+				continue
+			}
+			offer.Alternatives = append(offer.Alternatives, launch.SafeContinuationAlternative{
+				Alias: candidate.Alias, CapacityState: candidate.CapacityState, Provenance: usagefeature.ProvenanceProvider,
+				Recommended: candidate.ProfileID == recommended,
+			})
+		}
+		if len(offer.Alternatives) != 0 {
+			return offer, nil
+		}
 	}
-	return nil
+	return nil, nil
+}
+
+func supportedQuotaCondition(snapshot usagefeature.Snapshot, profileID string) bool {
+	if snapshot.ProfileID != profileID || snapshot.TriggerReason != usagefeature.TriggerPostExit || snapshot.Source != usagefeature.SourceCodexAppServer || snapshot.SourceVersion == "" {
+		return false
+	}
+	metrics := make(map[string]usagefeature.Metric)
+	for _, metric := range usagefeature.Registry() {
+		if metric.SourceClass == usagefeature.ProvenanceProvider {
+			metrics[metric.Key] = metric
+		}
+	}
+	for _, observation := range snapshot.Observations {
+		metric, supported := metrics[observation.Metric.Key]
+		if supported && observation.Metric == metric && observation.Value == 100 && observation.Source == usagefeature.SourceCodexAppServer && observation.SourceVersion != "" && observation.Provenance == usagefeature.ProvenanceProvider && observation.Freshness == usagefeature.FreshnessFresh && observation.Availability == usagefeature.AvailabilityAvailable {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *launchCommandService) MarkAbandoned(ctx context.Context, leaseID string) error {

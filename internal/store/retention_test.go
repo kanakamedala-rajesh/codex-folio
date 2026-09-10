@@ -8,8 +8,47 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
+
+func TestCheckpointRetentionPersistsIndependently(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = state.Close() }()
+	ctx := context.Background()
+	policy, err := state.CheckpointRetention(ctx)
+	if err != nil || policy.RepositoryFirst != "30" || policy.TranscriptAssisted != "7" {
+		t.Fatalf("defaults: %#v/%v", policy, err)
+	}
+	if _, err := state.SetCheckpointRetention(ctx, continuation.SourceRepositoryFirst, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SetCheckpointRetention(ctx, continuation.SourceTranscriptAssisted, "unlimited"); err != nil {
+		t.Fatal(err)
+	}
+	path, secureVault := state.path, state.vault
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = OpenWithVault(path, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err = state.CheckpointRetention(ctx)
+	if err != nil || policy.RepositoryFirst != "1" || policy.TranscriptAssisted != "unlimited" {
+		t.Fatalf("restart: %#v/%v", policy, err)
+	}
+	analytics, err := state.AnalyticsRetention(ctx)
+	if err != nil || analytics.String() != usage.DefaultRetention {
+		t.Fatalf("analytics retention changed: %#v/%v", analytics, err)
+	}
+	if _, err := state.SetCheckpointRetention(ctx, continuation.SourceRepositoryFirst, "0"); err == nil {
+		t.Fatal("accepted zero-day retention")
+	}
+}
 
 func TestAnalyticsRetentionPersistsIndependently(t *testing.T) {
 	state, err := openProfileTestStore(t)

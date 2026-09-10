@@ -49,6 +49,7 @@ Each criterion needs automated evidence where feasible and a recorded manual res
 - **CT-07:** Exact Continuation requires explicit intent every time, a release-signed allowlist, stopped processes, backup, validation, and rollback.
 - **CT-08:** Every Exact Continuation failure leaves the source/destination recoverable and offers Safe Continuation.
 - **CT-09:** Cross-login/workspace exact attempts require explicit user authorization attestation and are never described as guaranteed.
+- **CT-10:** An interrupted Safe Continuation start with no process report remains non-authorizing during the same OS boot session; recovery after a verified boot-session change restores the retained checkpoint and reruns current handoff checks without automatically terminating a process.
 
 ## E. Storage, privacy, and security
 

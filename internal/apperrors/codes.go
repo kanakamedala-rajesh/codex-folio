@@ -55,6 +55,10 @@ const (
 	ProjectIdentityNotFound                  = "CF_ACTIVITY_PROJECT_IDENTITY_NOT_FOUND"
 	ProjectPathInvalid                       = "CF_ACTIVITY_PROJECT_PATH_INVALID"
 	ProjectPathCollision                     = "CF_ACTIVITY_PROJECT_PATH_COLLISION"
+	ContinuationCheckpointInvalid            = "CF_CONTINUATION_CHECKPOINT_INVALID"
+	ContinuationCheckpointNotFound           = "CF_CONTINUATION_CHECKPOINT_NOT_FOUND"
+	ContinuationCheckpointOversize           = "CF_CONTINUATION_CHECKPOINT_OVERSIZE"
+	ContinuationRepositoryInspectionFailed   = "CF_CONTINUATION_REPOSITORY_INSPECTION_FAILED"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
@@ -179,6 +183,10 @@ func IsRegistered(code string) bool {
 		ProjectIdentityNotFound,
 		ProjectPathInvalid,
 		ProjectPathCollision,
+		ContinuationCheckpointInvalid,
+		ContinuationCheckpointNotFound,
+		ContinuationCheckpointOversize,
+		ContinuationRepositoryInspectionFailed,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
 		PlatformStatePathInvalid,

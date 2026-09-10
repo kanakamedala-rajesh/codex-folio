@@ -3,18 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -29,6 +34,10 @@ type launchTestResolver struct{ candidate launch.Candidate }
 func (resolver launchTestResolver) Resolve(string) (launch.Candidate, error) {
 	return resolver.candidate, nil
 }
+
+type launchHTTPDoerFunc func(*http.Request) (*http.Response, error)
+
+func (do launchHTTPDoerFunc) Do(request *http.Request) (*http.Response, error) { return do(request) }
 
 type launchTestProcess struct {
 	pid        int
@@ -65,6 +74,30 @@ func (process *launchTestProcess) Kill() error {
 }
 
 func (process *launchTestProcess) ExitStatus() int { return process.exitStatus }
+
+func TestForegroundLaunchKeepsStartedProcessLeaseUncertainWhenStartReportFails(t *testing.T) {
+	process := &launchTestProcess{pid: 7777}
+	requests := 0
+	client := httpapi.NewCommandClient("http://localhost", "token", launchHTTPDoerFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("started report unavailable")
+	}))
+
+	code, offer := runForegroundLaunch(client, launch.Plan{LeaseID: "lease-1"}, launch.Discovery{}, nil, io.Discard, io.Discard, func(launch.Plan, io.Reader, io.Writer, io.Writer) (foregroundProcess, error) {
+		return process, nil
+	}, nil)
+
+	if code != exitFailure || offer != nil || !process.started || process.killed || requests != 1 {
+		t.Fatalf("result = code:%d offer:%#v started:%t killed:%t requests:%d, want started process and one failed report with lease retained", code, offer, process.started, process.killed, requests)
+	}
+}
+
+func TestForegroundProcessInspectorReportsBootSession(t *testing.T) {
+	bootSessionID, err := (foregroundProcessInspector{}).BootSessionID()
+	if err != nil || strings.TrimSpace(bootSessionID) == "" {
+		t.Fatalf("BootSessionID() = %q, %v", bootSessionID, err)
+	}
+}
 
 func TestLaunchCLIForwardsPlanStreamsAndChildStatus(t *testing.T) {
 	paths := launchTestPaths(t)
@@ -232,7 +265,7 @@ func TestLaunchLifecycleCollectsBeforePlanAndAfterExitWithoutChangingExitFacts(t
 		t.Fatal(err)
 	}
 	clock.now = clock.now.Add(time.Minute)
-	if err := launches.MarkExited(context.Background(), plan.LeaseID, 23, filepath.Join(paths.Root, "codex"), "0.153.4"); err != nil {
+	if _, err := launches.MarkExited(context.Background(), plan.LeaseID, 23, filepath.Join(paths.Root, "codex"), "0.153.4"); err != nil {
 		t.Fatalf("MarkExited() error = %v", err)
 	}
 	if len(collector.requests) != 2 || collector.requests[0].Executable != filepath.Join(paths.Root, "codex") || collector.requests[1].Executable != collector.requests[0].Executable || collector.requests[1].SourceVersion != "0.153.4" || !collector.deadlines[0] || !collector.deadlines[1] {
@@ -256,6 +289,344 @@ func TestLaunchLifecycleCollectsBeforePlanAndAfterExitWithoutChangingExitFacts(t
 	if err != nil || record.State != launch.StateExited || record.ExitStatus == nil || *record.ExitStatus != 23 {
 		t.Fatalf("Managed Launch = %#v/%v", record, err)
 	}
+}
+
+func TestLaunchExitOffersSafeContinuationFromSupportedQuotaEvidence(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	seedSecondReadyProfile(t, paths, secureVault)
+	seedAdditionalReadyProfile(t, paths, secureVault, "profile-3", "Stale", "stale-home")
+	seedAdditionalReadyProfile(t, paths, secureVault, "profile-4", "Missing", "missing-home")
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.CreatePendingProfile(context.Background(), profile.PendingProfile{ID: "profile-5", Alias: "Ineligible", DisplayName: "Ineligible"}); err != nil {
+		t.Fatal(err)
+	}
+	clock := &composedUsageClock{now: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
+	collector := &composedUsageCollector{fixtures: []composedUsageFixture{
+		{snapshot: launchQuotaSnapshot(clock.now.Add(-11*time.Minute), 5, 10)},
+		{snapshot: launchQuotaSnapshot(clock.now, 20, 30)},
+		{snapshot: launchQuotaSnapshot(clock.now.Add(time.Minute), 10, 20)},
+		{snapshot: launchQuotaSnapshot(clock.now.Add(2*time.Minute), 100, 100)},
+	}}
+	workflow, err := usage.NewService(stateStore, collector, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageCommands := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}, store: stateStore}
+	clock.now = clock.now.Add(-11 * time.Minute)
+	if _, err := usageCommands.RefreshWithCandidate(context.Background(), "Stale", filepath.Join(paths.Root, "codex"), "0.153.4", usage.TriggerExplicitRefresh); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(11 * time.Minute)
+	if _, err := usageCommands.RefreshWithCandidate(context.Background(), "Personal", filepath.Join(paths.Root, "codex"), "0.153.4", usage.TriggerExplicitRefresh); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(time.Minute)
+	launches, err := newLaunchCommandService(stateStore, nil, nil, nil, usageCommands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := launches.Prepare(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root}, "0.153.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := launches.MarkStarted(context.Background(), plan.LeaseID, 7777); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(time.Minute)
+	offer, err := launches.MarkExited(context.Background(), plan.LeaseID, 23, filepath.Join(paths.Root, "codex"), "0.153.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offer == nil || len(offer.Alternatives) != 3 || offer.Alternatives[0].Alias != "Personal" || offer.Alternatives[0].CapacityState != usage.FreshnessFresh || offer.Alternatives[0].Provenance != usage.ProvenanceProvider || offer.Alternatives[0].Recommended || offer.Alternatives[1].Alias != "Stale" || offer.Alternatives[1].CapacityState != usage.FreshnessStale || offer.Alternatives[2].Alias != "Missing" || offer.Alternatives[2].CapacityState != usage.AvailabilityPartial {
+		t.Fatalf("offer = %#v", offer)
+	}
+	record, err := stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
+	if err != nil || record.State != launch.StateExited || record.ExitStatus == nil || *record.ExitStatus != 23 {
+		t.Fatalf("source lifecycle = %#v/%v", record, err)
+	}
+	for name, snapshot := range map[string]usage.Snapshot{
+		"unrelated nonzero exit": launchQuotaSnapshot(clock.now.Add(time.Minute), 50, 60),
+		"no quota observation":   usage.NewUnavailableSnapshot("0.153.4", clock.now.Add(time.Minute), usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed),
+	} {
+		t.Run(name, func(t *testing.T) {
+			clock.now = clock.now.Add(time.Minute)
+			collector.fixtures = append(collector.fixtures, composedUsageFixture{snapshot: snapshot})
+			plan, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stateStore.MarkManagedLaunchStarted(context.Background(), plan.LeaseID, 8000); err != nil {
+				t.Fatal(err)
+			}
+			offer, err := launches.MarkExited(context.Background(), plan.LeaseID, 17, filepath.Join(paths.Root, "codex"), "0.153.4")
+			if err != nil || offer != nil {
+				t.Fatalf("offer = %#v, error = %v", offer, err)
+			}
+		})
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLaunchCLIAutomaticallyOffersAndRunsApprovedSafeContinuation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		used        float64
+		unavailable bool
+		input       string
+		wantOffer   bool
+		wantTarget  bool
+		conflict    string
+	}{
+		{name: "accepted", used: 100, input: "1\napprove\n", wantOffer: true, wantTarget: true},
+		{name: "declined", used: 100, input: "\n", wantOffer: true},
+		{name: "unrelated nonzero exit", used: 50},
+		{name: "no quota observation", unavailable: true},
+		{name: "uncertain source refusal", used: 100, input: "1\napprove\n", wantOffer: true, conflict: "uncertain"},
+		{name: "active source refusal", used: 100, input: "1\napprove\n", wantOffer: true, conflict: "active"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			paths := launchTestPaths(t)
+			secureVault := seedReadyLaunchProfile(t, paths)
+			seedSecondReadyProfile(t, paths, secureVault)
+			seedAdditionalReadyProfile(t, paths, secureVault, "profile-3", "Stale", "stale-home")
+			seedAdditionalReadyProfile(t, paths, secureVault, "profile-4", "Missing", "missing-home")
+			repository := filepath.Join(filepath.Dir(paths.Root), "repository")
+			if err := os.Mkdir(repository, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			runCheckpointGit(t, repository, "init")
+			if err := os.WriteFile(filepath.Join(repository, "private-notes.txt"), []byte("raw repository content sentinel\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			workHome := filepath.Join(paths.Root, "managed-home")
+			personalHome := filepath.Join(paths.Root, "personal-home")
+			for _, home := range []string{workHome, personalHome} {
+				if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte("credential sentinel\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			repositoryBefore := snapshotHandoffTree(t, repository, true)
+			workHomeBefore := snapshotHandoffTree(t, workHome, false)
+			personalHomeBefore := snapshotHandoffTree(t, personalHome, false)
+			t.Chdir(repository)
+
+			clock := &composedUsageClock{now: time.Now().UTC()}
+			stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stateStore.CreatePendingProfile(context.Background(), profile.PendingProfile{ID: "profile-5", Alias: "Ineligible", DisplayName: "Ineligible"}); err != nil {
+				t.Fatal(err)
+			}
+			for alias, snapshot := range map[string]usage.Snapshot{
+				"Personal": launchQuotaSnapshot(clock.now, 20, 30),
+				"Stale":    launchQuotaSnapshot(clock.now.Add(-11*time.Minute), 10, 20),
+			} {
+				snapshot.Status = usage.AvailabilityPartial
+				snapshot.TriggerReason = usage.TriggerExplicitRefresh
+				target, err := stateStore.ResolveUsageProfile(context.Background(), alias)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := stateStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			postExit := launchQuotaSnapshot(clock.now, test.used, test.used)
+			if test.unavailable {
+				postExit = usage.NewUnavailableSnapshot("0.153.4", clock.now, usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+			}
+			collector := &composedUsageCollector{fixtures: []composedUsageFixture{
+				{snapshot: launchQuotaSnapshot(clock.now, 20, 30)},
+				{snapshot: postExit},
+				{snapshot: launchQuotaSnapshot(clock.now, 10, 20)},
+				{snapshot: launchQuotaSnapshot(clock.now, 10, 20)},
+			}}
+			newUsage := func(stateStore *store.Store, _ launch.ExecutableResolver) (*usageCommandService, error) {
+				workflow, err := usage.NewService(stateStore, collector, clock)
+				return &usageCommandService{workflow: workflow, store: stateStore}, err
+			}
+			editor := func(path string, _ io.Reader, _, _ io.Writer) error {
+				var fields continuation.CheckpointFields
+				encoded, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(encoded, &fields); err != nil {
+					return err
+				}
+				fields.Goal.Value = "approved automatic continuation"
+				return os.WriteFile(path, mustJSON(t, fields), 0o600)
+			}
+			var plans []launch.Plan
+			newProcess := func(plan launch.Plan, _ io.Reader, _, _ io.Writer) (foregroundProcess, error) {
+				plans = append(plans, plan)
+				if len(plans) == 1 && test.conflict != "" {
+					stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+					if err != nil {
+						t.Fatal(err)
+					}
+					projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+					if err != nil {
+						t.Fatal(err)
+					}
+					project, err := projects.Resolve(context.Background(), repository, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					conflict, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Personal", Executable: plan.Executable, WorkingDirectory: repository, ProjectID: project.ID})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if test.conflict == "active" {
+						if err := stateStore.MarkManagedLaunchStarted(context.Background(), conflict.LeaseID, os.Getpid()); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := stateStore.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				exitStatus := 23
+				if len(plans) == 2 {
+					exitStatus = 130
+				}
+				return &launchTestProcess{pid: 9000 + len(plans), exitStatus: exitStatus}, nil
+			}
+			var stdout, stderr bytes.Buffer
+			code := runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticatorAndContinuation(
+				[]string{"Work", "--"}, strings.NewReader(test.input), &stdout, &stderr,
+				func(*string) (platform.Paths, error) { return paths, nil },
+				launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}},
+				func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+					return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+				}, newProcess, nil, func() profile.Authenticator { return &cliProfileAuthenticator{} }, editor, newUsage, platform.OwnerOptions{},
+			)
+			if len(plans) == 0 {
+				t.Fatalf("source did not launch: code=%d stderr=%q", code, stderr.String())
+			}
+			if test.wantOffer != strings.Contains(stdout.String(), "Safe Continuation is available") || strings.Contains(stdout.String(), "Ineligible") {
+				t.Fatalf("offer output = %q; code=%d plans=%d stderr=%q", stdout.String(), code, len(plans), stderr.String())
+			}
+			if test.wantOffer && (!strings.Contains(stdout.String(), "Stale — capacity stale") || !strings.Contains(stdout.String(), "Missing — capacity partial")) {
+				t.Fatalf("eligible capacity evidence missing from offer: %q", stdout.String())
+			}
+			for _, excluded := range []string{repository, paths.Root, "raw repository content sentinel", "credential sentinel", "approved automatic continuation"} {
+				if strings.Contains(stderr.String(), excluded) {
+					t.Fatalf("diagnostic disclosed excluded content %q: %q", excluded, stderr.String())
+				}
+			}
+			if got := len(plans) == 2; got != test.wantTarget {
+				t.Fatalf("target launched = %t, want %t; plans=%#v stderr=%q", got, test.wantTarget, plans, stderr.String())
+			}
+			stateStore, err = store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := stateStore.GetManagedLaunch(context.Background(), plans[0].LeaseID)
+			if err != nil || source.State != launch.StateExited || source.ExitStatus == nil || *source.ExitStatus != 23 {
+				t.Fatalf("source lifecycle = %#v, %v", source, err)
+			}
+			if err := stateStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !test.wantTarget {
+				wantCode := 23
+				if test.conflict != "" {
+					wantCode = exitFailure
+				}
+				if code != wantCode || len(plans) != 1 {
+					t.Fatalf("source result = code:%d plans:%d, want %d/1", code, len(plans), wantCode)
+				}
+				return
+			}
+			if code != 130 || plans[0].WorkingDirectory != repository || plans[1].WorkingDirectory != repository || plans[1].Environment["CODEX_HOME"] != filepath.Join(paths.Root, "personal-home") || len(plans[1].Arguments) != 1 {
+				t.Fatalf("automatic continuation = code:%d plans:%#v stdout:%q stderr:%q", code, plans, stdout.String(), stderr.String())
+			}
+			var supplied continuation.Checkpoint
+			if err := json.Unmarshal([]byte(plans[1].Arguments[0]), &supplied); err != nil || supplied.Status != continuation.StatusApproved || supplied.Fields.Goal.Value != "approved automatic continuation" || strings.Contains(plans[1].Arguments[0], "raw repository content sentinel") || strings.Contains(plans[1].Arguments[0], "credential sentinel") {
+				t.Fatalf("approved target context = %#v, %v", supplied, err)
+			}
+			stateStore, err = store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := stateStore.LoadCheckpoint(context.Background(), supplied.ID)
+			if err != nil || stored.Status != continuation.StatusCompleted || stored.ExpiresAt == nil {
+				t.Fatalf("completed retained checkpoint = %#v, %v", stored, err)
+			}
+			if err := stateStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := snapshotHandoffTree(t, repository, true); !reflect.DeepEqual(got, repositoryBefore) {
+				t.Fatalf("repository changed across automatic continuation: before=%v after=%v", repositoryBefore, got)
+			}
+			if got := snapshotHandoffTree(t, workHome, false); !reflect.DeepEqual(got, workHomeBefore) {
+				t.Fatalf("source Identity Home changed: before=%v after=%v", workHomeBefore, got)
+			}
+			if got := snapshotHandoffTree(t, personalHome, false); !reflect.DeepEqual(got, personalHomeBefore) {
+				t.Fatalf("target Identity Home changed: before=%v after=%v", personalHomeBefore, got)
+			}
+		})
+	}
+}
+
+func TestSafeContinuationOfferRequiresSelectionAndPreservesRemainingInput(t *testing.T) {
+	offer := &launch.SafeContinuationOffer{Alternatives: []launch.SafeContinuationAlternative{
+		{Alias: "Stale", CapacityState: usage.FreshnessStale, Provenance: usage.ProvenanceProvider},
+		{Alias: "Personal", CapacityState: usage.FreshnessFresh, Provenance: usage.ProvenanceProvider, Recommended: true},
+	}}
+	for name, input := range map[string]string{"empty decline": "\n", "invalid decline": "9\n"} {
+		t.Run(name, func(t *testing.T) {
+			continued := false
+			code := runSafeContinuationOffer(23, offer, bufferedReader(strings.NewReader(input)), io.Discard, io.Discard, func(string) int {
+				continued = true
+				return 0
+			})
+			if code != 23 || continued {
+				t.Fatalf("decline = code:%d continued:%t", code, continued)
+			}
+		})
+	}
+	reader := bufferedReader(strings.NewReader("2\napprove\n"))
+	var stdout, stderr bytes.Buffer
+	var target, remaining string
+	code := runSafeContinuationOffer(23, offer, reader, &stdout, &stderr, func(alias string) int {
+		target = alias
+		remaining, _ = reader.ReadString('\n')
+		return 17
+	})
+	if code != 17 || target != "Personal" || remaining != "approve\n" || !strings.Contains(stdout.String(), "capacity stale; Provider-reported Metric") || !strings.Contains(stdout.String(), "capacity fresh; Provider-reported Metric; best") || !strings.Contains(stderr.String(), "press Enter to decline") {
+		t.Fatalf("accepted offer = code:%d target:%q remaining:%q stdout:%q stderr:%q", code, target, remaining, stdout.String(), stderr.String())
+	}
+}
+
+func launchQuotaSnapshot(capturedAt time.Time, primary, secondary float64) usage.Snapshot {
+	snapshot := usage.Snapshot{Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: capturedAt}
+	for index, value := range []float64{primary, secondary} {
+		start, end := capturedAt.Add(-time.Hour), capturedAt.Add(time.Duration(index+1)*time.Hour)
+		metric := usage.Registry()[index]
+		snapshot.Observations = append(snapshot.Observations, usage.Observation{
+			Metric: metric, Value: value, ObservedAt: capturedAt, CapturedAt: capturedAt,
+			WindowStart: &start, WindowEnd: &end, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer,
+			SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable,
+		})
+		snapshot.Availability = append(snapshot.Availability, usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider})
+	}
+	for _, metric := range usage.Registry()[2:] {
+		snapshot.Availability = append(snapshot.Availability, usage.MetricAvailability{MetricKey: metric.Key, State: usage.AvailabilityUnsupported, Reason: usage.ReasonUnsupported, CheckedAt: capturedAt, Provenance: metric.SourceClass})
+	}
+	return snapshot
 }
 
 func TestLaunchCLIProjectsAssignedConfigurationPackBeforeStartingCodex(t *testing.T) {

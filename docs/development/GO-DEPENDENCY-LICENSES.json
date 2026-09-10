@@ -1,6 +1,6 @@
 {
   "schema": "codex-folio.go-dependency-licenses.v1",
-  "reviewed_on": "2026-09-06",
+  "reviewed_on": "2026-09-10",
   "dependencies": [
     {
       "path": "github.com/dustin/go-humanize",
@@ -40,6 +40,11 @@
     {
       "path": "golang.org/x/sys",
       "version": "v0.47.0",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "golang.org/x/term",
+      "version": "v0.45.0",
       "license": "BSD-3-Clause"
     },
     {

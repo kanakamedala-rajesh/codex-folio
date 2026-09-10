@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/launch"
 )
@@ -20,8 +21,9 @@ const maxLaunchBodySize = 1024 * 1024
 
 type CommandLaunchService interface {
 	Prepare(context.Context, launch.PrepareRequest, string) (launch.Plan, string, error)
+	PrepareHandoff(context.Context, launch.PrepareRequest, string, string, string) (launch.Plan, error)
 	MarkStarted(context.Context, string, int) error
-	MarkExited(context.Context, string, int, string, string) error
+	MarkExited(context.Context, string, int, string, string) (*launch.SafeContinuationOffer, error)
 	MarkAbandoned(context.Context, string) error
 }
 
@@ -35,11 +37,14 @@ type CommandLaunchRequest struct {
 	LeaseID          string   `json:"lease_id,omitempty"`
 	ProcessID        int      `json:"process_id,omitempty"`
 	ExitStatus       int      `json:"exit_status,omitempty"`
+	CheckpointID     string   `json:"checkpoint_id,omitempty"`
+	Revision         string   `json:"revision,omitempty"`
 }
 
 type CommandLaunchResponse struct {
-	Plan    *launch.Plan `json:"plan,omitempty"`
-	Warning string       `json:"warning,omitempty"`
+	Plan    *launch.Plan                  `json:"plan,omitempty"`
+	Warning string                        `json:"warning,omitempty"`
+	Offer   *launch.SafeContinuationOffer `json:"safe_continuation_offer,omitempty"`
 }
 
 func (client *CommandClient) Launch(ctx context.Context, input CommandLaunchRequest) (CommandLaunchResponse, error) {
@@ -114,10 +119,18 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 			result.Plan = &plan
 			result.Warning = warning
 		}
+	case "prepare-handoff":
+		plan, actionErr := server.launches.PrepareHandoff(request.Context(), launch.PrepareRequest{
+			Alias: input.Alias, Executable: input.Executable,
+		}, input.Version, input.CheckpointID, input.Revision)
+		err = actionErr
+		if err == nil {
+			result.Plan = &plan
+		}
 	case "started":
 		err = server.launches.MarkStarted(request.Context(), input.LeaseID, input.ProcessID)
 	case "exited":
-		err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
+		result.Offer, err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
 	case "abandoned":
 		err = server.launches.MarkAbandoned(request.Context(), input.LeaseID)
 	default:
@@ -128,7 +141,13 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 		if code := apperrors.Code(err); code == apperrors.StoreReadFailed || code == apperrors.StoreWriteFailed {
 			status = http.StatusInternalServerError
 		}
-		server.writeAPIError(response, status, diagnostics.CodeFor(err, apperrors.LaunchPlanInvalid))
+		code := diagnostics.CodeFor(err, apperrors.LaunchPlanInvalid)
+		if errors.Is(err, continuation.ErrCheckpointNotFound) {
+			code = apperrors.ContinuationCheckpointNotFound
+		} else if errors.Is(err, continuation.ErrCheckpointInvalid) || errors.Is(err, continuation.ErrCheckpointRevisionChanged) || errors.Is(err, continuation.ErrHandoffNotReady) {
+			code = apperrors.ContinuationCheckpointInvalid
+		}
+		server.writeAPIError(response, status, code)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
