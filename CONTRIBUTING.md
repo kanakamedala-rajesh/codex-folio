@@ -55,3 +55,33 @@ submitting a contribution, you agree that it is licensed under Apache-2.0 and
 that your public contribution record is retained as described by the DCO.
 
 All contributors must follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## A first contribution
+
+Choose a small, approved issue with named files and acceptance criteria. A CLI
+help correction, a sanitized example, or a focused regression test is a better
+first task than authentication, vault, migration, or checkpoint privacy work.
+For a documentation-only fix, begin with the affected guide and the issue;
+maintainers can point you to any additional design material that is relevant.
+
+Create a branch, make the bounded change, run the relevant focused checks and
+`node scripts/verify.mjs`, then sign off your own commits and open a pull request.
+State what you actually tested. Do not claim independent audits or platform
+qualification from a generated summary alone.
+
+Your name, email in Git commits and DCO trailers, issue content, and PR comments
+are public contribution records. Configure your preferred GitHub no-reply
+address before committing when appropriate. Do not rewrite other people's
+attribution. Automation-created commits still need an approved provenance and
+DCO policy; do not add a blanket bot exemption just to make a check pass.
+
+## Sensitive reports and workflow changes
+
+Never include real credentials, complete Codex home directories, private
+transcripts, customer code, or unreviewed diagnostic bundles. Use minimal
+synthetic fixtures. Report vulnerabilities through `SECURITY.md`.
+
+Maintainers must inspect changes to workflows and verification scripts before
+approving external workflow runs. The DCO workflow uses the base revision's
+checker, but a workflow file change still needs human review. No public PR
+should be granted production credentials or signing material.

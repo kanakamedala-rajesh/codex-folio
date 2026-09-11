@@ -23,7 +23,25 @@ not merely when its implementation tickets close. Later specifications and
 tickets are created just in time after preceding evidence makes their
 interfaces concrete.
 
-## Milestone 1 — secure local foundation
+## Development preview status
+
+Snapshot reviewed on 2026-09-10, with source at `5c6ca1d`:
+
+| Work | Recorded status |
+| --- | --- |
+| Phase 0 and Milestone 1, secure foundation | Complete |
+| Milestone 2, profiles and launch | Complete with an accepted live-authentication qualification exception |
+| Milestone 3, supported collection and analytics | Complete |
+| Milestone 4, Safe Continuation | Complete with an accepted production-authenticated continuation exception |
+| Milestone 5, dashboard and operations | Next specification frontier |
+| Milestone 6, isolated experiments | Pending; outside the stable-core critical path |
+| Milestone 7, production hardening | Pending |
+
+These are milestone statuses, not a weighted percentage or an end-user support
+claim. GitHub issue #9 remains authoritative for changes after this snapshot.
+Publishing the source and distributing a supported binary are separate gates.
+
+## Milestone 1 historical evidence
 
 The implementation and native Tier 1 exit-gate evidence are recorded in
 [`docs/product/MILESTONE-1-EVIDENCE.md`](docs/product/MILESTONE-1-EVIDENCE.md).

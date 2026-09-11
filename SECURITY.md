@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-CodexFolio is in Phase 0 and has no stable release. No version currently
+CodexFolio is a development preview and has no stable release. No version currently
 receives a production security-support guarantee. This policy still applies to
 the repository, development artifacts, build tooling, and documentation.
 
@@ -33,3 +33,14 @@ loopback authorization, persistence and migration, process launching,
 continuation exports, update or telemetry transport, release tooling, and
 supply-chain metadata. Product questions and non-sensitive defects belong in
 the [public support path](SUPPORT.md).
+
+## Public repository boundaries
+
+Public source availability does not certify that a development build is safe
+for production credentials or private work. Supported versions and response
+commitments will be stated with a qualified release. There is no published
+response-time guarantee for this preview.
+
+If a credential is exposed, revoke or rotate it first. Removing a file or Git
+commit alone does not invalidate the credential or remove retained copies.
+Do not post the credential while reporting the exposure.

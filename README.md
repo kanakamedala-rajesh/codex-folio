@@ -1,42 +1,85 @@
 # VenkataSudha CodexFolio
 
-VenkataSudha CodexFolio is a local-first companion for the installed Codex application. It provides Identity Profile launching, read-only usage evidence, a responsive local dashboard, and repository-first Safe Continuation. It is an independent project and is not affiliated with or endorsed by OpenAI.
+A local-first CLI companion for choosing Codex profiles, inspecting usage
+evidence, and preparing repository checkpoints for interrupted work.
 
-The Phase 0 repository scaffold and acceptance gate are complete. Milestone 1,
-the secure local foundation, has completed its implementation and native Tier 1
-exit-gate qualification. The evidence is recorded in
-[`docs/product/MILESTONE-1-EVIDENCE.md`](docs/product/MILESTONE-1-EVIDENCE.md).
-Runtime product capabilities remain intentionally unimplemented.
+**Development preview.** Core CLI milestones are implemented. The local
+dashboard, operational companion work, and production release qualification
+are still pending. Making this repository public is not a stable release.
+CodexFolio is independent and is not affiliated with or endorsed by OpenAI.
 
-## Project documents
+## What is available
 
-- [`CONTEXT.md`](CONTEXT.md): canonical domain glossary.
-- [`docs/adr/`](docs/adr/): accepted architecture decisions.
-- [`docs/product/PRODUCT.md`](docs/product/PRODUCT.md): product purpose and boundaries.
-- [`docs/product/IMPLEMENTATION-PLAN.md`](docs/product/IMPLEMENTATION-PLAN.md): risk-ordered delivery plan.
-- [`docs/product/ACCEPTANCE-CRITERIA.md`](docs/product/ACCEPTANCE-CRITERIA.md): testable evidence contract.
-- [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md): modular-monolith architecture.
-- [`docs/design/DASHBOARD-BRIEF.md`](docs/design/DASHBOARD-BRIEF.md): comp-first dashboard direction.
-- [`docs/research/`](docs/research/): supporting technical research.
-- [`ROADMAP.md`](ROADMAP.md): MVP delivery status and tracker link.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): contribution and DCO requirements.
-- [`SECURITY.md`](SECURITY.md): private vulnerability reporting.
-- [`SUPPORT.md`](SUPPORT.md): current support boundaries.
+| Capability | Current position |
+| --- | --- |
+| Isolated identity profiles and installed-Codex launch | Implemented; real-account platform qualification has documented exceptions |
+| Read-only usage evidence and local analytics | Implemented; provider-reported, derived, estimated, stale, and unavailable values must remain distinguishable |
+| Repository-first Safe Continuation | Implemented checkpoint workflow; not a guarantee of exact conversation or hidden-state transfer |
+| Local dashboard and background operations | In development; design concepts are not working screenshots |
+| Exact Continuation and Shared Work Home | Experimental scope; not prerequisites for stable-core delivery |
+| Signed, supported end-user release | Not available yet |
 
-## License and community
+This summary reflects the milestone record reviewed on 2026-09-10. Follow the
+[MVP roadmap](ROADMAP.md) and [issue #9](https://github.com/kanakamedala-rajesh/codex-folio/issues/9)
+for live status. Read the [compatibility qualifications](docs/user/COMPATIBILITY.md)
+before using development builds with real accounts.
 
-Source and documentation are licensed under [Apache-2.0](LICENSE). The license
-does not grant rights to the VenkataSudha CodexFolio name or branding; see
-[`NOTICE`](NOTICE). Contributions require DCO sign-off and follow the
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+## Try the development CLI
 
-## Development
-
-The Phase 0 scaffold uses pinned Go 1.27.0, Node.js 24.18.0, and npm 11.16.0
-toolchains. See [`docs/development/BUILDING.md`](docs/development/BUILDING.md)
-for setup, focused checks, version output, common failures, and the canonical
-clean-checkout verification command:
+There is no supported binary installation channel yet. Developers can build
+from source using the pinned toolchain and canonical verification command:
 
 ```sh
 node scripts/verify.mjs
+./build/bin/codex-folio version --json
+./build/bin/codex-folio --help
 ```
+
+On Windows, use `.\build\bin\codex-folio.exe` for the executable commands.
+The [getting-started guide](docs/user/GETTING-STARTED.md) explains prerequisites,
+profile setup, expected boundaries, and how to avoid changing existing Codex
+state accidentally. A source build is for evaluation, not production assurance.
+
+## Safety and privacy
+
+CodexFolio complements your installed Codex executable; it is not a replacement
+Codex client or a way to bypass account, workspace, or billing restrictions.
+Only use identities and repositories you are authorized to access.
+
+Read [privacy and data handling](docs/user/PRIVACY.md), particularly retention,
+local exports, and the boundary between repository checkpoints and optional
+transcript-assisted recovery. Local-first does not mean that the installed
+Codex application cannot contact its provider or consume your account usage.
+
+Never attach authentication files, complete Identity Homes, private transcripts,
+or unreviewed diagnostics to public issues. Report vulnerabilities through
+[Security](SECURITY.md), not public bug reports.
+
+## Feedback and contribution
+
+Use [GitHub issues](https://github.com/kanakamedala-rajesh/codex-folio/issues)
+for reproducible, sanitized bugs and proposed improvements. Include the source
+revision, platform, installed Codex version, and expected versus actual result.
+Start with [Contributing](CONTRIBUTING.md) before changing implementation scope.
+
+## Project documents
+
+The [domain glossary](CONTEXT.md), [product contract](docs/product/PRODUCT.md),
+[implementation plan](docs/product/IMPLEMENTATION-PLAN.md),
+[acceptance criteria](docs/product/ACCEPTANCE-CRITERIA.md),
+[architecture](docs/architecture/ARCHITECTURE.md), and
+[architecture decisions](docs/adr/) explain the intended design. They include
+future scope and should not be interpreted as a list of shipped features.
+
+The [build guide](docs/development/BUILDING.md) covers contributor tooling.
+[Support](SUPPORT.md) describes preview support. Maintainers should use the
+[publication checklist](docs/release/PUBLICATION-CHECKLIST.md) before exposing
+history and the [first-release checklist](docs/release/FIRST-RELEASE-CHECKLIST.md)
+before distributing qualified binaries.
+
+## License
+
+Source and documentation are licensed under [Apache-2.0](LICENSE).
+The license does not grant rights to the VenkataSudha CodexFolio name or
+branding; see [NOTICE](NOTICE). Contributions require DCO sign-off and follow
+[the code of conduct](CODE_OF_CONDUCT.md).

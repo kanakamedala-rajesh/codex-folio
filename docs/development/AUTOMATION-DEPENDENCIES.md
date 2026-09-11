@@ -19,9 +19,12 @@ requires a new review in the same pull request.
   archived and had activity on 2026-08-10. Re-review activity and security
   advisories before updating the pin.
 - **Security and privacy:** the job grants only `contents: read`, checks out the
-  pull-request history, persists the default job token only for the job, and
-  sends no CodexFolio application data or credentials. No application secret is
-  available to the pull-request workflow.
+  pull-request history with `persist-credentials: false`, and sends no
+  CodexFolio application data or credentials. No application secret is
+  available to the pull-request workflow. The DCO job reads the checker from
+  the base revision rather than executing the proposed checker. Workflow
+  changes still require maintainer review; this is not a tamper-proof policy
+  engine.
 - **Cost:** one JavaScript action and a full history fetch in the small DCO job;
   it adds no binary or frontend runtime weight.
 - **Alternatives:** manually reproducing authenticated checkout logic would

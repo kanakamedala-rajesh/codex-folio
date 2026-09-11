@@ -2,21 +2,33 @@ name: DCO
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   signoff:
     name: Developer Certificate of Origin
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out the proposed history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - name: Verify commit sign-offs
+          persist-credentials: false
+      - name: Verify commit sign-offs using the base revision checker
+        shell: bash
         env:
+          DCO_BASE: ${{ github.event.pull_request.base.sha }}
           DCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-        run: node scripts/check-dco.mjs
+        run: |
+          # Read PR commit data, but do not execute a checker supplied by that PR.
+          [[ "$DCO_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git show "${DCO_BASE}:scripts/check-dco.mjs" > "$RUNNER_TEMP/codex-folio-dco-base.mjs"
+          node "$RUNNER_TEMP/codex-folio-dco-base.mjs"

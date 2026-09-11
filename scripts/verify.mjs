@@ -19,6 +19,10 @@ try {
   const initialStatus = gitStatus();
   const initialTrackedFiles = trackedFileSnapshot();
 
+  gate("publication hygiene guardrails", () => {
+    run("node", ["--test", "scripts/check-public-safety.test.mjs"]);
+    run("node", ["scripts/check-public-safety.mjs"]);
+  });
   gate("pinned Go, Node.js, and npm toolchains", () => {
     checkGoToolchain();
     runNpm(["--prefix", "web", "run", "check:tooling"]);
@@ -99,11 +103,11 @@ try {
     }
   });
 
-  console.log("\nPhase 0 verification summary");
+  console.log("\nRepository verification summary");
   for (const name of passedGates) console.log(`[PASS] ${name}`);
   for (const name of skippedQualifications) console.log(`[SKIP] ${name}`);
   console.log(
-    "verification passed: all Phase 0 gates completed without remote mutation",
+    "verification passed: repository gates completed without remote mutation",
   );
 } catch (error) {
   console.error(

@@ -1,11 +1,13 @@
-# Build the Phase 0 scaffold and local foundation
+# Build the development preview
 
-The repository contains the completed non-production Phase 0 scaffold and the
-completed Milestone 1 secure local foundation. It does not authenticate with
-Codex, launch Codex, access provider data, or expose later product workflows.
-The service resolves platform app-local paths, initializes the allowlisted
-versioned SQLite foundation, protects sensitive fields through the platform
-vault boundary, and runs a foreground owner through the CLI:
+Core CLI milestones through Safe Continuation have been implemented. This is
+not a stable release. Read [the user guide](../user/GETTING-STARTED.md) and
+[qualification limits](../user/COMPATIBILITY.md) before using real identities.
+The commands below describe the local service foundation used by those
+workflows; individual historical gates retain their original qualifications.
+The service resolves platform app-local paths, initializes the versioned
+SQLite store, protects sensitive fields through the platform vault boundary,
+and can run a foreground owner through the CLI:
 
 ```sh
 codex-folio service status [--state-root PATH] [--json]
@@ -14,9 +16,10 @@ codex-folio service start [--state-root PATH] [--json]
 
 The owner lock, descriptor, SQLite database, vault, recovery artifacts, and
 diagnostic aggregates are runtime foundation artifacts. Profile, launch,
-collection, continuation, dashboard, and other product workflows remain future
-milestones. The service is the only composed process path that opens the
-durable SQLite store or runs its migrations.
+collection, analytics, and Safe Continuation CLI workflows now build on this
+foundation. Dashboard and later operational work remain pending. The service
+is the only composed process path that opens the durable SQLite store or runs
+its migrations.
 
 ## Pinned prerequisites
 
@@ -82,7 +85,7 @@ same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
 directories.
 
-Successful output ends with a Phase 0 summary that identifies each completed
+Successful output ends with a repository verification summary that identifies each completed
 gate with `[PASS]` and each intentionally unavailable qualification with
 `[SKIP]`. The expected skips are native runtime qualification for the
 compile-only target builds and stable signing, attestation, notarization, and

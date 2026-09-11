@@ -1,0 +1,10 @@
+# Review routing. Required approvals are configured separately in GitHub
+
+- .github/ @kanakamedala-rajesh
+- scripts/ @kanakamedala-rajesh
+- internal/ @kanakamedala-rajesh
+- .codex/ @kanakamedala-rajesh
+- SECURITY.md @kanakamedala-rajesh
+- LICENSE @kanakamedala-rajesh
+- NOTICE @kanakamedala-rajesh
+- docs/user/PRIVACY.md @kanakamedala-rajesh

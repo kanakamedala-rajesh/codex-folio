@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible, non-sensitive CodexFolio problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Development preview. Never upload auth.json, Identity Homes, private transcripts,
+        databases, tokens, or unreviewed diagnostics. Report vulnerabilities using SECURITY.md.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Report safety
+      options:
+        - label: I removed credentials, private paths, account identifiers, and private code.
+          required: true
+        - label: This is not a vulnerability disclosure; I checked SECURITY.md.
+          required: true
+  - type: input
+    id: revision
+    attributes:
+      label: CodexFolio version and source revision
+      placeholder: Version plus commit SHA from version --json
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: Include WSL2 and its distribution separately from Windows
+    validations:
+      required: true
+  - type: input
+    id: codex
+    attributes:
+      label: Installed Codex version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Commands, expected behavior, actual behavior, and sanitized output. Do not upload raw archives.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and recovery
+      description: Is it repeatable? What changed? Did it affect existing local state? Do not include state contents.

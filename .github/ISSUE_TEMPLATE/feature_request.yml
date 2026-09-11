@@ -1,0 +1,30 @@
+name: Feature or preview feedback
+description: Describe a workflow need or feedback without sensitive data.
+title: "[Feedback]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search issue #9 and existing requests first. Planned capabilities are not shipped guarantees.
+        Do not include account data, credentials, private code, or private transcripts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to accomplish?
+      description: Describe the workflow and current obstacle rather than only a proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change and alternatives
+      description: Include scope, privacy implications, platform needs, and any current workaround.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Safety
+      options:
+        - label: This request contains no credentials, private account data, code, or transcripts.
+          required: true

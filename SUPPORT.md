@@ -6,9 +6,16 @@ Codex application itself.
 
 ## Current support level
 
-The repository is in Phase 0. It contains a non-production scaffold, not a
-supported end-user release. Platform compilation during this phase is not a
-claim of native runtime qualification.
+The repository is a development preview with implemented core CLI workflows,
+not a supported end-user release. Best-effort help covers reproducible
+CodexFolio problems on the documented development targets. Compilation and
+fake-Codex tests do not establish production-authenticated qualification.
+See the [compatibility record](docs/user/COMPATIBILITY.md) and
+[getting-started guide](docs/user/GETTING-STARTED.md).
+
+Commands, JSON output, local schemas, and migrations may change before a
+stable compatibility policy exists. Do not assume that downgrading a binary
+can read state written by a later build.
 
 ## Where to ask
 

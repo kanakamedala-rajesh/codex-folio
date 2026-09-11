@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/kanakamedala-rajesh/codex-folio/blob/main/SECURITY.md
+    about: Use the private reporting path. Do not disclose a vulnerability in a public issue.
+  - name: Preview support and limitations
+    url: https://github.com/kanakamedala-rajesh/codex-folio/blob/main/SUPPORT.md
+    about: Check current support boundaries before reporting an issue.

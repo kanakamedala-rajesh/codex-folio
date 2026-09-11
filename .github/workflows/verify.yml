@@ -2,15 +2,21 @@ name: Verify
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     name: Repository verification (${{ matrix.target }})
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +31,8 @@ jobs:
     steps:
       - name: Check out the source revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -32,6 +40,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.mod
+            go.sum
             .tool-versions
       - name: Install the pinned Node.js toolchain
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -46,6 +55,7 @@ jobs:
         shell: bash
         run: |
           keychain_password="$(uuidgen)"
+          echo "::add-mask::$keychain_password"
           platform_keychain_path="$RUNNER_TEMP/codex-folio-platform.keychain-db"
           cmd_keychain_path="$RUNNER_TEMP/codex-folio-cmd.keychain-db"
           for keychain_path in "$platform_keychain_path" "$cmd_keychain_path"; do
@@ -55,7 +65,6 @@ jobs:
           done
           security list-keychains -d user -s "$platform_keychain_path" "$cmd_keychain_path"
           security default-keychain -d user -s "$platform_keychain_path"
-          echo "::add-mask::$keychain_password"
           echo "CODEX_FOLIO_TEST_KEYCHAIN_PASSWORD=$keychain_password" >> "$GITHUB_ENV"
           echo "CODEX_FOLIO_PLATFORM_KEYCHAIN_PATH=$platform_keychain_path" >> "$GITHUB_ENV"
           echo "CODEX_FOLIO_CMD_KEYCHAIN_PATH=$cmd_keychain_path" >> "$GITHUB_ENV"
