@@ -108,7 +108,6 @@ try {
         runNpm(["--prefix", "web", "run", "lint"]);
         runNpm(["--prefix", "web", "run", "typecheck"]);
         runNpm(["--prefix", "web", "run", "test"]);
-        runNpm(["--prefix", "web", "run", "build"]);
         run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
       },
     );

@@ -111,6 +111,15 @@ compile-only qualification. CI requires both suites and DCO. A passing native
 suite alone does not establish deep UI or performance acceptance. Unknown suite
 arguments fail before any installation or check can be skipped.
 
+CI sets `GOCACHE` for both `setup-go` and the verifier/build subprocesses, so
+restored compilation results are actually reused. Native and web cache inputs
+remain separate to avoid concurrent jobs saving different coverage under one
+immutable key; Go caches remain OS/architecture-specific. npm's download cache
+is retained, with locked installation on each runner. The web reproducibility
+test already builds twice and leaves validated assets for the browser checks;
+the verifier does not build them a third time. Jobs remain parallel because the
+small frontend build does not justify a shared-artifact dependency wait.
+
 The native browser smoke proves bootstrap/authenticated loading, CSRF rejection,
 single-profile selection persisted for CLI use, running-launch preservation,
 service re-entry and unavailable-service guidance. It has normal functional

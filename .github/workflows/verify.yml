@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # setup-go and every verifier/build subprocess must cache the same directory.
+  GOCACHE: ${{ github.workspace }}/build/go-cache
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -42,6 +46,7 @@ jobs:
             go.mod
             go.sum
             .tool-versions
+            .github/workflows/verify.yml
       - name: Install the pinned Node.js toolchain
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -92,6 +97,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            web/package-lock.json
+            .github/workflows/verify.yml
       - name: Install the pinned Node.js toolchain
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
