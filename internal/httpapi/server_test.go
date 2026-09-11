@@ -264,6 +264,15 @@ func (repository *registryRepository) EditProfile(_ context.Context, alias strin
 		if edits.Alias != nil {
 			repository.profiles[index].Alias = *edits.Alias
 		}
+		if edits.DisplayName != nil {
+			repository.profiles[index].DisplayName = *edits.DisplayName
+		}
+		if edits.Email != nil {
+			repository.profiles[index].Email = *edits.Email
+		}
+		if edits.Workspace != nil {
+			repository.profiles[index].Workspace = *edits.Workspace
+		}
 		return repository.profiles[index], nil
 	}
 	return profile.IdentityProfile{}, profile.ErrNotFound

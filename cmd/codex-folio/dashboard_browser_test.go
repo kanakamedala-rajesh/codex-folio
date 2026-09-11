@@ -23,6 +23,32 @@ import (
 
 type dashboardClock struct{ control string }
 
+type dashboardProfileAuthenticator struct{ control string }
+
+func (authenticator dashboardProfileAuthenticator) Authenticate(_ context.Context, request profile.AuthenticationRequest) error {
+	mode, _ := os.ReadFile(authenticator.control)
+	if string(mode) == "profile-auth-fail" {
+		return profile.ErrAuthenticationFailed
+	}
+	_, _ = io.WriteString(request.Stdout, "browser-auth-secret-must-not-reach-dashboard")
+	if string(mode) == "profile-needs-auth" {
+		return os.WriteFile(authenticator.control, []byte("supported"), 0600)
+	}
+	return nil
+}
+
+func (authenticator dashboardProfileAuthenticator) Check(_ context.Context, _ profile.AuthenticationRequest) error {
+	mode, _ := os.ReadFile(authenticator.control)
+	if string(mode) == "profile-needs-auth" {
+		return profile.ErrNotAuthenticated
+	}
+	return nil
+}
+
+func (dashboardProfileAuthenticator) ObserveDocumentedMetadata(_ context.Context, request profile.AuthenticationRequest) (profile.DocumentedMetadata, error) {
+	return profile.DocumentedMetadata{LoginIdentity: filepath.Base(request.IdentityHome) + "@example.test", Workspace: "Browser fixture"}, nil
+}
+
 func (clock dashboardClock) Now() time.Time {
 	now := time.Now().UTC()
 	mode, _ := os.ReadFile(clock.control)
@@ -203,7 +229,21 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, CommandToken: "browser-fixture-command"})
+	profileAuthentication, err := newProfileAuthenticationCommandService(
+		paths,
+		state,
+		nil,
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}},
+		dashboardProfileAuthenticator{control: control},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referencedHome := filepath.Join(filepath.Dir(paths.Root), "dashboard-referenced-home")
+	if err := os.MkdirAll(referencedHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileAuthentication: profileAuthentication, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +253,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
-	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite)
+	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
 	if suite == "benchmark" {
 		runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
@@ -239,7 +279,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reentry := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), link, control, "reentry")
+	reentry := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), link, control, "reentry", referencedHome)
 	reentry.Stdout = os.Stdout
 	reentry.Stderr = os.Stderr
 	if err := reentry.Run(); err != nil {

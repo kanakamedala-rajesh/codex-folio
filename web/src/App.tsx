@@ -3,10 +3,14 @@ import {
   createCodexFolioApiClient,
   UsageRefreshError,
   type AnalyticsResponse,
+  type ProfileAuthenticationRequest,
+  type ProfileEditRequest,
+  type ProfileSummary,
   type SelectionResponse,
   type UsageSnapshotResponse,
 } from "./generated/openapi";
 import { copy as c, stateCopy, provenanceCopy } from "./copy";
+import { Profiles } from "./Profiles";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -411,6 +415,7 @@ export function App() {
   const [status, setStatus] = useState("authorizing");
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [combined, setCombined] = useState(false);
   const [route, setRoute] = useState("Overview");
   const [busy, setBusy] = useState(false);
@@ -439,17 +444,19 @@ export function App() {
     } else if (error instanceof TypeError) setStatus("unavailable");
     else setMessage(c.refreshFailed);
   };
-  async function load() {
-    const [next, selected] = await Promise.all([
+  async function load(includeProfiles = false) {
+    const [next, selected, inventory] = await Promise.all([
       api.getAnalytics("combined_identity"),
       api.getSelection().catch((e) => {
         if (e instanceof UsageRefreshError && e.status === 409) return null;
         throw e;
       }),
+      includeProfiles ? api.getProfiles() : null,
     ]);
     setNow(Date.now());
     setData(next);
     setSelection(selected);
+    if (inventory) setProfiles(inventory.profiles);
     return next;
   }
   async function refresh(trigger: string, current: AnalyticsResponse) {
@@ -493,7 +500,7 @@ export function App() {
       try {
         const auth = await api.exchangeBootstrap({ bootstrap_token: token });
         csrf.current = auth.csrf_token;
-        const next = await load();
+        const next = await load(true);
         setStatus("authorized");
         void refresh("dashboard_open", next);
       } catch (e) {
@@ -531,12 +538,81 @@ export function App() {
         { headers: { "X-CodexFolio-CSRF": csrf.current } },
       );
       setSelection(result);
+      setProfiles((current) =>
+        current.map((profile) => ({ ...profile, selected: profile.alias === result.alias })),
+      );
       setCombined(false);
       setWarning(result.warning);
       await load();
       setMessage(c.selectedDone);
     } catch (e) {
       failure(e);
+      throw e;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function editProfile(request: ProfileEditRequest) {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.editProfile(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      if (result.updated) {
+        setProfiles((current) =>
+          current.map((profile) =>
+            profile.profile_id === result.updated?.profile_id ? result.updated : profile,
+          ),
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof UsageRefreshError && [401, 403].includes(error.status))
+      ) {
+        failure(error);
+      }
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function authenticateProfile(request: ProfileAuthenticationRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.authenticateProfile(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      setProfiles((current) => [
+        ...current
+          .filter((profile) => profile.profile_id !== result.profile.profile_id)
+          .map((profile) => ({
+            ...profile,
+            selected: result.profile.selected ? false : profile.selected,
+          })),
+        result.profile,
+      ]);
+      return result;
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof UsageRefreshError && [401, 403].includes(error.status))
+      ) {
+        failure(error);
+      }
+      if (!(error instanceof UsageRefreshError && [401, 403].includes(error.status))) {
+        void api
+          .getProfiles()
+          .then((inventory) => setProfiles(inventory.profiles))
+          .catch(failure);
+      }
+      throw error;
     } finally {
       operation.current = false;
       setBusy(false);
@@ -577,7 +653,7 @@ export function App() {
         aria-label={c.scope}
         disabled={busy || !data}
         value={combined ? "*" : (selection?.alias ?? "")}
-        onChange={(e) => void choose(e.target.value)}
+        onChange={(e) => void choose(e.target.value).catch(() => undefined)}
         className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink w-full min-w-0 cursor-pointer"
       >
         {!selection && <option value="">{c.none}</option>}
@@ -673,6 +749,16 @@ export function App() {
                 <code className="wrap-anywhere">{c.relaunchCommand}</code>
                 <p className="mb-4 max-w-[75ch]">{c.authorizationDetail}</p>
               </>
+            ) : route === "Profiles" ? (
+              <Profiles
+                profiles={profiles}
+                busy={busy}
+                heading={heading}
+                message={message}
+                select={choose}
+                edit={editProfile}
+                authenticate={authenticateProfile}
+              />
             ) : (
               <>
                 <header className="mb-7 border-b border-rule pb-5 [&_p]:mb-0">

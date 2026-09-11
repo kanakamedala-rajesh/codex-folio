@@ -237,6 +237,132 @@
       ],
       "type": "object"
     },
+    "ProfileSetupStages": {
+      "additionalProperties": false,
+      "properties": {
+        "discovery": { "type": "boolean" },
+        "home": { "type": "boolean" },
+        "authentication": { "type": "boolean" },
+        "validation": { "type": "boolean" },
+        "selection": { "type": "boolean" }
+      },
+      "required": [
+        "discovery",
+        "home",
+        "authentication",
+        "validation",
+        "selection"
+      ],
+      "type": "object"
+    },
+    "ProfileSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": { "type": "string" },
+        "alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "login_identity": { "type": "string" },
+        "workspace": { "type": "string" },
+        "status": {
+          "enum": ["pending", "ready", "needs_reauthentication", "unavailable"],
+          "type": "string"
+        },
+        "identity_home_mode": {
+          "enum": ["managed", "referenced"],
+          "type": "string"
+        },
+        "authentication_method": {
+          "enum": ["", "browser", "device-code", "reused"],
+          "type": "string"
+        },
+        "selected": { "type": "boolean" },
+        "configuration_pack": { "type": "string" },
+        "last_successful_refresh": { "type": "string" }
+      },
+      "required": [
+        "profile_id",
+        "alias",
+        "display_name",
+        "login_identity",
+        "workspace",
+        "status",
+        "identity_home_mode",
+        "authentication_method",
+        "selected",
+        "configuration_pack",
+        "last_successful_refresh"
+      ],
+      "type": "object"
+    },
+    "ProfilesResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProfileSummary" }
+        },
+        "updated": { "$ref": "#/$defs/ProfileSummary" }
+      },
+      "required": ["profiles"],
+      "type": "object"
+    },
+    "ProfileEditRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": { "type": "string" },
+        "new_alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "login_identity": { "type": "string" },
+        "workspace": { "type": "string" }
+      },
+      "required": ["alias"],
+      "type": "object"
+    },
+    "ProfileAuthenticationRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": ["add", "prepare", "reauthenticate"],
+          "type": "string"
+        },
+        "alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "codex_override": { "type": "string" },
+        "identity_home_mode": {
+          "enum": ["managed", "referenced"],
+          "type": "string"
+        },
+        "referenced_home_path": { "type": "string" },
+        "auth_method": { "enum": ["browser", "device-code"], "type": "string" }
+      },
+      "required": ["action", "alias", "identity_home_mode", "auth_method"],
+      "type": "object"
+    },
+    "ProfileAuthenticationResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "$ref": "#/$defs/ProfileSummary" },
+        "stages": { "$ref": "#/$defs/ProfileSetupStages" },
+        "codex_found": { "type": "boolean" },
+        "codex_version": { "type": "string" },
+        "outcome": {
+          "enum": ["pending", "ready", "terminal_required"],
+          "type": "string"
+        },
+        "terminal_command": { "type": "string" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "profile",
+        "stages",
+        "codex_found",
+        "codex_version",
+        "outcome",
+        "terminal_command",
+        "warnings"
+      ],
+      "type": "object"
+    },
     "ProjectIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -535,6 +661,87 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
             "description": "Returns safe app-local Project Identity projections without canonical paths."
+          }
+        }
+      }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "getProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfilesResponse" }
+              }
+            },
+            "description": "Returns browser-safe Identity Profile inventory without Identity Home internals or credentials."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "put": {
+        "operationId": "editProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileEditRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfilesResponse" }
+              }
+            },
+            "description": "Edits safe local Identity Profile metadata."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "authenticateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileAuthenticationRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileAuthenticationResponse" }
+              }
+            },
+            "description": "Prepares or completes Codex-owned authentication without returning raw authentication output."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
           }
         }
       }

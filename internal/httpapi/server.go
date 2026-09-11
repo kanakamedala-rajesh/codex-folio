@@ -551,6 +551,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.getProjects(response, request)
+	case ProfilesPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserProfiles(response, request)
 	case ActivityPath:
 		if !server.authorize(response, request) {
 			return

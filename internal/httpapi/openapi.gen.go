@@ -19,9 +19,10 @@ const (
 	AnalyticsPath        = "/api/v1/analytics"
 	HistoryPath          = "/api/v1/analytics/history"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "ba6d6079ceac206cb4915c4f0f211a7529090ff3837384e5a83f3ce7b19f00de"
+	ContractSourceSHA256 = "c6402e53d72f3ad12aa5d456690d139f93659cd8ce0a97aed7550fb53350b323"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
+	ProfilesPath         = "/api/v1/profiles"
 	ProjectsPath         = "/api/v1/projects"
 	SelectionPath        = "/api/v1/selection"
 	UsageLatestPath      = "/api/v1/usage/latest"
@@ -272,6 +273,61 @@ type MetadataResponse struct {
 	APIVersion      string `json:"api_version"`
 	ContractVersion string `json:"contract_version"`
 	Product         string `json:"product"`
+}
+
+type ProfileSetupStages struct {
+	Discovery      bool `json:"discovery"`
+	Home           bool `json:"home"`
+	Authentication bool `json:"authentication"`
+	Validation     bool `json:"validation"`
+	Selection      bool `json:"selection"`
+}
+
+type ProfileSummary struct {
+	ProfileId             string `json:"profile_id"`
+	Alias                 string `json:"alias"`
+	DisplayName           string `json:"display_name"`
+	LoginIdentity         string `json:"login_identity"`
+	Workspace             string `json:"workspace"`
+	Status                string `json:"status"`
+	IdentityHomeMode      string `json:"identity_home_mode"`
+	AuthenticationMethod  string `json:"authentication_method"`
+	Selected              bool   `json:"selected"`
+	ConfigurationPack     string `json:"configuration_pack"`
+	LastSuccessfulRefresh string `json:"last_successful_refresh"`
+}
+
+type ProfilesResponse struct {
+	Profiles []ProfileSummary `json:"profiles"`
+	Updated  *ProfileSummary  `json:"updated,omitempty"`
+}
+
+type ProfileEditRequest struct {
+	Alias         string  `json:"alias"`
+	NewAlias      *string `json:"new_alias,omitempty"`
+	DisplayName   *string `json:"display_name,omitempty"`
+	LoginIdentity *string `json:"login_identity,omitempty"`
+	Workspace     *string `json:"workspace,omitempty"`
+}
+
+type ProfileAuthenticationRequest struct {
+	Action             string  `json:"action"`
+	Alias              string  `json:"alias"`
+	DisplayName        *string `json:"display_name,omitempty"`
+	CodexOverride      *string `json:"codex_override,omitempty"`
+	IdentityHomeMode   string  `json:"identity_home_mode"`
+	ReferencedHomePath *string `json:"referenced_home_path,omitempty"`
+	AuthMethod         string  `json:"auth_method"`
+}
+
+type ProfileAuthenticationResponse struct {
+	Profile         ProfileSummary     `json:"profile"`
+	Stages          ProfileSetupStages `json:"stages"`
+	CodexFound      bool               `json:"codex_found"`
+	CodexVersion    string             `json:"codex_version"`
+	Outcome         string             `json:"outcome"`
+	TerminalCommand string             `json:"terminal_command"`
+	Warnings        []string           `json:"warnings"`
 }
 
 type ProjectIdentity struct {
@@ -583,6 +639,97 @@ func (client *Client) GetProjects(ctx context.Context) (ProjectsResponse, *http.
 		return result, response, err
 	}
 	return result, response, nil
+}
+
+func (client *Client) GetProfiles(ctx context.Context) (ProfilesResponse, *http.Response, error) {
+	var result ProfilesResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfilesPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) EditProfile(ctx context.Context, input ProfileEditRequest) (ProfilesResponse, *http.Response, error) {
+	var result ProfilesResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+ProfilesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) AuthenticateProfile(ctx context.Context, input ProfileAuthenticationRequest) (ProfileAuthenticationResponse, *http.Response, error) {
+	var result ProfileAuthenticationResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfilesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) GetSelection(ctx context.Context) (SelectionResponse, *http.Response, error) {

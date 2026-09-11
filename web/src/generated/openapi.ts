@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "ba6d6079ceac206cb4915c4f0f211a7529090ff3837384e5a83f3ce7b19f00de" as const;
+  "c6402e53d72f3ad12aa5d456690d139f93659cd8ce0a97aed7550fb53350b323" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -251,6 +251,61 @@ export interface MetadataResponse {
   product: string;
 }
 
+export interface ProfileSetupStages {
+  discovery: boolean;
+  home: boolean;
+  authentication: boolean;
+  validation: boolean;
+  selection: boolean;
+}
+
+export interface ProfileSummary {
+  profile_id: string;
+  alias: string;
+  display_name: string;
+  login_identity: string;
+  workspace: string;
+  status: string;
+  identity_home_mode: string;
+  authentication_method: string;
+  selected: boolean;
+  configuration_pack: string;
+  last_successful_refresh: string;
+}
+
+export interface ProfilesResponse {
+  profiles: ProfileSummary[];
+  updated?: ProfileSummary;
+}
+
+export interface ProfileEditRequest {
+  alias: string;
+  new_alias?: string;
+  display_name?: string;
+  login_identity?: string;
+  workspace?: string;
+}
+
+export interface ProfileAuthenticationRequest {
+  action: string;
+  alias: string;
+  display_name?: string;
+  codex_override?: string;
+  identity_home_mode: string;
+  referenced_home_path?: string;
+  auth_method: string;
+}
+
+export interface ProfileAuthenticationResponse {
+  profile: ProfileSummary;
+  stages: ProfileSetupStages;
+  codex_found: boolean;
+  codex_version: string;
+  outcome: string;
+  terminal_command: string;
+  warnings: string[];
+}
+
 export interface ProjectIdentity {
   project_id: string;
   alias: string;
@@ -416,6 +471,31 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/profiles": {
+    get: {
+      operationId: "getProfiles";
+      responses: {
+        200: { content: { "application/json": ProfilesResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    put: {
+      operationId: "editProfile";
+      requestBody: ProfileEditRequest;
+      responses: {
+        200: { content: { "application/json": ProfilesResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "authenticateProfile";
+      requestBody: ProfileAuthenticationRequest;
+      responses: {
+        200: { content: { "application/json": ProfileAuthenticationResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/selection": {
     get: {
       operationId: "getSelection";
@@ -464,6 +544,12 @@ export interface CodexFolioApiClient {
   ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
+  getProfiles(init?: RequestInit): Promise<ProfilesResponse>;
+  editProfile(request: ProfileEditRequest, init?: RequestInit): Promise<ProfilesResponse>;
+  authenticateProfile(
+    request: ProfileAuthenticationRequest,
+    init?: RequestInit,
+  ): Promise<ProfileAuthenticationResponse>;
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
@@ -558,6 +644,55 @@ export function createCodexFolioApiClient(
         throw new Error("GET /api/v1/meta failed with HTTP " + response.status);
       }
       return (await response.json()) as MetadataResponse;
+    },
+    async getProfiles(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfilesResponse;
+    },
+    async editProfile(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfilesResponse;
+    },
+    async authenticateProfile(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileAuthenticationResponse;
     },
     async getProjects(init = {}) {
       const headers = new Headers(init.headers);

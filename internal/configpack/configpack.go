@@ -328,6 +328,10 @@ func (service *Service) ValidateAssignment(ctx context.Context, id, version stri
 	return nil
 }
 
+func (service *Service) Assignment(ctx context.Context, alias string) (Assignment, error) {
+	return service.repository.GetConfigurationPackAssignment(contextOrBackground(ctx), alias)
+}
+
 func (service *Service) SetOverride(ctx context.Context, alias, path, content string) error {
 	if err := validateFiles(map[string]string{path: content}); err != nil {
 		return err

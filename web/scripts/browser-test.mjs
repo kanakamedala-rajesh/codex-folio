@@ -8,7 +8,7 @@ import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
 import axe from "axe-core";
 
-const [link, control, phase = "deep"] = process.argv.slice(2);
+const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
 assert.ok(["deep", "smoke", "benchmark", "reentry"].includes(phase), "unknown browser phase");
 const output =
   process.env.CODEX_FOLIO_BROWSER_OUTPUT ?? join(tmpdir(), "codex-folio-overview-browser");
@@ -82,6 +82,15 @@ async function scenario(mode) {
   await page.getByRole("button", { name: "Refresh", exact: true }).waitFor();
   await page.waitForFunction(() => !document.querySelector("select")?.disabled);
 }
+async function profileAction(name) {
+  const completed = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/profiles") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name, exact: true }).click();
+  const response = await completed;
+  assert.equal(response.status(), 200, await response.text());
+}
 async function capture(name, width, height) {
   await page.setViewportSize({ width, height });
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -96,6 +105,36 @@ async function capture(name, width, height) {
     `${name}: horizontal overflow`,
   );
   results.viewports.push({ name, width, height });
+}
+async function scanAccessibility(name) {
+  const accessibility = await page.evaluate(async () =>
+    window.axe.run(document, {
+      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
+    }),
+  );
+  writeFileSync(
+    join(output, name === "overview" ? "accessibility.json" : `accessibility-${name}.json`),
+    JSON.stringify(accessibility, null, 2),
+  );
+  assert.deepEqual(
+    accessibility.violations.map((violation) => ({
+      id: violation.id,
+      nodes: violation.nodes.length,
+    })),
+    [],
+  );
+  results.axeViolations = (results.axeViolations ?? 0) + accessibility.violations.length;
+  check(`automated WCAG checks: ${name}`);
+}
+async function assertFocusedHeading(name) {
+  const heading = page.getByRole("heading", { name, exact: true });
+  await heading.waitFor();
+  await page.waitForFunction(
+    (expected) =>
+      document.activeElement?.tagName === "H1" &&
+      document.activeElement.textContent?.trim() === expected,
+    name,
+  );
 }
 try {
   if (phase === "benchmark") {
@@ -257,18 +296,99 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
       // Axe is injected by the test harness, never shipped as a runtime app asset.
       await page.evaluate(axe.source);
-      const accessibility = await page.evaluate(async () =>
-        window.axe.run(document, {
-          runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
-        }),
+      await scanAccessibility("overview");
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Profiles", exact: true })
+        .click();
+      await assertFocusedHeading("Profiles");
+      await scanAccessibility("profiles");
+      assert.doesNotMatch(await page.locator("main").innerText(), /referenced-home|CODEX_HOME/);
+
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await assertFocusedHeading("Add Identity Profile");
+      await scanAccessibility("profile-setup");
+      await page.getByLabel("Display Name", { exact: true }).fill("Research");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Research");
+      await profileAction("Save and close");
+      await page.getByText("Pending · Resume setup", { exact: true }).first().waitFor();
+      await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
+      await profileAction("Continue in Codex");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      assert.match(await page.locator("main").innerText(), /Found · 0\.153\.4/);
+      assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Referenced");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Referenced");
+      await page.getByLabel("Reference an existing Identity Home", { exact: true }).check();
+      await page.getByLabel("Existing Identity Home path", { exact: true }).fill(referencedHome);
+      await profileAction("Continue in Codex");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.doesNotMatch(await page.locator("main").innerText(), new RegExp(referencedHome));
+
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Device");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Device");
+      await page.getByLabel("Device code", { exact: true }).check();
+      await profileAction("Continue in Codex");
+      await page
+        .getByText("Continue device-code authentication in your terminal:", { exact: true })
+        .waitFor();
+      assert.match(
+        await page.locator("main").innerText(),
+        /codex-folio profile add Device --device-code/,
       );
-      writeFileSync(join(output, "accessibility.json"), JSON.stringify(accessibility, null, 2));
-      assert.deepEqual(
-        accessibility.violations.map((v) => ({ id: v.id, nodes: v.nodes.length })),
-        [],
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Failure");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Failure");
+      writeFileSync(control, "profile-auth-fail");
+      const failed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/profiles") && response.request().method() === "POST",
       );
-      results.axeViolations = accessibility.violations.length;
-      check("automated WCAG checks");
+      await page.getByRole("button", { name: "Continue in Codex", exact: true }).click();
+      assert.equal((await failed).status(), 409);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Failure", exact: true }).click();
+      assert.match(await page.locator("main").innerText(), /Pending · Resume setup/);
+
+      await page.getByRole("button", { name: "Work", exact: true }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Work Studio");
+      await page.getByRole("button", { name: "Save changes", exact: true }).click();
+      await page.getByRole("heading", { name: "Work Studio", exact: true }).waitFor();
+      writeFileSync(control, "profile-needs-auth");
+      await page.getByRole("button", { name: "Reauthenticate", exact: true }).click();
+      await assertFocusedHeading("Reauthenticate Work Studio");
+      await scanAccessibility("profile-reauthentication");
+      await capture("reauth-wide", 1440, 1000);
+      await capture("reauth-narrow", 390, 844);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await profileAction("Continue in Codex");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Personal", exact: true }).click();
+      await page.getByRole("button", { name: "Select", exact: true }).click();
+      await page
+        .getByText("Selected Profile updated for future interactive launches.", { exact: true })
+        .waitFor();
+      await capture("profiles-wide", 1440, 1000);
+      await capture("profiles-narrow", 390, 844);
+      await capture("profiles-reflow", 720, 1000);
+      check(
+        "profile setup, resume, referenced home, device handoff, failure, edit, selection and reauthentication",
+      );
+
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Overview", exact: true })
+        .click();
       await choose("Personal");
       for (const mode of [
         "partial",
