@@ -390,6 +390,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandDashboardPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandDashboard(response, request)
 	case CommandCheckpointPath:
 		if !server.authorizeCommand(response, request) {
 			return

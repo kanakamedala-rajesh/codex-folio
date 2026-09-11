@@ -259,9 +259,8 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
-		if err := writeServiceState(stdout, stderr, options.json, status, true); err != nil {
-			recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
-			return exitFailure
+		if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitSuccess
 	}
@@ -271,9 +270,8 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
-				if err := writeServiceState(stdout, stderr, options.json, status, true); err != nil {
-					recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
-					return exitFailure
+				if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 				}
 				return exitSuccess
 			}
@@ -565,7 +563,7 @@ func writeServiceStateWithDashboard(stdout, stderr io.Writer, jsonOutput bool, s
 		return nil
 	}
 	if reused {
-		_, _ = io.WriteString(stdout, "service owner reused\n")
+		_, _ = fmt.Fprintf(stdout, "service owner reused; dashboard: %s\n", dashboardURL)
 	} else if dashboardURL != "" {
 		_, _ = fmt.Fprintf(stdout, "service owner started; dashboard: %s\n", dashboardURL)
 		_, _ = io.WriteString(stdout, "press Ctrl-C to stop\n")
@@ -932,4 +930,16 @@ func metadataStart(metadata *platform.OwnerMetadata) *time.Time {
 	}
 	startedAt := metadata.StartedAt
 	return &startedAt
+}
+
+func writeReusedDashboard(paths platform.Paths, options serviceOptions, status platform.OwnerStatus, stdout, stderr io.Writer) error {
+	connection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+	if err != nil {
+		return err
+	}
+	link, err := httpapi.NewCommandClient(connection.Origin, connection.Token, nil).Dashboard(context.Background())
+	if err != nil {
+		return err
+	}
+	return writeServiceStateWithDashboard(stdout, stderr, options.json, status, true, link)
 }

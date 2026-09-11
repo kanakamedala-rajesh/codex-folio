@@ -19,7 +19,7 @@ const (
 	AnalyticsPath        = "/api/v1/analytics"
 	HistoryPath          = "/api/v1/analytics/history"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580"
+	ContractSourceSHA256 = "ba6d6079ceac206cb4915c4f0f211a7529090ff3837384e5a83f3ce7b19f00de"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
 	ProjectsPath         = "/api/v1/projects"
@@ -257,6 +257,7 @@ type AnalyticsResponse struct {
 	Aggregates           []UsageAggregate        `json:"aggregates"`
 	Ambiguities          []UsageMetricAmbiguity  `json:"ambiguities"`
 	Activity             []ActivityRecord        `json:"activity"`
+	Recent               []UsageSnapshotResponse `json:"recent"`
 }
 
 type BootstrapRequest struct {

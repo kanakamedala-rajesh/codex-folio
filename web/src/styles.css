@@ -1,12 +1,30 @@
 @import "tailwindcss";
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: #f3f0e8;
-  font-family:
-    Baskerville, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+@theme inline {
+  --font-sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --color-canvas: var(--bg);
+  --color-panel: var(--surface);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-accent: var(--cyan);
+  --color-positive: var(--lime);
+  --color-warning: var(--amber);
+  --color-context: var(--magenta);
+}
+
+@theme {
+  --breakpoint-md: 43.75rem;
+  --breakpoint-lg: 68.75rem;
+}
+
+@custom-variant dark {
+  &:where([data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
 }

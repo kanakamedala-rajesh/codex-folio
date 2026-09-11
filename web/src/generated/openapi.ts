@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580" as const;
+  "ba6d6079ceac206cb4915c4f0f211a7529090ff3837384e5a83f3ce7b19f00de" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -234,6 +234,7 @@ export interface AnalyticsResponse {
   aggregates: UsageAggregate[];
   ambiguities: UsageMetricAmbiguity[];
   activity: ActivityRecord[];
+  recent: UsageSnapshotResponse[];
 }
 
 export interface BootstrapRequest {

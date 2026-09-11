@@ -1,0 +1,26 @@
+{
+  "browser": "149.0.7827.55",
+  "platform": "linux",
+  "architecture": "x64",
+  "kernel": "6.6.87.2-microsoft-standard-WSL2",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) Ultra 7 155H",
+    "logicalCPUs": 12,
+    "memoryBytes": 8329052160
+  },
+  "viewports": [
+    {
+      "name": "service-unavailable",
+      "width": 1440,
+      "height": 1000
+    }
+  ],
+  "checks": [
+    "fresh reused-service entry succeeds; unavailable loopback connection has terminal guidance"
+  ],
+  "limitations": [
+    "Fake Codex, not live provider",
+    "Headless browser accessibility tree and axe are not spoken screen-reader evidence",
+    "Native OS contrast and Firefox/Safari unqualified"
+  ]
+}

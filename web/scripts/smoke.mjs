@@ -50,7 +50,7 @@ export function assertBuild(distDirectory) {
     new RegExp(escapeRegExp(expectedVersion)),
     "built app is missing its product version",
   );
-  assert.match(text, /Phase 0 scaffold/, "built app is missing its scaffold marker");
+  assert.match(text, /Current capacity/, "built app is missing its Overview surface");
   assert.doesNotMatch(
     text,
     /(?:import|fetch)\s*\(\s*["'](?:https?:)?\/\//i,

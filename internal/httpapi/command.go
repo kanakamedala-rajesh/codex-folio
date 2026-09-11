@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -254,4 +256,52 @@ func (client *CommandClient) httpDoer() HTTPDoer {
 		return client.doer
 	}
 	return http.DefaultClient
+}
+
+const CommandDashboardPath = "/api/v1/command/dashboard"
+
+type dashboardLink struct {
+	URL string `json:"dashboard_url"`
+}
+
+// Dashboard issues a fresh one-time browser entry without restarting the owner.
+func (client *CommandClient) Dashboard(ctx context.Context) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.origin+CommandDashboardPath, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("dashboard entry unavailable"))
+	}
+	var result dashboardLink
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result.URL, err
+}
+
+func (server *Server) commandDashboard(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodPost)
+		return
+	}
+	token, err := server.randomBytes(randomTokenSize)
+	if err != nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(token)
+	server.mu.Lock()
+	server.bootstrapToken = token
+	server.bootstrapDigest = sha256.Sum256([]byte(encoded))
+	server.bootstrapExpiresAt = server.clock.Now().UTC().Add(server.bootstrapTTL)
+	server.bootstrapAvailable = true
+	link := server.origin + BootstrapPathName + "?" + BootstrapQueryName + "=" + encoded
+	server.mu.Unlock()
+	writeJSON(response, http.StatusOK, dashboardLink{URL: link})
 }

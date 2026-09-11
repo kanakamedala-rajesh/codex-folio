@@ -22,6 +22,7 @@ type CommandUsageService interface {
 	Refresh(context.Context, string, string) (usage.Snapshot, error)
 	Latest(context.Context, string) (usage.Snapshot, error)
 	View(context.Context, string) (usage.DashboardView, []activity.TimelineRecord, error)
+	Recent(context.Context, usage.ProfileTarget) ([]usage.Snapshot, error)
 }
 
 func (client *CommandClient) Analytics(ctx context.Context, scope string) (AnalyticsResponse, error) {
@@ -207,7 +208,19 @@ func (server *Server) analytics(response http.ResponseWriter, request *http.Requ
 		server.writeUsageServiceError(response, err)
 		return
 	}
-	writeJSON(response, http.StatusOK, analyticsResponse(view, records))
+	result := analyticsResponse(view, records)
+	result.Recent = []UsageSnapshotResponse{}
+	for _, candidate := range view.Candidates {
+		snapshots, err := server.usage.Recent(request.Context(), usage.ProfileTarget{ID: candidate.ProfileID, Alias: candidate.Alias})
+		if err != nil {
+			server.writeUsageServiceError(response, err)
+			return
+		}
+		for _, snapshot := range snapshots {
+			result.Recent = append(result.Recent, usageSnapshotResponse(snapshot))
+		}
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (server *Server) writeUsageServiceError(response http.ResponseWriter, err error) {

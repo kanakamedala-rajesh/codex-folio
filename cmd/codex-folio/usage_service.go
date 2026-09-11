@@ -71,3 +71,7 @@ func (service *usageCommandService) View(ctx context.Context, scope string) (usa
 type usageClock struct{}
 
 func (usageClock) Now() time.Time { return time.Now() }
+
+func (service *usageCommandService) Recent(ctx context.Context, target usagefeature.ProfileTarget) ([]usagefeature.Snapshot, error) {
+	return service.store.RecentUsageSnapshots(ctx, target)
+}

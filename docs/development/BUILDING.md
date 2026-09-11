@@ -17,7 +17,8 @@ codex-folio service start [--state-root PATH] [--json]
 The owner lock, descriptor, SQLite database, vault, recovery artifacts, and
 diagnostic aggregates are runtime foundation artifacts. Profile, launch,
 collection, analytics, and Safe Continuation CLI workflows now build on this
-foundation. Dashboard and later operational work remain pending. The service
+foundation. The authorized Overview now displays live capacity and scope;
+later dashboard journeys and operational work remain pending. The service
 is the only composed process path that opens the durable SQLite store or runs
 its migrations.
 
@@ -80,7 +81,9 @@ architecture and stable error-code checks with focused fixture tests; Go
 formatting, vet, unit tests, a native development build, and compile-only Linux
 AMD64, Windows AMD64, and macOS ARM64 target builds; frontend formatting,
 linting, type-checking, tests, and build; a self-contained frontend smoke check;
-and the repository governance and local documentation-link check. It uses the
+the authenticated real-service Overview browser journey with fake Codex and
+automated accessibility checks; and the repository governance and local
+documentation-link check. It uses the
 same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
 directories.
@@ -177,6 +180,24 @@ npm --prefix web run typecheck
 npm --prefix web run test
 npm --prefix web run build
 ```
+
+The browser gate installs Playwright Chromium when needed (including Linux CI
+system dependencies). To use an already installed Chromium, set
+`CODEX_FOLIO_CHROMIUM` to its executable path. This is test tooling only; the
+embedded dashboard never downloads browser assets. A focused run after building
+frontend assets is:
+
+```sh
+CODEX_FOLIO_BROWSER_TEST=1 go test ./cmd/codex-folio -run '^TestOverviewBrowser$' -count=1 -v -timeout=5m
+```
+
+On Windows, set the environment variable using the native shell. Captures and
+results go to the OS temporary directory's `codex-folio-overview-browser`, or
+`CODEX_FOLIO_BROWSER_OUTPUT` when set. The fixture starts the real authenticated
+loopback service over isolated SQLite/vault state and substitutes only Codex
+collection. It requires no installed Codex or identity credentials. See the
+[Overview evidence](../design/overview-59/README.md) for qualifications.
+`service start` on a running owner issues a fresh one-time dashboard link.
 
 Governance:
 

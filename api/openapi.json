@@ -419,9 +419,10 @@
         "profiles": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}},
         "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
         "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
-        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}},
+        "recent": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}}
       },
-      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity"],
+      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity", "recent"],
       "type": "object"
     }
   },

@@ -88,6 +88,29 @@ try {
       run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
     },
   );
+  gate("authenticated Overview browser journeys and accessibility", () => {
+    if (!process.env.CODEX_FOLIO_CHROMIUM) {
+      run("node", [
+        "web/node_modules/playwright/cli.js",
+        "install",
+        "chromium",
+        ...(process.env.CI ? ["--with-deps"] : []),
+      ]);
+    }
+    run(
+      "go",
+      [
+        "test",
+        "./cmd/codex-folio",
+        "-run",
+        "^TestOverviewBrowser$",
+        "-count=1",
+        "-v",
+        "-timeout=5m",
+      ],
+      { CODEX_FOLIO_BROWSER_TEST: "1" },
+    );
+  });
   gate("tracked source and lockfile immutability", () => {
     const finalStatus = gitStatus();
     const finalTrackedFiles = trackedFileSnapshot();
@@ -195,10 +218,10 @@ function checkBuiltExecutableIdentity(initialStatus) {
   );
 }
 
-function run(command, args) {
+function run(command, args, environment = {}) {
   const result = spawnSync(command, args, {
     cwd: rootDirectory,
-    env: taskEnvironment(),
+    env: { ...taskEnvironment(), ...environment },
     stdio: "inherit",
   });
   if (result.error) {
@@ -213,7 +236,13 @@ function run(command, args) {
 
 function runNpm(args) {
   if (process.platform === "win32") {
-    run(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm.cmd", ...args]);
+    run(process.env.ComSpec ?? "cmd.exe", [
+      "/d",
+      "/s",
+      "/c",
+      "npm.cmd",
+      ...args,
+    ]);
     return;
   }
 
