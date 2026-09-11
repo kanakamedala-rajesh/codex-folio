@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,63 @@ func TestOverviewBrowser(t *testing.T) {
 	if os.Getenv("CODEX_FOLIO_BROWSER_TEST") != "1" {
 		t.Skip("canonical browser gate runs this journey after building embedded assets")
 	}
+	suite := os.Getenv("CODEX_FOLIO_BROWSER_SUITE")
+	if suite == "" {
+		suite = "deep"
+	}
+	if suite != "deep" && suite != "smoke" {
+		t.Fatalf("unknown browser suite %q", suite)
+	}
+	runOverviewBrowser(t, suite)
+}
+
+func TestOverviewStartupBenchmark(t *testing.T) {
+	if os.Getenv("CODEX_FOLIO_BROWSER_TEST") != "1" {
+		t.Skip("canonical web gate runs the isolated startup benchmark")
+	}
+	var samples []float64
+	var report map[string]any
+	for i := 0; i < 6; i++ {
+		if err := json.Unmarshal(runOverviewBrowser(t, "benchmark"), &report); err != nil {
+			t.Fatal(err)
+		}
+		elapsed, ok := report["cachedEvidenceMs"].(float64)
+		if !ok || elapsed <= 0 {
+			t.Fatal("benchmark did not report a positive startup measurement")
+		}
+		if i > 0 {
+			samples = append(samples, elapsed)
+		}
+	}
+	sorted := slices.Clone(samples)
+	slices.Sort(sorted)
+	median := sorted[len(sorted)/2]
+	delete(report, "cachedEvidenceMs")
+	report["samplesMs"], report["medianMs"], report["maxMs"] = samples, median, sorted[len(sorted)-1]
+	report["warmups"], report["budgetMs"] = 1, 1000
+	report["method"] = "five serial isolated starts after one warm-up; median budget; fresh browser and SQLite state per start"
+	output := os.Getenv("CODEX_FOLIO_BROWSER_OUTPUT")
+	if output == "" {
+		output = filepath.Join(os.TempDir(), "codex-folio-overview-browser")
+	}
+	if err := os.MkdirAll(output, 0700); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "startup-benchmark.json"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("cached startup samples=%v ms median=%.1f ms max=%.1f ms budget=1000ms", samples, median, sorted[len(sorted)-1])
+	if median >= 1000 {
+		t.Fatalf("cached evidence median %.1fms exceeds 1s engineering budget", median)
+	}
+}
+
+func runOverviewBrowser(t *testing.T, suite string) []byte {
+	t.Helper()
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
@@ -155,11 +213,22 @@ func TestOverviewBrowser(t *testing.T) {
 	}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
-	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control)
+	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite)
+	output := t.TempDir()
+	if suite == "benchmark" {
+		runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
+	}
 	runner.Stdout = os.Stdout
 	runner.Stderr = os.Stderr
 	if err := runner.Run(); err != nil {
 		t.Fatal("Overview browser journey failed:", err)
+	}
+	if suite == "benchmark" {
+		result, err := os.ReadFile(filepath.Join(output, "benchmark-results.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
 	}
 	for _, alias := range []string{"Work", "Personal"} {
 		if _, err := service.Refresh(context.Background(), alias, usage.TriggerExplicitRefresh); err != nil {
@@ -193,6 +262,7 @@ func TestOverviewBrowser(t *testing.T) {
 	if err != nil || record.ProfileAlias != "Work" || record.State != launch.StateRunning {
 		t.Fatal("selection changed running launch")
 	}
+	return nil
 }
 
 type dashboardCollector struct {

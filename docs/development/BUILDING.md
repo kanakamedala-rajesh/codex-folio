@@ -81,8 +81,8 @@ architecture and stable error-code checks with focused fixture tests; Go
 formatting, vet, unit tests, a native development build, and compile-only Linux
 AMD64, Windows AMD64, and macOS ARM64 target builds; frontend formatting,
 linting, type-checking, tests, and build; a self-contained frontend smoke check;
-the authenticated real-service Overview browser journey with fake Codex and
-automated accessibility checks; and the repository governance and local
+native browser-to-service smoke, deep Overview journeys with fake Codex,
+automated accessibility checks, and a repeated startup benchmark; and the repository governance and local
 documentation-link check. It uses the
 same checked-in package lock and fails if tracked source changes during
 verification. Build output is written under ignored `build/` and `web/dist/`
@@ -96,11 +96,27 @@ release eligibility. The verifier executes the native development binary and
 checks its JSON version, revision, build classification, and working-tree
 identity before reporting the build gate as passed.
 
-Continuous integration runs this same command for pull requests and changes to
-`main` on Linux AMD64, Windows AMD64, and macOS ARM64 hosted runners. Every job
-also compile-checks the other Tier 1 targets, records native versus
-cross-compiled build mode, and retains the compile-only qualification. Its Go
-and npm caches use the pinned tool versions and checked-in module or lock state.
+The default command runs the complete verification contract. CI partitions that
+same contract explicitly:
+
+| Suite                                    | CI placement                            | Coverage                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `node scripts/verify.mjs --suite native` | Linux AMD64, Windows AMD64, macOS ARM64 | Native Go/CLI/service/vault/process tests, builds and archives, embedded asset build/smoke, and a small real browser-to-service journey. |
+| `node scripts/verify.mjs --suite web`    | One `ubuntu-24.04` job                  | Frontend format/lint/type checks, reproducible build/offline checks, deep UI states/layout/accessibility, and the startup benchmark.     |
+
+Both suites retain pinned tools, locked dependencies, generated-contract checks,
+architecture/error-code guards, governance and tracked-source immutability.
+Native jobs also compile-check the Tier 1 targets; those cross-builds retain
+compile-only qualification. CI requires both suites and DCO. A passing native
+suite alone does not establish deep UI or performance acceptance. Unknown suite
+arguments fail before any installation or check can be skipped.
+
+The native browser smoke proves bootstrap/authenticated loading, CSRF rejection,
+single-profile selection persisted for CLI use, running-launch preservation,
+service re-entry and unavailable-service guidance. It has normal functional
+timeouts, not a performance-budget assertion. Deep UI scenarios run once in the
+shared job rather than repeating on each operating system.
+
 No application identity, credential, provider endpoint, signing secret,
 telemetry endpoint, or production service is available to any job.
 
@@ -189,6 +205,8 @@ frontend assets is:
 
 ```sh
 CODEX_FOLIO_BROWSER_TEST=1 go test ./cmd/codex-folio -run '^TestOverviewBrowser$' -count=1 -v -timeout=5m
+CODEX_FOLIO_BROWSER_TEST=1 CODEX_FOLIO_BROWSER_SUITE=smoke go test ./cmd/codex-folio -run '^TestOverviewBrowser$' -count=1 -v -timeout=5m
+CODEX_FOLIO_BROWSER_TEST=1 go test ./cmd/codex-folio -run '^TestOverviewStartupBenchmark$' -count=1 -v -timeout=5m
 ```
 
 On Windows, set the environment variable using the native shell. Captures and
@@ -198,6 +216,25 @@ loopback service over isolated SQLite/vault state and substitutes only Codex
 collection. It requires no installed Codex or identity credentials. See the
 [Overview evidence](../design/overview-59/README.md) for qualifications.
 `service start` on a running owner issues a fresh one-time dashboard link.
+
+The startup budget is evaluated separately: one warm-up, then five serial
+measurements, each with a fresh browser and isolated SQLite/vault/service
+fixture (two profiles, one cached capture per profile). Timing runs from browser
+navigation through visible authenticated Current capacity; browser/process and
+fixture setup are outside the measurement. Viewport is 1440 × 1000, locale
+`en-US`, timezone UTC and dark appearance. CI pins Ubuntu 24.04 and uses the
+Chromium revision locked by Playwright 1.57.0; it does not use an executable
+override. The median must be **less than 1,000 ms**. Every measured sample and
+the maximum are reported; failures are not retried or discarded. The single
+warm-up is explicitly excluded, not conditionally chosen after seeing results.
+
+`startup-benchmark.json` records the sample set, median, maximum, budget,
+browser, OS/kernel, architecture, CPU/memory, runner image and CI checkout
+revision. CI publishes it in the job summary even when the budget fails.
+Hosted hardware remains shared and is recorded, not claimed to be dedicated or
+identical between runs. This is a repeatable engineering benchmark on the
+reference environment, not proof of a one-second guarantee on every machine.
+Native performance qualification and manual accessibility limits remain separate.
 
 Governance:
 

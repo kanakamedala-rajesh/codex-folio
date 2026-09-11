@@ -88,3 +88,25 @@ Pre-commit canonical verification passed all repository gates for staged tree
 `aa46c2f1588dd4062e38f396d4b1e2f46df63d95`, and the standards review passed.
 The full ticket review reported only R1. Confirmation review and exact-commit
 canonical verification remain pending. No hosted delivery is claimed.
+
+## Accepted CI split after the first hosted run
+
+The initial hosted Windows journey measured 1,047.3 ms against a single-sample
+1,000 ms assertion. Linux, macOS and DCO passed; delivery remained open. The
+user then explicitly approved splitting native integration, shared deep UI,
+and repeated startup benchmarking on 2026-09-11.
+
+The [verification contract](../../development/BUILDING.md) now keeps native
+CLI/service/platform tests and a small real browser integration smoke on all
+three platforms. Deep UI/accessibility checks run in one Linux job. Startup is
+a separate serial benchmark: one warm-up, five fresh browser/service/state
+measurements, median below one second, all samples and maximum reported.
+Ubuntu and the browser revision are pinned in CI; hardware and checkout details
+are recorded. Shared-host variance and native/manual qualifications remain
+explicit. This replaces the noisy per-functional-journey timing gate without
+removing native browser integration or increasing the one-second budget.
+
+The earlier captures and 114.38 ms result above retain their historical
+qualification; new benchmark evidence is generated as `startup-benchmark.json`
+and published in the hosted job summary. This correction does not change the
+production UI, Tailwind styling or accepted manual-accessibility exception.
