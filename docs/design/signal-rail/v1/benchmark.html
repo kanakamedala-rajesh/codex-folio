@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Rail · Disposable chart benchmark</title>
+<link rel="stylesheet" href="reference.css">
+<body>
+<a class="skip" href="#main">Skip to chart benchmark</a>
+<main id="main" class="benchmark">
+  <a href="index.html">Signal Rail reference set</a>
+  <h1>Capacity history</h1>
+  <p>Disposable visualization benchmark · Synthetic evidence only · No service connection</p>
+  <div class="controls">
+    <label>Renderer <select id="renderer"><option value="svg">Native SVG</option><option value="canvas">Native Canvas</option></select></label>
+    <label>Identity Profile <select id="profile"><option value="personal">Personal Pro</option><option value="work">Work Studio</option></select></label>
+    <label>Display <select id="resolution"><option value="daily">Daily final sample</option><option value="raw">Every half-hour sample</option></select></label>
+    <label>History <select id="period"><option value="all">13 months</option><option value="month">Last 30 days</option><option value="week">Last 7 days</option></select></label>
+    <label>Appearance <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <label>Locale example <select id="locale"><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German formatting</option><option value="hi-IN">Hindi formatting</option></select></label>
+  </div>
+  <p id="scope"></p>
+  <figure aria-labelledby="chart-title" aria-describedby="chart-help">
+    <figcaption id="chart-title">Remaining capacity (%) · Provider reported</figcaption>
+    <p id="chart-help">Solid line: 5-hour window. Dashed line: weekly window. Gaps mean temporarily unavailable, never zero. Every sample is available in the table. No percentages are summed.</p>
+    <div id="plot" class="plot"></div>
+    <div class="axis"><span>Aug 1, 2025</span><span>Sep 1, 2026 (exclusive)</span></div>
+    <label for="sample">Inspect a sample (arrow keys, Home or End)</label>
+    <input id="sample" type="range" min="0" value="0" step="1">
+    <p id="selection" role="status" aria-live="polite" aria-atomic="true"></p>
+  </figure>
+  <div class="controls"><button id="previous" type="button">Previous samples</button><button id="next" type="button">Next samples</button><span id="page-status"></span></div>
+  <table id="data"><caption></caption><thead><tr><th scope="col">Captured at (UTC)</th><th scope="col">5-hour remaining</th><th scope="col">Weekly remaining</th></tr></thead><tbody></tbody></table>
+  <p>Window keys: <code>five_hour</code> and <code>weekly</code>. Source: synthetic provider fixture, version 1. Real provider reset boundaries must travel with each metric; calendar labels do not redefine quota windows.</p>
+  <p id="measurement"></p>
+</main>
+<script type="module" src="benchmark.mjs"></script>
+</body>
+</html>
