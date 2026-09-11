@@ -15,7 +15,7 @@ CodexFolio is independent and is not affiliated with or endorsed by OpenAI.
 | Isolated identity profiles and installed-Codex launch | Implemented; real-account platform qualification has documented exceptions |
 | Read-only usage evidence and local analytics | Implemented; provider-reported, derived, estimated, stale, and unavailable values must remain distinguishable |
 | Repository-first Safe Continuation | Implemented checkpoint workflow; not a guarantee of exact conversation or hidden-state transfer |
-| Local dashboard and background operations | In development; design concepts are not working screenshots |
+| Local dashboard and background operations | Authorized Overview and Profiles onboarding are implemented; other operational destinations remain in development |
 | Exact Continuation and Shared Work Home | Experimental scope; not prerequisites for stable-core delivery |
 | Signed, supported end-user release | Not available yet |
 
@@ -39,6 +39,11 @@ On Windows, use `.\build\bin\codex-folio.exe` for the executable commands.
 The [getting-started guide](docs/user/GETTING-STARTED.md) explains prerequisites,
 profile setup, expected boundaries, and how to avoid changing existing Codex
 state accidentally. A source build is for evaluation, not production assurance.
+
+New testers could follow the short [Usage guide](docs/user/USAGE-GUIDE.md) as a
+first-run tutorial. The [Comprehensive usage guide](docs/user/COMPREHENSIVE-USAGE-GUIDE.md)
+covers the complete implemented command set, dashboard behavior, lifecycle
+rules, technical boundaries, and troubleshooting.
 
 ## Safety and privacy
 

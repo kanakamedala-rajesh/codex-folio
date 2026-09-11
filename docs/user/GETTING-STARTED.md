@@ -54,8 +54,13 @@ independently live-account-qualified by the public-readiness review:
 The installed Codex application owns the sign-in flow. The alias `personal` is
 only an example. Do not point an Identity Home at an unrelated existing directory
 without understanding the ownership and import behavior. Use the documented
-platform vault mode when required; a missing Linux Secret Service is not evidence
-that the application should silently store credentials without protection.
+platform vault mode when required. On WSL or headless Linux, start the owner with
+`./build/bin/codex-folio service start --vault-mode passphrase` and keep it
+running while using other commands. Passphrase input currently has no prompt
+and remains visible while typed, so do not use a shared or recorded terminal or
+reuse another password; see the [Usage guide](USAGE-GUIDE.md). A missing Linux
+Secret Service is not evidence that the application should silently store
+credentials without protection.
 
 Unavailable provider data is not zero usage. Check provenance, availability, and
 observation time before interpreting a reading. Do not calculate subscription
