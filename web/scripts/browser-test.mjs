@@ -54,7 +54,7 @@ const check = (name) => {
 };
 const scope = () =>
   page.getByRole("combobox", { name: "Dashboard Scope", exact: true }).filter({ visible: true });
-async function choose(value) {
+async function choose(value, confirm = true) {
   const changed =
     value === "*"
       ? null
@@ -71,7 +71,7 @@ async function choose(value) {
       ),
     value,
   );
-  if (changed)
+  if (changed && confirm)
     await page
       .getByText("Selected Profile updated for future interactive launches.", { exact: true })
       .waitFor();
@@ -217,17 +217,63 @@ try {
       await page.keyboard.press("End");
       assert.match(await page.locator("tr[data-current]").innerText(), /75%/);
       check("provider capacity and raw trace/table values agree; keyboard sample inspection");
+      const projectId = (
+        await (await page.request.get(new URL("/api/v1/projects", link).href)).json()
+      ).projects[0].project_id;
+      const launchesBefore = (
+        await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
+      ).activity.length;
       await page.getByRole("button", { name: "Launch Codex", exact: true }).click();
-      assert.match(await page.locator("main").innerText(), /codex-folio launch Personal/);
-      assert.match(await page.locator("main").innerText(), /nothing has been launched/);
-      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await assertFocusedHeading("Launch prepared in your terminal");
+      await page
+        .getByRole("combobox", { name: "Project", exact: true })
+        .selectOption({ label: "Atlas · atlas" });
+      assert.ok(
+        (await page.locator("main").innerText()).includes(
+          `codex-folio launch Personal --project ${projectId} --`,
+        ),
+      );
+      assert.match(await page.locator("main").innerText(), /Prepared · Not started/);
+      // Axe is injected by the test harness, never shipped as a runtime app asset.
+      await page.evaluate(axe.source);
+      await scanAccessibility("launch");
+      await capture("launch-wide", 1440, 1000);
+      await capture("launch-narrow", 390, 844);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      const launchesAfterCancel = (
+        await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
+      ).activity.length;
+      assert.equal(launchesAfterCancel, launchesBefore);
+
+      await page.getByRole("button", { name: "Launch Codex", exact: true }).click();
+      writeFileSync(control, "launch-run-23");
+      await page.getByText("Started · Running", { exact: true }).waitFor();
+      await choose("Work", false);
+      assert.match(
+        await page.locator("main").innerText(),
+        /Your running Launch Profile is unchanged/,
+      );
+      assert.match(await page.locator("main").innerText(), /Launch Profile[\s\S]*Personal/);
+      writeFileSync(control, "launch-exit-23");
+      await page.getByText("Exited · Status 23", { exact: true }).waitFor();
+      assert.match(
+        await page.locator("main").innerText(),
+        /not treated as quota exhaustion by itself/,
+      );
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await choose("Personal");
+      await page.getByRole("button", { name: "Launch Codex", exact: true }).click();
+      writeFileSync(control, "launch-fail");
+      await page.getByText("Failed · Codex did not start", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Prepare Handoff", exact: true }).click();
       assert.match(await page.locator("main").innerText(), /Nothing has been prepared or started/);
       await page.getByRole("button", { name: "Close", exact: true }).click();
       await page.getByRole("button", { name: "Open details", exact: true }).click();
       assert.match(await page.locator("main").innerText(), /codex.primary.used_percent/);
       await page.getByRole("button", { name: "Open details", exact: true }).click();
-      check("foreground terminal guidance and progressive evidence disclosure");
+      check("foreground terminal handoff, cancellation, lifecycle, nonzero exit and failed start");
       await capture("running-wide", 1440, 1000);
       await choose("Work");
       await capture("overview-wide", 1440, 1000);
@@ -294,8 +340,6 @@ try {
         "wide/medium/narrow navigation, system/light/forced colors, reduced motion and 720px reflow",
       );
       await page.setViewportSize({ width: 1440, height: 1000 });
-      // Axe is injected by the test harness, never shipped as a runtime app asset.
-      await page.evaluate(axe.source);
       await scanAccessibility("overview");
       await page
         .getByRole("navigation", { name: "Primary", exact: true })

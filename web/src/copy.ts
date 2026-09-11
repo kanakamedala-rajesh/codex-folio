@@ -74,8 +74,6 @@ export const copy = {
   stale: "Stale",
   ageUnknown: "Capture time unavailable",
   guidance: "Continue in your terminal",
-  launchGuidance:
-    "Run this from your project directory. Codex runs in the foreground; nothing has been launched by the dashboard.",
   handoffGuidance:
     "Use codex-folio checkpoint and codex-folio handoff in your project terminal to review and approve Safe Continuation. Nothing has been prepared or started here.",
   combinedGuidance: "Choose a single Identity Profile first.",
@@ -217,3 +215,32 @@ export const profileErrorCopy: Record<string, string> = {
   CF_PROFILE_HOME_INVALID: profileCopy.homeInvalid,
   CF_PROFILE_VALIDATION_FAILED: profileCopy.validationFailed,
 };
+
+export const launchCopy = {
+  title: "Launch prepared in your terminal",
+  detail: "Foreground Codex · Installed Codex owns the session",
+  prepared: "Prepared · Not started",
+  waiting: "Prepared · Waiting for process start",
+  running: "Started · Running",
+  exited: "Exited",
+  exitStatus: "Status",
+  failed: "Failed · Codex did not start",
+  unchanged: "Your running Launch Profile is unchanged",
+  unchangedDetail: "Changing Selected Profile cannot switch, stop or replace this process.",
+  profile: "Launch Profile",
+  project: "Project",
+  noProjects: "No Project Identity is registered",
+  workingDirectory: "Working directory",
+  notSelected: "Select a Project Identity",
+  arguments: "Arguments",
+  argumentsDetail: "Append installed Codex arguments after the final --",
+  terminal: "Continue in your terminal",
+  terminalDetail:
+    "Run the command below. The service validates the Launch Plan; Codex then uses this terminal's input, output and signals.",
+  registerProject: "Register the current repository in your terminal first:",
+  lifecycleDetail:
+    "The dashboard reports Started only after the CLI reports the actual process start. A nonzero exit remains an exit status; it is not treated as quota exhaustion by itself.",
+  boundary:
+    "The browser cannot run arbitrary commands, expose Identity Home paths, detach Codex or replace its terminal.",
+  back: "Back",
+} as const;

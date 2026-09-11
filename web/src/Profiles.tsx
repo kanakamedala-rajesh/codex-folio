@@ -16,6 +16,8 @@ type Props = {
   select: (alias: string) => Promise<void>;
   edit: (request: ProfileEditRequest) => Promise<void>;
   authenticate: (request: ProfileAuthenticationRequest) => Promise<ProfileAuthenticationResponse>;
+  launch: (profile: ProfileSummary) => void;
+  launchable: (profile: ProfileSummary) => boolean;
 };
 
 const inputClass =
@@ -75,7 +77,17 @@ function profileFailure(error: unknown) {
   return error instanceof UsageRefreshError ? (profileErrorCopy[error.code] ?? c.failed) : c.failed;
 }
 
-export function Profiles({ profiles, busy, heading, message, select, edit, authenticate }: Props) {
+export function Profiles({
+  profiles,
+  busy,
+  heading,
+  message,
+  select,
+  edit,
+  authenticate,
+  launch,
+  launchable,
+}: Props) {
   const [view, setView] = useState<"inventory" | "setup" | "edit" | "reauthenticate">("inventory");
   const [selectedAlias, setSelectedAlias] = useState("");
   const [form, setForm] = useState<Form>(emptyForm);
@@ -491,10 +503,8 @@ export function Profiles({ profiles, busy, heading, message, select, edit, authe
             )}
             <button
               className={buttonClass}
-              disabled={busy || current.status !== "ready"}
-              onClick={() =>
-                setLocalMessage(`${c.launchGuidance} codex-folio launch ${current.alias}`)
-              }
+              disabled={busy || !launchable(current)}
+              onClick={() => launch(current)}
             >
               {c.launch}
             </button>

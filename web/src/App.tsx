@@ -3,14 +3,17 @@ import {
   createCodexFolioApiClient,
   UsageRefreshError,
   type AnalyticsResponse,
+  type ActivityRecord,
   type ProfileAuthenticationRequest,
   type ProfileEditRequest,
   type ProfileSummary,
+  type ProjectIdentity,
   type SelectionResponse,
   type UsageSnapshotResponse,
 } from "./generated/openapi";
 import { copy as c, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
+import { Launch, type LaunchTarget } from "./Launch";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -423,6 +426,13 @@ export function App() {
   const [warning, setWarning] = useState("");
   const [guidance, setGuidance] = useState("");
   const [details, setDetails] = useState(false);
+  const [launch, setLaunch] = useState<{
+    target: LaunchTarget;
+    projects: ProjectIdentity[];
+    projectId: string;
+    baseline: string[];
+    record?: ActivityRecord;
+  } | null>(null);
   const [now, setNow] = useState(Date.now);
   const [theme, setTheme] = useState(() => {
     try {
@@ -521,6 +531,45 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+  useEffect(() => {
+    if (
+      !launch ||
+      launch.record?.lifecycle === "exited" ||
+      launch.record?.lifecycle === "abandoned"
+    )
+      return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const next = await api.getAnalytics("combined_identity");
+        if (cancelled) return;
+        setData(next);
+        setLaunch((current) => {
+          if (!current) return null;
+          const record = current.record
+            ? next.activity.find((item) => item.id === current.record?.id)
+            : next.activity.find(
+                (item) =>
+                  item.record_type === "managed_launch" &&
+                  item.profile_id === current.target.profile_id &&
+                  item.project_id === current.projectId &&
+                  !current.baseline.includes(item.id),
+              );
+          return record ? { ...current, record } : current;
+        });
+      } catch (error) {
+        if (!cancelled) failure(error);
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void poll(), 500);
+      }
+    };
+    timer = setTimeout(() => void poll(), 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [launch]);
   async function choose(value: string) {
     if (operation.current || !data) return;
     setGuidance("");
@@ -618,6 +667,24 @@ export function App() {
       setBusy(false);
     }
   }
+  async function openLaunch(target: LaunchTarget) {
+    try {
+      const [projectResult, next] = await Promise.all([
+        api.getProjects(),
+        api.getAnalytics("combined_identity"),
+      ]);
+      setData(next);
+      setLaunch({
+        target,
+        projects: projectResult.projects,
+        projectId: projectResult.projects[0]?.project_id ?? "",
+        baseline: next.activity.map((item) => item.id),
+      });
+      requestAnimationFrame(() => heading.current?.focus());
+    } catch (error) {
+      failure(error);
+    }
+  }
   const selected = data?.candidates.find((p) => p.profile_id === selection?.profile_id);
   const scoped =
     data?.candidates.filter((p) => combined || p.profile_id === selection?.profile_id) ?? [];
@@ -667,6 +734,7 @@ export function App() {
     </label>
   );
   function navigate(destination: string) {
+    setLaunch(null);
     setRoute(destination);
     setGuidance("");
     if (more.current) more.current.open = false;
@@ -749,6 +817,19 @@ export function App() {
                 <code className="wrap-anywhere">{c.relaunchCommand}</code>
                 <p className="mb-4 max-w-[75ch]">{c.authorizationDetail}</p>
               </>
+            ) : launch ? (
+              <Launch
+                {...launch}
+                selectedProfileId={selection?.profile_id}
+                heading={heading}
+                chooseProject={(projectId) =>
+                  setLaunch((current) => (current ? { ...current, projectId } : null))
+                }
+                close={() => {
+                  setLaunch(null);
+                  requestAnimationFrame(() => heading.current?.focus());
+                }}
+              />
             ) : route === "Profiles" ? (
               <Profiles
                 profiles={profiles}
@@ -758,6 +839,13 @@ export function App() {
                 select={choose}
                 edit={editProfile}
                 authenticate={authenticateProfile}
+                launch={(profile) => void openLaunch(profile)}
+                launchable={(profile) =>
+                  Boolean(
+                    data?.candidates.find((item) => item.profile_id === profile.profile_id)
+                      ?.eligible,
+                  )
+                }
               />
             ) : (
               <>
@@ -868,7 +956,8 @@ export function App() {
                               </button>
                               <button
                                 className="min-h-11 max-w-full rounded border px-[0.8rem] py-[0.55rem] cursor-pointer hover:border-accent disabled:cursor-not-allowed disabled:border-dashed disabled:text-muted border-accent bg-accent font-semibold text-canvas forced-colors:border-2 forced-colors:border-[ButtonText] forced-colors:bg-[ButtonFace] forced-colors:text-[ButtonText]"
-                                onClick={() => setGuidance("launch")}
+                                disabled={busy || combined || !selected?.eligible || !selection}
+                                onClick={() => selection && void openLaunch(selection)}
                               >
                                 {c.launch}
                               </button>
@@ -890,17 +979,8 @@ export function App() {
                               <section className="my-4 border-y border-rule py-4" role="status">
                                 <h3 className="mb-4 text-[1.05rem] font-bold">{c.guidance}</h3>
                                 <p className="mb-4 max-w-[75ch]">
-                                  {combined
-                                    ? c.combinedGuidance
-                                    : guidance === "launch"
-                                      ? c.launchGuidance
-                                      : c.handoffGuidance}
+                                  {combined ? c.combinedGuidance : c.handoffGuidance}
                                 </p>
-                                {!combined && guidance === "launch" && (
-                                  <code className="wrap-anywhere">
-                                    codex-folio launch {selection?.alias}
-                                  </code>
-                                )}
                                 <button
                                   onClick={() => setGuidance("")}
                                   className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink cursor-pointer hover:border-accent disabled:cursor-not-allowed disabled:border-dashed disabled:text-muted"

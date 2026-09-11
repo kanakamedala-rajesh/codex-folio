@@ -4,18 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
+	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
 	"venkatasudha.com/codex-folio/internal/usage"
@@ -122,6 +126,24 @@ func TestOverviewStartupBenchmark(t *testing.T) {
 	}
 }
 
+func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "launch.log")
+	t.Setenv("CODEX_FOLIO_TEST_CONTROL", control)
+	t.Setenv("CODEX_FOLIO_TEST_LAUNCH_LOG", logPath)
+	executable := filepath.Join(directory, "codex")
+	content := "#!/bin/sh\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile [ \"$(cat \"$CODEX_FOLIO_TEST_CONTROL\")\" != \"launch-exit-23\" ]; do sleep 0.01; done\nexit 23\n"
+	if runtime.GOOS == "windows" {
+		executable += ".cmd"
+		content = "@echo off\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif not \"%launch_mode%\"==\"launch-exit-23\" (\r\n  >nul ping 127.0.0.1 -n 2\r\n  goto wait\r\n)\r\nexit /b 23\r\n"
+	}
+	if err := os.WriteFile(executable, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return executable, logPath
+}
+
 func runOverviewBrowser(t *testing.T, suite string) []byte {
 	t.Helper()
 	paths := launchTestPaths(t)
@@ -131,6 +153,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err := os.WriteFile(control, []byte("stale-seed"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	fakeCodex, launchLog := writeDashboardFakeCodex(t, control)
 	clock := dashboardClock{control: control}
 	state, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault, Clock: clock})
 	if err != nil {
@@ -214,7 +237,19 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err := os.WriteFile(control, []byte("offline"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root})
+	repository := filepath.Join(filepath.Dir(paths.Root), "atlas")
+	if err := os.MkdirAll(filepath.Join(repository, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: state, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := projects.Resolve(context.Background(), repository, "Atlas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: repository, ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,11 +274,15 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	launches, err := newLaunchCommandService(state, nil, dashboardProfileAuthenticator{control: control}, projects, service)
+	if err != nil {
+		t.Fatal(err)
+	}
 	referencedHome := filepath.Join(filepath.Dir(paths.Root), "dashboard-referenced-home")
 	if err := os.MkdirAll(referencedHome, 0700); err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileAuthentication: profileAuthentication, CommandToken: "browser-fixture-command"})
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileAuthentication: profileAuthentication, Launches: launches, Projects: projects, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,6 +292,68 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
+	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "browser-fixture-command"}); err != nil {
+		t.Fatal(err)
+	}
+	stopLaunches := make(chan struct{})
+	defer close(stopLaunches)
+	launchErrors := make(chan error, 1)
+	warmLaunchOverhead := make(chan time.Duration, 1)
+	go func() {
+		last := ""
+		for {
+			select {
+			case <-stopLaunches:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+			mode, readErr := os.ReadFile(control)
+			if readErr != nil || string(mode) == last {
+				continue
+			}
+			last = string(mode)
+			if last != "launch-run-23" && last != "launch-fail" {
+				continue
+			}
+			executable := fakeCodex
+			if last == "launch-fail" {
+				executable += ".missing"
+			}
+			startedAt := time.Now()
+			result := make(chan int, 1)
+			go func() {
+				result <- runLaunchWithInputAndDependenciesAndOwnerOptions(
+					[]string{"Personal", "--project", project.ID, "--", "--model", "gpt-5"}, strings.NewReader(""), io.Discard, io.Discard,
+					func(*string) (platform.Paths, error) { return paths, nil },
+					launchTestResolver{candidate: launch.Candidate{Path: executable, Version: "0.153.4"}}, nil, newForegroundProcess, nil, platform.OwnerOptions{},
+				)
+			}()
+			if last == "launch-run-23" {
+				for {
+					records, listErr := state.ListActivity(context.Background(), activity.Filters{ProfileAlias: "Personal", ProjectID: project.ID})
+					if listErr != nil {
+						launchErrors <- listErr
+						return
+					}
+					if slices.ContainsFunc(records, func(record activity.TimelineRecord) bool { return record.Lifecycle == string(launch.StateRunning) }) {
+						warmLaunchOverhead <- time.Since(startedAt)
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			code := <-result
+			if last == "launch-run-23" && code != 23 || last == "launch-fail" && code != exitFailure {
+				launchErrors <- fmt.Errorf("unexpected browser fixture launch result %d", code)
+				return
+			}
+		}
+	}()
 	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
 	if suite == "benchmark" {
@@ -260,8 +361,37 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	}
 	runner.Stdout = os.Stdout
 	runner.Stderr = os.Stderr
-	if err := runner.Run(); err != nil {
-		t.Fatal("Overview browser journey failed:", err)
+	runnerErr := runner.Run()
+	if suite == "deep" {
+		select {
+		case elapsed := <-warmLaunchOverhead:
+			t.Logf("warm managed-launch overhead %s: warm loopback service and CLI entry through persisted successful process-start reporting on native %s/%s; canonical non-host checks remain compile-only", elapsed, runtime.GOOS, runtime.GOARCH)
+			if elapsed >= 300*time.Millisecond {
+				t.Fatalf("warm managed-launch overhead = %s, want < 300ms", elapsed)
+			}
+		default:
+			if runnerErr == nil {
+				t.Fatal("warm managed-launch overhead was not measured")
+			}
+		}
+	}
+	if runnerErr != nil {
+		t.Fatal("Overview browser journey failed:", runnerErr)
+	}
+	select {
+	case launchErr := <-launchErrors:
+		t.Fatal("browser launch fixture failed:", launchErr)
+	default:
+	}
+	if suite == "deep" {
+		content, err := os.ReadFile(launchLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(content), "\r\n", "\n")), "\n")
+		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
+			t.Fatalf("native fake Codex launch = %q, want working directory %q and transported arguments", content, repository)
+		}
 	}
 	if suite == "benchmark" {
 		result, err := os.ReadFile(filepath.Join(output, "benchmark-results.json"))

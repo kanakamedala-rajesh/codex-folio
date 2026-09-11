@@ -226,11 +226,11 @@ expired or already used, run `service start` again to receive a new link.
 Implemented dashboard flows include:
 
 - **Overview:** selected or explicit combined scope, current/last-known capacity,
-  evidence age and provenance, eligible alternatives, refresh, and terminal
-  launch/handoff guidance;
+  evidence age and provenance, eligible alternatives, refresh, and a shared
+  Project Identity launch view with terminal handoff and lifecycle status;
 - **Profiles:** safe inventory, Managed/Referenced onboarding, Pending resume,
   local metadata edits, selection, installed-Codex discovery, and
-  reauthentication.
+  reauthentication, including the same launch view for eligible profiles.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
@@ -243,11 +243,21 @@ local command.
 ./build/bin/codex-folio launch work --
 ./build/bin/codex-folio launch work -- --help
 ./build/bin/codex-folio launch work --codex-bin /absolute/path/to/codex -- --model MODEL
+./build/bin/codex-folio launch work --project PROJECT_ID -- --model MODEL
 ```
 
 Arguments after `--` are passed to installed Codex. CodexFolio validates the
 profile and launch plan, then keeps the child in the foreground with inherited
 standard input/output, native signals, working directory, and exit status.
+`--project` resolves an existing Project Identity through the command-authenticated
+local service and uses its canonical repository location without exposing that
+path to the browser.
+
+The dashboard only prepares the explicit terminal command. Before that command
+runs, closing the launch view creates no activity. The view reports Prepared,
+Running, Exited (including nonzero status), or Failed from service activity; it
+does not infer quota exhaustion from an exit code. Changing Selected Profile
+does not mutate a launch already associated with another profile.
 
 Launching an explicit alias does not mutate Selected Profile. Starting another
 profile does not stop or switch an existing Codex process. Avoid concurrent

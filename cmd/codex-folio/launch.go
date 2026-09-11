@@ -26,6 +26,7 @@ import (
 type launchOptions struct {
 	serviceOptions
 	codexBin  string
+	projectID string
 	codexArgs []string
 }
 
@@ -66,9 +67,12 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticatorAndContinua
 	if err := profile.ValidateAlias(alias); err != nil {
 		return writeLaunchUsageDiagnostic(stderr, apperrors.Code(err), serviceRemediation(apperrors.Code(err)), diagnosticSink)
 	}
-	workingDirectory, err := os.Getwd()
-	if err != nil {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
+	workingDirectory := ""
+	if options.projectID == "" {
+		workingDirectory, err = os.Getwd()
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
+		}
 	}
 	paths, err := resolvePaths(options.stateRoot)
 	if err != nil {
@@ -84,6 +88,16 @@ func runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticatorAndContinua
 	return withLaunchCommandServiceAndUsage(input, stderr, paths, options, openStore, diagnosticSink, newAuthenticator, newUsage, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if options.projectID != "" {
+			located, locateErr := client.Project(context.Background(), httpapi.CommandProjectRequest{Action: "locate", ID: options.projectID})
+			if locateErr != nil {
+				return writeServiceErrorWithDiagnostics(stderr, locateErr, diagnosticSink)
+			}
+			if strings.TrimSpace(located.Path) == "" {
+				return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ProjectIdentityNotFound, activity.ErrProjectNotFound), diagnosticSink)
+			}
+			workingDirectory = located.Path
 		}
 		prepared, prepareErr := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
 			Action: "prepare", Alias: alias, Executable: report.Executable, Version: report.Version,
@@ -258,7 +272,7 @@ func withLaunchCommandServiceAndUsage(input io.Reader, stderr io.Writer, paths p
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, Checkpoints: checkpoints, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Launches: launches, Usage: usageCommands, Checkpoints: checkpoints, Projects: projects, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -310,6 +324,23 @@ func parseLaunchArguments(args []string) (string, launchOptions, error) {
 			if options.codexBin == "" {
 				return "", launchOptions{}, errors.New("--codex-bin requires one value")
 			}
+		case arg == "--project":
+			if index+1 >= separator || strings.HasPrefix(args[index+1], "--") || options.projectID != "" {
+				return "", launchOptions{}, errors.New("--project requires one value")
+			}
+			index++
+			options.projectID = strings.TrimSpace(args[index])
+			if options.projectID == "" {
+				return "", launchOptions{}, errors.New("--project requires one value")
+			}
+		case strings.HasPrefix(arg, "--project="):
+			if options.projectID != "" {
+				return "", launchOptions{}, errors.New("--project may be supplied only once")
+			}
+			options.projectID = strings.TrimSpace(strings.TrimPrefix(arg, "--project="))
+			if options.projectID == "" {
+				return "", launchOptions{}, errors.New("--project requires one value")
+			}
 		case arg == "--state-root":
 			if index+1 >= separator || strings.HasPrefix(args[index+1], "--") {
 				return "", launchOptions{}, errors.New("--state-root requires a value")
@@ -350,7 +381,7 @@ func writeLaunchUsageDiagnostic(stderr io.Writer, code, message string, diagnost
 	recordServiceDiagnostic(diagnosticSink, code, diagnostics.SeverityWarning)
 	fmt.Fprintf(stderr, "codex-folio [%s]: %s\n", code, message)
 	fmt.Fprintln(stderr, "Usage:")
-	fmt.Fprintln(stderr, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
+	fmt.Fprintln(stderr, "  codex-folio launch ALIAS [--project ID] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
 	return exitUsage
 }
 

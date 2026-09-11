@@ -110,6 +110,8 @@ existing Codex home. CodexFolio does not own or delete referenced files.
 ./build/bin/codex-folio usage refresh personal
 ./build/bin/codex-folio usage show
 ./build/bin/codex-folio launch personal --
+./build/bin/codex-folio project resolve . --alias MyProject
+./build/bin/codex-folio launch personal --project PROJECT_ID --
 ```
 
 Selecting a profile affects future interactive launches. It does not switch or
@@ -122,7 +124,13 @@ In the dashboard:
 - **Profiles** lets you add, resume, edit, select, or reauthenticate profiles.
 - **Refresh** requests new supported usage evidence.
 - **Launch Codex** displays an explicit terminal command; it does not start a
-  hidden browser process.
+  hidden browser process. Choose a registered Project Identity, then run that
+  command to keep the selected working directory in the service-validated
+  Launch Plan.
+
+The launch view stays at **Prepared · Not started** until the terminal command
+reports a real process start. It then reports running, exit status, or failed
+start; a nonzero exit is not quota evidence by itself.
 
 Unavailable or stale evidence is not zero usage. Check its state, source, and
 capture time before acting on it.

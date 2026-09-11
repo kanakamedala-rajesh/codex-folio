@@ -25,6 +25,7 @@ type CommandProjectRequest struct {
 type CommandProjectResponse struct {
 	Project  *activity.ProjectIdentity  `json:"project,omitempty"`
 	Projects []activity.ProjectIdentity `json:"projects,omitempty"`
+	Path     string                     `json:"path,omitempty"`
 }
 
 func (client *CommandClient) Project(ctx context.Context, input CommandProjectRequest) (CommandProjectResponse, error) {
@@ -100,6 +101,8 @@ func (server *Server) commandProjects(response http.ResponseWriter, request *htt
 	case "reconcile":
 		project, callErr := server.projects.Reconcile(request.Context(), input.ID, input.Path)
 		result.Project, err = &project, callErr
+	case "locate":
+		result.Path, err = server.projects.CanonicalLocation(request.Context(), input.ID)
 	default:
 		err = apperrors.New(apperrors.ProjectIdentityInvalid, activity.ErrProjectInvalid)
 	}

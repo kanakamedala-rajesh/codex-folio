@@ -91,6 +91,10 @@ func TestProjectAPIsReturnOnlySafeProjections(t *testing.T) {
 	if _, err := command.Project(context.Background(), CommandProjectRequest{Action: "reconcile", ID: created.Project.ID, Path: second}); err != nil {
 		t.Fatal(err)
 	}
+	located, err := command.Project(context.Background(), CommandProjectRequest{Action: "locate", ID: created.Project.ID})
+	if err != nil || located.Path != second {
+		t.Fatalf("located project = %#v, %v", located, err)
+	}
 	listed, err := command.Project(context.Background(), CommandProjectRequest{Action: "list"})
 	if err != nil {
 		t.Fatal(err)
