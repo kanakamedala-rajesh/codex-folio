@@ -18,7 +18,7 @@ The current preview includes:
 - normalized usage evidence, activity, projects, and analytics;
 - repository-first checkpoints and Safe Continuation handoffs;
 - reviewed Shared Configuration Packs;
-- an authenticated, loopback-only dashboard with Overview and Profiles flows.
+- an authenticated, loopback-only dashboard with Overview, Profiles, and Sessions flows.
 
 Some dashboard destinations remain placeholders, persistent native service
 installation is not yet an end-user feature, and no supported binary release
@@ -241,11 +241,43 @@ Implemented dashboard flows include:
   same launch view for eligible profiles; Shared Configuration Pack version
   health, bounded declarative drafts, explicit approval/assignment, projection
   conflict review/application, and reviewed promotion.
+- **Sessions:** one metadata timeline with profile/project/date/record-type
+  filters, independent launch and observed details, source/provenance and
+  correlation confidence, keyboard return, and narrow-screen disclosures.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
 Device-code work that needs terminal interaction is returned as an explicit
 local command.
+
+### Sessions timeline
+
+Open **Sessions** (under **More** on narrow screens). Filters affect the timeline
+only; they do not change Selected Profile. Date ranges apply to launch record creation or observed start
+instants in your OS display zone; custom from/through dates are inclusive.
+All dates are shown by default. Longer results have keyboard-accessible pages.
+Filters survive details and navigation within the authorized page.
+
+**Reload timeline** reads retained service metadata; it does not run collection.
+Use the existing `activity refresh PROFILE` CLI workflow to collect supported
+local metadata. A failed reload keeps the previous records and their original
+timestamps. Recorded history has unknown current-source freshness. No matching
+records or missing fields do not mean zero activity.
+
+Details use Project Aliases/basenames and retain separate facts: a Managed
+Launch owns its immutable Launch Profile, preparation time, lifecycle and exit
+status. Running confirms process start; abandonment does not prove a normal exit;
+an Observed Session owns its source start/last-observed timestamps, model and
+token count when available. Last observed is neither a process exit nor a live
+heartbeat. Tokens are locally derived metadata; absent model/tokens remain
+unavailable, while a recorded zero remains zero.
+
+Only existing explicit source-session evidence establishes related records.
+Uncorrelated, ambiguous and contradictory states remain visible without an
+invented relationship. Even supported correlation is not causation. No raw
+commands, transcripts, prompts/responses, tool output, raw diffs or canonical
+project paths enter these views. **Back to Sessions** restores the originating
+row's focus and filters.
 
 ## Foreground launch
 

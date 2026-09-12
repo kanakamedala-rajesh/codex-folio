@@ -128,6 +128,9 @@ In the dashboard:
   selected profiles need a replacement, and running Managed Launches block
   removal.
 - **Refresh** requests new supported usage evidence.
+- **Sessions** filters recorded Managed Launches and Observed Sessions by
+  profile, project, date, and record type. Open a row for metadata-only details;
+  **Back to Sessions** retains your filters.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated

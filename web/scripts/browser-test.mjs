@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
 import axe from "axe-core";
+import { testSessions } from "./sessions-browser-test.mjs";
 
 const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
 assert.ok(["deep", "smoke", "benchmark", "reentry"].includes(phase), "unknown browser phase");
@@ -297,6 +298,7 @@ try {
       await capture("running-wide", 1440, 1000);
       await choose("Work");
       await capture("overview-wide", 1440, 1000);
+      await testSessions({ page, context, link, capture, scanAccessibility, check });
       assert.notEqual(
         await page
           .getByRole("navigation", { name: "Primary", exact: true })

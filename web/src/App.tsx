@@ -18,6 +18,7 @@ import {
 } from "./generated/openapi";
 import { copy as c, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
+import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
 import "./styles.css";
 
@@ -428,6 +429,14 @@ export function App() {
   const [quarantined, setQuarantined] = useState<ProfileLifecycleRecord[]>([]);
   const [combined, setCombined] = useState(false);
   const [route, setRoute] = useState("Overview");
+  const [sessionFilters, setSessionFilters] = useState<SessionFilters>({
+    profile: "",
+    project: "",
+    type: "",
+    dates: "all",
+    from: "",
+    to: "",
+  });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [warning, setWarning] = useState("");
@@ -895,6 +904,14 @@ export function App() {
                   setLaunch(null);
                   requestAnimationFrame(() => heading.current?.focus());
                 }}
+              />
+            ) : route === "Sessions" ? (
+              <Sessions
+                filters={sessionFilters}
+                setFilters={setSessionFilters}
+                read={() => api.getActivity()}
+                expired={failure}
+                heading={heading}
               />
             ) : route === "Profiles" ? (
               <Profiles
