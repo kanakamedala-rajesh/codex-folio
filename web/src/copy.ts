@@ -134,6 +134,7 @@ export const profileCopy = {
   authentication: "Authentication",
   identityHome: "Identity Home",
   configuration: "Configuration",
+  manageConfiguration: "Manage Shared Configuration",
   lastRefresh: "Last successful refresh",
   never: "Never",
   noPack: "None",
@@ -250,6 +251,70 @@ export const profileErrorCopy: Record<string, string> = {
   CF_PROFILE_CONFIRMATION_INVALID: profileCopy.confirmationInvalid,
   CF_PROFILE_QUARANTINE_INVALID: profileCopy.quarantineInvalid,
   CF_PROFILE_QUARANTINE_EXPIRED: profileCopy.quarantineExpired,
+};
+
+export const configurationCopy = {
+  title: "Shared Configuration Packs",
+  localOnly:
+    "Reviewed declarative configuration only. Credentials and Identity Home content stay excluded.",
+  back: "Back to Profiles",
+  assignment: "Profile assignment",
+  noneAssigned: "No Shared Configuration Pack assigned",
+  approvedVersion: "Approved pack version",
+  chooseVersion: "Choose an approved version",
+  assign: "Assign reviewed version",
+  managedOnly: "Projection is available only for a Ready Profile with a Managed Identity Home.",
+  projection: "Projection preview",
+  projectionDetail:
+    "Review every target path and preserved local conflict before applying. Applying never overwrites a preserved local change.",
+  preview: "Preview projection",
+  projectionReview: "Review projection",
+  noConflicts: "No profile-local conflicts detected.",
+  conflictsPreserved: "These profile-local files will be preserved:",
+  apply: "Apply reviewed projection",
+  promotion: "Reviewed promotion",
+  promotionDetail:
+    "Promotion creates a new immutable approved version from profile-local overrides. It never reverse-synchronizes automatically or changes the current assignment.",
+  newVersion: "New pack version",
+  previewPromotion: "Preview promotion",
+  promotionReview: "Review new immutable version",
+  noLocalChanges: "No profile-local changes are present in this promotion.",
+  promotionWarning: "The new version contains these reviewed changes:",
+  promote: "Create reviewed version",
+  create: "Create a declarative draft",
+  createDetail:
+    "Choose only the fixed configuration documents below. Browser requests cannot name arbitrary paths or read files from an Identity Home.",
+  packID: "Pack ID",
+  version: "Version",
+  configDocument: "config.toml (optional)",
+  agentsDocument: "AGENTS.md (optional)",
+  pluginsDocument: "plugins.lock (optional)",
+  saveDraft: "Save draft",
+  versions: "Version health",
+  noVersions: "No Shared Configuration Pack versions yet.",
+  approve: "Approve reviewed draft",
+  draftCount: "{count} draft version(s) await explicit review.",
+  digest: "Content digest:",
+  cancel: "Cancel",
+  draftCreated: "Declarative draft saved. It is not approved or assigned.",
+  approved: "Reviewed pack version approved.",
+  assigned: "Reviewed pack version assigned. Projection has not been applied.",
+  previewReady: "Projection preview ready. Review it before applying.",
+  applied: "Reviewed projection applied; profile-local conflicts were preserved.",
+  promotionReady: "Promotion preview ready. Review it before creating the version.",
+  promoted: "Reviewed immutable pack version created. The profile assignment is unchanged.",
+  failed: "Shared Configuration Pack action failed.",
+  invalid: "Review the declarative configuration and current version, then try again.",
+  notApproved: "Only an approved pack version can be assigned.",
+  reviewRequired: "Review the preview again before applying or promoting.",
+  projectionFailed: "Projection was not applied. Local configuration remains preserved.",
+} as const;
+
+export const configurationErrorCopy: Record<string, string> = {
+  CF_CONFIGPACK_INVALID: configurationCopy.invalid,
+  CF_CONFIGPACK_NOT_APPROVED: configurationCopy.notApproved,
+  CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED: configurationCopy.reviewRequired,
+  CF_CONFIGPACK_PROJECTION_FAILED: configurationCopy.projectionFailed,
 };
 
 export const launchCopy = {

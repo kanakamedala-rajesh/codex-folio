@@ -4,6 +4,9 @@ import {
   UsageRefreshError,
   type AnalyticsResponse,
   type ActivityRecord,
+  type ConfigurationPackRequest,
+  type ConfigurationPackResponse,
+  type ConfigurationPackSummary,
   type ProfileAuthenticationRequest,
   type ProfileEditRequest,
   type ProfileLifecycleRecord,
@@ -421,6 +424,7 @@ export function App() {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [packs, setPacks] = useState<ConfigurationPackSummary[]>([]);
   const [quarantined, setQuarantined] = useState<ProfileLifecycleRecord[]>([]);
   const [combined, setCombined] = useState(false);
   const [route, setRoute] = useState("Overview");
@@ -464,7 +468,9 @@ export function App() {
         if (e instanceof UsageRefreshError && e.status === 409) return null;
         throw e;
       }),
-      includeProfiles ? Promise.all([api.getProfiles(), api.listProfileQuarantine()]) : null,
+      includeProfiles
+        ? Promise.all([api.getProfiles(), api.listProfileQuarantine(), api.getConfigurationPacks()])
+        : null,
     ]);
     setNow(Date.now());
     setData(next);
@@ -472,6 +478,7 @@ export function App() {
     if (inventory) {
       setProfiles(inventory[0].profiles);
       setQuarantined(inventory[1].quarantined);
+      setPacks(inventory[2].packs);
     }
     return next;
   }
@@ -696,6 +703,36 @@ export function App() {
       setBusy(false);
     }
   }
+  async function manageConfiguration(
+    request: ConfigurationPackRequest,
+  ): Promise<ConfigurationPackResponse> {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageConfigurationPack(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      const [packInventory, profileInventory] = await Promise.all([
+        api.getConfigurationPacks(),
+        api.getProfiles(),
+      ]);
+      setPacks(packInventory.packs);
+      setProfiles(profileInventory.profiles);
+      return result;
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof UsageRefreshError && [401, 403].includes(error.status))
+      ) {
+        failure(error);
+      }
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
   async function openLaunch(target: LaunchTarget) {
     try {
       const [projectResult, next] = await Promise.all([
@@ -862,6 +899,7 @@ export function App() {
             ) : route === "Profiles" ? (
               <Profiles
                 profiles={profiles}
+                packs={packs}
                 quarantined={quarantined}
                 busy={busy}
                 heading={heading}
@@ -870,6 +908,7 @@ export function App() {
                 edit={editProfile}
                 authenticate={authenticateProfile}
                 lifecycle={manageProfileLifecycle}
+                manageConfiguration={manageConfiguration}
                 launch={(profile) => void openLaunch(profile)}
                 launchable={(profile) =>
                   Boolean(

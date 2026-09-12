@@ -94,6 +94,56 @@ func TestProjectorPreservesCodexChangesToPreviouslyProjectedFile(t *testing.T) {
 	}
 }
 
+func TestProjectorPreviewsLocalConflictsBeforePreservingThem(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(path, []byte("model = \"profile-local\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projector := NewProjector(nil)
+	files := map[string]string{"config.toml": "model = \"reviewed\"\n"}
+	plan, err := projector.Preview(context.Background(), home, files)
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if plan.Digest != DigestFiles(files) || len(plan.Conflicts) != 1 || plan.Conflicts[0].Path != "config.toml" || plan.Conflicts[0].Kind != ChangeModified {
+		t.Fatalf("Preview() = %#v, want one visible modified conflict", plan)
+	}
+	if _, err := projector.Project(context.Background(), home, files); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != "model = \"profile-local\"\n" {
+		t.Fatalf("local conflict = %q/%v, want preserved after explicit projection", content, err)
+	}
+}
+
+func TestProjectorRejectsChangedConflictSnapshotBeforeWriting(t *testing.T) {
+	home := t.TempDir()
+	projector := NewProjector(nil)
+	files := map[string]string{"config.toml": "model = \"reviewed\"\n"}
+	plan, err := projector.Preview(context.Background(), home, files)
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("Preview().Conflicts = %#v, want none", plan.Conflicts)
+	}
+	path := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(path, []byte("model = \"manual\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projector.ProjectReviewed(context.Background(), home, files, plan.Conflicts); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ProjectReviewed() error = %v, want changed-review rejection", err)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != "model = \"manual\"\n" {
+		t.Fatalf("config after rejection = %q/%v, want manual content unchanged", content, err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "config.toml" {
+		t.Fatalf("home after rejection = %#v/%v, want no projection writes", entries, err)
+	}
+}
+
 func TestProjectorLeavesPriorFilesWhenStagingFails(t *testing.T) {
 	home := t.TempDir()
 	priorPath := filepath.Join(home, "config", "base.toml")

@@ -15,11 +15,11 @@ CodexFolio is independent and is not affiliated with or endorsed by OpenAI.
 | Isolated identity profiles and installed-Codex launch | Implemented; real-account platform qualification has documented exceptions |
 | Read-only usage evidence and local analytics | Implemented; provider-reported, derived, estimated, stale, and unavailable values must remain distinguishable |
 | Repository-first Safe Continuation | Implemented checkpoint workflow; not a guarantee of exact conversation or hidden-state transfer |
-| Local dashboard and background operations | Authorized Overview, Profiles onboarding/lifecycle recovery, and terminal-owned Project Identity launches are implemented; other operational destinations remain in development |
+| Local dashboard and background operations | Authorized Overview, Profiles onboarding/lifecycle recovery, Shared Configuration Pack management, and terminal-owned Project Identity launches are implemented; other operational destinations remain in development |
 | Exact Continuation and Shared Work Home | Experimental scope; not prerequisites for stable-core delivery |
 | Signed, supported end-user release | Not available yet |
 
-This summary reflects the milestone record reviewed on 2026-09-10. Follow the
+This summary reflects the implementation frontier on 2026-09-12. Follow the
 [MVP roadmap](ROADMAP.md) and [issue #9](https://github.com/kanakamedala-rajesh/codex-folio/issues/9)
 for live status. Read the [compatibility qualifications](docs/user/COMPATIBILITY.md)
 before using development builds with real accounts.

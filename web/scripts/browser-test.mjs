@@ -101,6 +101,16 @@ async function lifecycleAction(name, action) {
   await page.getByRole("button", { name, exact: true }).click();
   return completed;
 }
+async function configurationAction(name, action) {
+  const completed = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/configuration-packs") &&
+      response.request().method() === "POST" &&
+      response.request().postDataJSON().action === action,
+  );
+  await page.getByRole("button", { name, exact: true }).click();
+  return completed;
+}
 async function capture(name, width, height) {
   await page.setViewportSize({ width, height });
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -372,6 +382,74 @@ try {
       assert.match(await page.locator("main").innerText(), /Found · 0\.153\.4/);
       assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+      await page.getByRole("button", { name: "Work", exact: true }).click();
+      await page.getByRole("button", { name: "Manage Shared Configuration", exact: true }).click();
+      await assertFocusedHeading("Shared Configuration Packs");
+      assert.doesNotMatch(await page.locator("main").innerText(), /model =|gpt-5-mini/);
+      await configurationAction("Preview projection", "preview");
+      await page
+        .getByText("These profile-local files will be preserved:", { exact: true })
+        .waitFor();
+      assert.match(await page.locator("main").innerText(), /config\.toml · modified/);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.equal(
+        await page.getByRole("button", { name: "Apply reviewed projection", exact: true }).count(),
+        0,
+      );
+      await configurationAction("Preview projection", "preview");
+      const blockedProjection = await configurationAction("Apply reviewed projection", "apply");
+      assert.equal(blockedProjection.status(), 500);
+      await page
+        .getByText("Projection was not applied. Local configuration remains preserved.", {
+          exact: true,
+        })
+        .waitFor();
+      await page.getByLabel("New pack version", { exact: true }).fill("2");
+      await configurationAction("Preview promotion", "promotion-preview");
+      await page
+        .getByText("The new version contains these reviewed changes:", { exact: true })
+        .waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.doesNotMatch(await page.locator("main").innerText(), /shared · 2/);
+      await configurationAction("Preview promotion", "promotion-preview");
+      const promoted = await configurationAction("Create reviewed version", "promote");
+      assert.equal(promoted.status(), 200, await promoted.text());
+      await page
+        .getByText(
+          "Reviewed immutable pack version created. The profile assignment is unchanged.",
+          {
+            exact: true,
+          },
+        )
+        .waitFor();
+      assert.match(await page.locator("main").innerText(), /shared · 2/);
+      await scanAccessibility("configuration-packs");
+      await capture("configuration-packs-wide", 1440, 1000);
+      await capture("configuration-packs-narrow", 390, 844);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.getByRole("button", { name: "Back to Profiles", exact: true }).click();
+
+      await page.getByRole("button", { name: "Research", exact: true }).click();
+      await page.getByRole("button", { name: "Manage Shared Configuration", exact: true }).click();
+      await page
+        .getByRole("combobox", { name: "Approved pack version", exact: true })
+        .selectOption("shared@1");
+      const assignedPack = await configurationAction("Assign reviewed version", "assign");
+      assert.equal(assignedPack.status(), 200, await assignedPack.text());
+      await configurationAction("Preview projection", "preview");
+      await page.getByText("No profile-local conflicts detected.", { exact: true }).waitFor();
+      const applied = await configurationAction("Apply reviewed projection", "apply");
+      assert.equal(applied.status(), 200, await applied.text());
+      await page
+        .getByText("Reviewed projection applied; profile-local conflicts were preserved.", {
+          exact: true,
+        })
+        .waitFor();
+      await page.getByRole("button", { name: "Back to Profiles", exact: true }).click();
+      check(
+        "configuration assignment, conflict preview, cancellation, rejected application, reviewed promotion and successful projection",
+      );
 
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
       await page.getByLabel("Display Name", { exact: true }).fill("Referenced");

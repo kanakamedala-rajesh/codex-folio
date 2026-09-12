@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "aef9b2903e8f9887c4fddf59b3ca52ab742b6578281f058afe613105c44150c0" as const;
+  "26a44751d3fc018aeda58f6d9ba266568c47c7a8ca4e36826704f6e2821c5227" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -194,6 +194,75 @@ export interface ActivityCorrelation {
   managed_launch_id?: string;
   evidence_type?: string;
   confidence?: string;
+}
+
+export interface ConfigurationDocument {
+  kind: string;
+  content: string;
+}
+
+export interface ConfigurationPackSummary {
+  id: string;
+  version: string;
+  state: string;
+  digest: string;
+  files: string[];
+  created_at: string;
+}
+
+export interface ConfigurationChange {
+  path: string;
+  kind: string;
+}
+
+export interface ConfigurationAssignment {
+  profile_id: string;
+  alias: string;
+  pack_id: string;
+  version: string;
+  digest: string;
+}
+
+export interface ConfigurationProjectionPlan {
+  assignment: ConfigurationAssignment;
+  digest: string;
+  files: string[];
+  conflicts: ConfigurationChange[];
+}
+
+export interface ConfigurationProjectionResult {
+  pack_id: string;
+  version: string;
+  digest: string;
+  files: string[];
+}
+
+export interface ConfigurationPromotionPreview {
+  profile_alias: string;
+  pack_id: string;
+  from_version: string;
+  to_version: string;
+  changes: ConfigurationChange[];
+  digest: string;
+}
+
+export interface ConfigurationPackRequest {
+  action: string;
+  pack_id?: string;
+  version?: string;
+  alias?: string;
+  documents?: ConfigurationDocument[];
+  reviewed?: boolean;
+  expected_digest?: string;
+}
+
+export interface ConfigurationPackResponse {
+  packs: ConfigurationPackSummary[];
+  pack?: ConfigurationPackSummary;
+  assignment?: ConfigurationAssignment;
+  plan?: ConfigurationProjectionPlan;
+  projection?: ConfigurationProjectionResult;
+  promotion_preview?: ConfigurationPromotionPreview;
 }
 
 export interface ActivityRecord {
@@ -441,6 +510,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/configuration-packs": {
+    get: {
+      operationId: "getConfigurationPacks";
+      responses: {
+        200: { content: { "application/json": ConfigurationPackResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageConfigurationPack";
+      requestBody: ConfigurationPackRequest;
+      responses: {
+        200: { content: { "application/json": ConfigurationPackResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/analytics/history": {
     post: {
       operationId: "manageAnalyticsHistory";
@@ -572,6 +658,11 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getConfigurationPacks(init?: RequestInit): Promise<ConfigurationPackResponse>;
+  manageConfigurationPack(
+    request: ConfigurationPackRequest,
+    init?: RequestInit,
+  ): Promise<ConfigurationPackResponse>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
   getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
@@ -604,6 +695,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getConfigurationPacks(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration-packs", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ConfigurationPackResponse;
+    },
+    async manageConfigurationPack(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration-packs", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ConfigurationPackResponse;
+    },
     async manageAnalyticsHistory(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

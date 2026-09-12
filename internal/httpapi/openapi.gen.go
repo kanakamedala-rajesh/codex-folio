@@ -14,21 +14,91 @@ import (
 )
 
 const (
-	APIVersion           = "v1"
-	ActivityPath         = "/api/v1/activity"
-	AnalyticsPath        = "/api/v1/analytics"
-	HistoryPath          = "/api/v1/analytics/history"
-	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "aef9b2903e8f9887c4fddf59b3ca52ab742b6578281f058afe613105c44150c0"
-	BootstrapPath        = "/api/v1/bootstrap"
-	MetadataPath         = "/api/v1/meta"
-	ProfileLifecyclePath = "/api/v1/profile-lifecycle"
-	ProfilesPath         = "/api/v1/profiles"
-	ProjectsPath         = "/api/v1/projects"
-	SelectionPath        = "/api/v1/selection"
-	UsageLatestPath      = "/api/v1/usage/latest"
-	UsageRefreshPath     = "/api/v1/usage/refresh"
+	APIVersion             = "v1"
+	ActivityPath           = "/api/v1/activity"
+	AnalyticsPath          = "/api/v1/analytics"
+	HistoryPath            = "/api/v1/analytics/history"
+	ContractVersion        = "0.0.1-alpha"
+	ContractSourceSHA256   = "26a44751d3fc018aeda58f6d9ba266568c47c7a8ca4e36826704f6e2821c5227"
+	BootstrapPath          = "/api/v1/bootstrap"
+	ConfigurationPacksPath = "/api/v1/configuration-packs"
+	MetadataPath           = "/api/v1/meta"
+	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
+	ProfilesPath           = "/api/v1/profiles"
+	ProjectsPath           = "/api/v1/projects"
+	SelectionPath          = "/api/v1/selection"
+	UsageLatestPath        = "/api/v1/usage/latest"
+	UsageRefreshPath       = "/api/v1/usage/refresh"
 )
+
+type ConfigurationDocument struct {
+	Kind    string `json:"kind"`
+	Content string `json:"content"`
+}
+
+type ConfigurationPackSummary struct {
+	Id        string   `json:"id"`
+	Version   string   `json:"version"`
+	State     string   `json:"state"`
+	Digest    string   `json:"digest"`
+	Files     []string `json:"files"`
+	CreatedAt string   `json:"created_at"`
+}
+
+type ConfigurationChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type ConfigurationAssignment struct {
+	ProfileId string `json:"profile_id"`
+	Alias     string `json:"alias"`
+	PackId    string `json:"pack_id"`
+	Version   string `json:"version"`
+	Digest    string `json:"digest"`
+}
+
+type ConfigurationProjectionPlan struct {
+	Assignment ConfigurationAssignment `json:"assignment"`
+	Digest     string                  `json:"digest"`
+	Files      []string                `json:"files"`
+	Conflicts  []ConfigurationChange   `json:"conflicts"`
+}
+
+type ConfigurationProjectionResult struct {
+	PackId  string   `json:"pack_id"`
+	Version string   `json:"version"`
+	Digest  string   `json:"digest"`
+	Files   []string `json:"files"`
+}
+
+type ConfigurationPromotionPreview struct {
+	ProfileAlias string                `json:"profile_alias"`
+	PackId       string                `json:"pack_id"`
+	FromVersion  string                `json:"from_version"`
+	ToVersion    string                `json:"to_version"`
+	Changes      []ConfigurationChange `json:"changes"`
+	Digest       string                `json:"digest"`
+}
+
+type ConfigurationPackRequest struct {
+	Action         string                   `json:"action"`
+	PackId         *string                  `json:"pack_id,omitempty"`
+	Version        *string                  `json:"version,omitempty"`
+	Alias          *string                  `json:"alias,omitempty"`
+	Documents      *[]ConfigurationDocument `json:"documents,omitempty"`
+	Reviewed       *bool                    `json:"reviewed,omitempty"`
+	ExpectedDigest *string                  `json:"expected_digest,omitempty"`
+}
+
+type ConfigurationPackResponse struct {
+	Packs            []ConfigurationPackSummary     `json:"packs"`
+	Pack             *ConfigurationPackSummary      `json:"pack,omitempty"`
+	Assignment       *ConfigurationAssignment       `json:"assignment,omitempty"`
+	Plan             *ConfigurationProjectionPlan   `json:"plan,omitempty"`
+	Projection       *ConfigurationProjectionResult `json:"projection,omitempty"`
+	PromotionPreview *ConfigurationPromotionPreview `json:"promotion_preview,omitempty"`
+}
 
 type HistoryScope struct {
 	ProfileId string   `json:"profile_id"`
@@ -478,6 +548,65 @@ func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryR
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) GetConfigurationPacks(ctx context.Context) (ConfigurationPackResponse, *http.Response, error) {
+	var result ConfigurationPackResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ConfigurationPacksPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ManageConfigurationPack(ctx context.Context, input ConfigurationPackRequest) (ConfigurationPackResponse, *http.Response, error) {
+	var result ConfigurationPackResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ConfigurationPacksPath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}

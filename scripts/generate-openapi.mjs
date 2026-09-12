@@ -144,6 +144,7 @@ function validateContract(contract, productVersion) {
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
+  const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
   const profileLifecyclePath = `/api/${apiVersion}/profile-lifecycle`;
   const profilesPath = `/api/${apiVersion}/profiles`;
   const projectsPath = `/api/${apiVersion}/projects`;
@@ -158,6 +159,7 @@ function validateContract(contract, productVersion) {
       analyticsPath,
       historyPath,
       bootstrapPath,
+      configurationPacksPath,
       metadataPath,
       profileLifecyclePath,
       profilesPath,
@@ -239,6 +241,21 @@ function validateContract(contract, productVersion) {
   assertExactKeys(projectsOperation, ["operationId", "responses"], `GET ${projectsPath}`);
   assertIdentifier(projectsOperation.operationId, "projects operationId");
   const projectsResponseReference = responseReference(projectsOperation, `GET ${projectsPath}`);
+
+  const configurationPacksPathItem = contract.paths[configurationPacksPath];
+  assertObject(configurationPacksPathItem, `path ${configurationPacksPath}`);
+  assertExactKeys(configurationPacksPathItem, ["get", "post"], `path ${configurationPacksPath}`);
+  const getConfigurationPacksOperation = configurationPacksPathItem.get;
+  const manageConfigurationPackOperation = configurationPacksPathItem.post;
+  assertExactKeys(getConfigurationPacksOperation, ["operationId", "responses"], `GET ${configurationPacksPath}`);
+  assertExactKeys(manageConfigurationPackOperation, ["operationId", "requestBody", "responses"], `POST ${configurationPacksPath}`);
+  assertIdentifier(getConfigurationPacksOperation.operationId, "get configuration packs operationId");
+  assertIdentifier(manageConfigurationPackOperation.operationId, "manage configuration pack operationId");
+  const configurationPackRequestReference = requestReference(manageConfigurationPackOperation.requestBody, `POST ${configurationPacksPath} request body`);
+  const configurationPackResponseReference = responseReference(getConfigurationPacksOperation, `GET ${configurationPacksPath}`, ["200", "default"]);
+  assertEqual(responseReference(manageConfigurationPackOperation, `POST ${configurationPacksPath}`, ["200", "default"]), configurationPackResponseReference, "configuration pack response reference");
+  assertEqual(errorResponseReference(getConfigurationPacksOperation, `GET ${configurationPacksPath}`), "#/$defs/UsageErrorResponse", "configuration pack list error response");
+  assertEqual(errorResponseReference(manageConfigurationPackOperation, `POST ${configurationPacksPath}`), "#/$defs/UsageErrorResponse", "configuration pack mutation error response");
 
   const profilesPathItem = contract.paths[profilesPath];
   assertObject(profilesPathItem, `path ${profilesPath}`);
@@ -346,6 +363,7 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(historyOperation, "history response", ["200", "default"]), "#/$defs/HistoryResponse", "history response");
   assertEqual(errorResponseReference(historyOperation, "history error"), usageErrorResponseReference, "history error response");
   const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate", "AnalyticsExportRequest", "AnalyticsExportDatasetPreview", "UsageExportRecord", "AvailabilityExportRecord", "AnalyticsExportRecords", "AnalyticsExportResult", "ActivityExportRecord", "ActivityCorrelation"];
+  const configurationSchemaNames = ["ConfigurationDocument", "ConfigurationPackSummary", "ConfigurationChange", "ConfigurationAssignment", "ConfigurationProjectionPlan", "ConfigurationProjectionResult", "ConfigurationPromotionPreview", schemaNameFromReference(configurationPackRequestReference, "configuration pack request"), schemaNameFromReference(configurationPackResponseReference, "configuration pack response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -381,6 +399,7 @@ function validateContract(contract, productVersion) {
     "UsageMetricAmbiguity",
     "UsageCandidate",
     ...historySchemaNames,
+    ...configurationSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
@@ -488,6 +507,12 @@ function validateContract(contract, productVersion) {
   const profileLifecycleRequestFields = schemaFields(contract.$defs.ProfileLifecycleRequest, "ProfileLifecycleRequest");
 
   return {
+    configurationPacksPath,
+    configurationPackGetOperationId: getConfigurationPacksOperation.operationId,
+    configurationPackManageOperationId: manageConfigurationPackOperation.operationId,
+    configurationPackRequestType: schemaNameFromReference(configurationPackRequestReference, "configuration pack request"),
+    configurationPackResponseType: schemaNameFromReference(configurationPackResponseReference, "configuration pack response"),
+    configurationSchemas: configurationSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     historyPath,
     historySchemas: historySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     apiVersion,
@@ -655,6 +680,11 @@ function writeArtifacts({ artifacts }, rootDirectory = defaultRootDirectory) {
 
 function renderGo(productVersion, sourceHash, contractShape) {
   const {
+    configurationPacksPath,
+    configurationPackGetOperationId,
+    configurationPackManageOperationId,
+    configurationPackRequestType,
+    configurationPackResponseType,
     apiVersion,
     activityOperationId,
     activityPath,
@@ -726,6 +756,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     usageResponseType,
   } = contractShape;
   const activityMethod = goIdentifier(activityOperationId);
+  const configurationPackGetMethod = goIdentifier(configurationPackGetOperationId);
+  const configurationPackManageMethod = goIdentifier(configurationPackManageOperationId);
   const analyticsMethod = goIdentifier(analyticsOperationId);
   const bootstrapMethod = goIdentifier(bootstrapOperationId);
   const metadataMethod = goIdentifier(metadataOperationId);
@@ -742,6 +774,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const usageLatestMethod = goIdentifier(usageLatestOperationId);
   const usageMethod = goIdentifier(usageOperationId);
   const types = [
+    ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
@@ -801,6 +834,7 @@ const (
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
+\tConfigurationPacksPath = "${configurationPacksPath}"
 \tMetadataPath         = "${metadataPath}"
 \tProfileLifecyclePath = "${profileLifecyclePath}"
 \tProfilesPath         = "${profilesPath}"
@@ -835,6 +869,47 @@ func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryR
 \tbody, err := json.Marshal(input)
 \tif err != nil { return result, nil, err }
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${configurationPackGetMethod}(ctx context.Context) (${configurationPackResponseType}, *http.Response, error) {
+\tvar result ${configurationPackResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ConfigurationPacksPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${configurationPackManageMethod}(ctx context.Context, input ${configurationPackRequestType}) (${configurationPackResponseType}, *http.Response, error) {
+\tvar result ${configurationPackResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ConfigurationPacksPath, bytes.NewReader(body))
 \tif err != nil { return result, nil, err }
 \trequest.Header.Set("Accept", "application/json")
 \trequest.Header.Set("Content-Type", "application/json")
@@ -1181,6 +1256,11 @@ ${fieldLines}
 
 function renderTypeScript(productVersion, sourceHash, contractShape) {
   const {
+    configurationPacksPath,
+    configurationPackGetOperationId,
+    configurationPackManageOperationId,
+    configurationPackRequestType,
+    configurationPackResponseType,
     apiVersion,
     activityOperationId,
     activityPath,
@@ -1329,6 +1409,8 @@ export const CONTRACT_SOURCE_SHA256 =
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
+${contractShape.configurationSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
 export interface ${activityRecordType} {
 ${activityRecordLines}
 }
@@ -1450,6 +1532,23 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${configurationPacksPath}": {
+    get: {
+      operationId: "${configurationPackGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${configurationPackResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${configurationPackManageOperationId}";
+      requestBody: ${configurationPackRequestType};
+      responses: {
+        200: { content: { "application/json": ${configurationPackResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${contractShape.historyPath}": {
     post: {
       operationId: "manageAnalyticsHistory";
@@ -1581,6 +1680,11 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${configurationPackGetOperationId}(init?: RequestInit): Promise<${configurationPackResponseType}>;
+  ${configurationPackManageOperationId}(
+    request: ${configurationPackRequestType},
+    init?: RequestInit,
+  ): Promise<${configurationPackResponseType}>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
   ${analyticsOperationId}(scope?: string, init?: RequestInit): Promise<${analyticsResponseType}>;
   ${activityOperationId}(
@@ -1613,6 +1717,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${configurationPackGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${configurationPacksPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${configurationPackResponseType};
+    },
+    async ${configurationPackManageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${configurationPacksPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${configurationPackResponseType};
+    },
     async manageAnalyticsHistory(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

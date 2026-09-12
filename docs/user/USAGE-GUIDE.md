@@ -122,8 +122,11 @@ In the dashboard:
 
 - **Overview** shows current or last-known usage evidence and eligible profiles.
 - **Profiles** lets you add, resume, edit, select, reauthenticate, remove, restore,
-  or purge profiles. Removal requires the exact CLI Alias; selected profiles need
-  a replacement, and running Managed Launches block removal.
+  purge, or manage Shared Configuration Packs. Pack actions show immutable
+  version health, fixed declarative document slots, assignment, projection
+  conflicts, and reviewed promotion. Removal requires the exact CLI Alias;
+  selected profiles need a replacement, and running Managed Launches block
+  removal.
 - **Refresh** requests new supported usage evidence.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
@@ -133,6 +136,13 @@ In the dashboard:
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
 start; a nonzero exit is not quota evidence by itself.
+
+For Shared Configuration Packs, assign only an approved version, preview every
+projection, then explicitly apply that exact preview. Profile-local conflicts
+are shown and preserved. Promotion creates a reviewed immutable version and
+does not change the current profile assignment automatically. Browser pack
+drafts accept only `config.toml`, `AGENTS.md`, and `plugins.lock`; use the CLI
+for other supported declarative pack paths.
 
 Unavailable or stale evidence is not zero usage. Check its state, source, and
 capture time before acting on it.

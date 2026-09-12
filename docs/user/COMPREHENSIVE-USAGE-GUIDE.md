@@ -238,7 +238,9 @@ Implemented dashboard flows include:
 - **Profiles:** safe inventory, Managed/Referenced onboarding, Pending resume,
   local metadata edits, selection, installed-Codex discovery, and
   reauthentication, local removal, managed quarantine recovery/purge, and the
-  same launch view for eligible profiles.
+  same launch view for eligible profiles; Shared Configuration Pack version
+  health, bounded declarative drafts, explicit approval/assignment, projection
+  conflict review/application, and reviewed promotion.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
@@ -372,6 +374,24 @@ Local overrides remain profile-local. Promotion is a reviewed operation:
 
 Preview before projection or promotion. Packs are configuration, not credentials;
 do not place tokens, private keys, or authentication files in them.
+
+The Profiles dashboard exposes the same immutable pack service through a
+browser-safe contract. Browser-created drafts deliberately support only three
+fixed document slots: `config.toml`, `AGENTS.md`, and `plugins.lock`. The
+browser cannot supply arbitrary paths, read existing Identity Home content, or
+receive document content from stored versions.
+
+Assignment requires a Ready Profile with a Managed Identity Home and an
+explicitly reviewed approved version. **Preview projection** lists every target
+path and any profile-local conflict before **Apply reviewed projection** becomes
+available. The application is bound to the preview digest; a changed pack or
+override requires a fresh preview. Conflicting local files remain in place.
+
+**Preview promotion** similarly binds approval to the reviewed content digest.
+Creating the promoted version is explicit, immutable, and does not reassign the
+Profile. Cancelling either review performs no write. A running Managed Launch
+continues to block projection while leaving preview and local configuration
+intact.
 
 ## Checkpoints and Safe Continuation
 

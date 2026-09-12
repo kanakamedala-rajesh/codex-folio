@@ -164,6 +164,26 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	defer state.Close()
+	configurationPacks, err := newConfigurationPackService(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack, err := configurationPacks.CreateDraft(context.Background(), "shared", "1", map[string]string{"config.toml": "model = \"gpt-5\"\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configurationPacks.Approve(context.Background(), pack.ID, pack.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configurationPacks.Assign(context.Background(), "Work", pack.ID, pack.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := configurationPacks.SetOverride(context.Background(), "Work", "config.toml", "model = \"gpt-5-mini\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.Root, "managed-home", "config.toml"), []byte("model = \"profile-local\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	fixturePath := filepath.Join("..", "..", "internal", "adapters", "codex", "testdata", "app-server", "v2")
 	collector := codexadapter.NewUsageCollectorWithCommandRunner(func(_ context.Context, _ string, _ []string, environment []string, stdin io.Reader, stdout, _ io.Writer) error {
 		input, err := io.ReadAll(stdin)
@@ -271,14 +291,14 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	profileAuthentication, err := newProfileAuthenticationCommandService(
 		paths,
 		state,
-		nil,
+		configurationPacks,
 		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}},
 		dashboardProfileAuthenticator{control: control},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	launches, err := newLaunchCommandService(state, nil, dashboardProfileAuthenticator{control: control}, projects, service)
+	launches, err := newLaunchCommandService(state, configurationPacks, dashboardProfileAuthenticator{control: control}, projects, service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +310,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, Launches: launches, Projects: projects, CommandToken: "browser-fixture-command"})
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}

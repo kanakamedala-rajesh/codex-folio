@@ -47,7 +47,10 @@ test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const generatedGo = readFileSync(generatedGoPath, "utf8");
   writeFileSync(
     generatedGoPath,
-    generatedGo.replace("ContractSourceSHA256 = \"", "ContractSourceSHA256 = \"tampered-")
+    generatedGo.replace(
+      /(ContractSourceSHA256\s+= ")/,
+      "$1tampered-",
+    ),
   );
 
   assert.throws(() => checkOpenAPI(fixtureDirectory), /drift/i);

@@ -1,6 +1,9 @@
 import { useEffect, useId, useState, type RefObject } from "react";
 import {
   UsageRefreshError,
+  type ConfigurationPackRequest,
+  type ConfigurationPackResponse,
+  type ConfigurationPackSummary,
   type ProfileAuthenticationRequest,
   type ProfileAuthenticationResponse,
   type ProfileEditRequest,
@@ -9,9 +12,11 @@ import {
   type ProfileSummary,
 } from "./generated/openapi";
 import { profileCopy as c, profileErrorCopy, stateCopy } from "./copy";
+import { ConfigurationPacks } from "./ConfigurationPacks";
 
 type Props = {
   profiles: ProfileSummary[];
+  packs: ConfigurationPackSummary[];
   quarantined: ProfileLifecycleRecord[];
   busy: boolean;
   heading: RefObject<HTMLHeadingElement | null>;
@@ -20,6 +25,7 @@ type Props = {
   edit: (request: ProfileEditRequest) => Promise<void>;
   authenticate: (request: ProfileAuthenticationRequest) => Promise<ProfileAuthenticationResponse>;
   lifecycle: (request: ProfileLifecycleRequest) => Promise<ProfileLifecycleRecord>;
+  manageConfiguration: (request: ConfigurationPackRequest) => Promise<ConfigurationPackResponse>;
   launch: (profile: ProfileSummary) => void;
   launchable: (profile: ProfileSummary) => boolean;
 };
@@ -83,6 +89,7 @@ function profileFailure(error: unknown) {
 
 export function Profiles({
   profiles,
+  packs,
   quarantined,
   busy,
   heading,
@@ -91,11 +98,12 @@ export function Profiles({
   edit,
   authenticate,
   lifecycle,
+  manageConfiguration,
   launch,
   launchable,
 }: Props) {
   const [view, setView] = useState<
-    "inventory" | "setup" | "edit" | "reauthenticate" | "remove" | "purge"
+    "inventory" | "setup" | "edit" | "reauthenticate" | "remove" | "purge" | "configuration"
   >("inventory");
   const [selectedAlias, setSelectedAlias] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -225,6 +233,19 @@ export function Profiles({
     } catch (error) {
       setLocalMessage(profileFailure(error));
     }
+  }
+
+  if (view === "configuration" && current) {
+    return (
+      <ConfigurationPacks
+        profile={current}
+        packs={packs}
+        busy={busy}
+        heading={heading}
+        close={close}
+        manage={manageConfiguration}
+      />
+    );
   }
 
   if (view === "edit") {
@@ -683,6 +704,13 @@ export function Profiles({
               onClick={() => launch(current)}
             >
               {c.launch}
+            </button>
+            <button
+              className={buttonClass}
+              disabled={busy}
+              onClick={() => open("configuration", current)}
+            >
+              {c.manageConfiguration}
             </button>
           </div>
           <details className="mt-6 py-2">

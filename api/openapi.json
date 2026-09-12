@@ -255,6 +255,111 @@
       ],
       "type": "object"
     },
+    "ConfigurationDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["config", "agents", "plugins"], "type": "string" },
+        "content": { "type": "string" }
+      },
+      "required": ["kind", "content"],
+      "type": "object"
+    },
+    "ConfigurationPackSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "state": { "enum": ["draft", "approved", "superseded"], "type": "string" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "version", "state", "digest", "files", "created_at"],
+      "type": "object"
+    },
+    "ConfigurationChange": {
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "enum": ["added", "modified", "removed"], "type": "string" }
+      },
+      "required": ["path", "kind"],
+      "type": "object"
+    },
+    "ConfigurationAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": { "type": "string" },
+        "alias": { "type": "string" },
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      },
+      "required": ["profile_id", "alias", "pack_id", "version", "digest"],
+      "type": "object"
+    },
+    "ConfigurationProjectionPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment": { "$ref": "#/$defs/ConfigurationAssignment" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" },
+        "conflicts": { "items": { "$ref": "#/$defs/ConfigurationChange" }, "type": "array" }
+      },
+      "required": ["assignment", "digest", "files", "conflicts"],
+      "type": "object"
+    },
+    "ConfigurationProjectionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" }
+      },
+      "required": ["pack_id", "version", "digest", "files"],
+      "type": "object"
+    },
+    "ConfigurationPromotionPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_alias": { "type": "string" },
+        "pack_id": { "type": "string" },
+        "from_version": { "type": "string" },
+        "to_version": { "type": "string" },
+        "changes": { "items": { "$ref": "#/$defs/ConfigurationChange" }, "type": "array" },
+        "digest": { "type": "string" }
+      },
+      "required": ["profile_alias", "pack_id", "from_version", "to_version", "changes", "digest"],
+      "type": "object"
+    },
+    "ConfigurationPackRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["create", "approve", "assign", "preview", "apply", "promotion-preview", "promote"], "type": "string" },
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "alias": { "type": "string" },
+        "documents": { "items": { "$ref": "#/$defs/ConfigurationDocument" }, "type": "array" },
+        "reviewed": { "type": "boolean" },
+        "expected_digest": { "type": "string" }
+      },
+      "required": ["action"],
+      "type": "object"
+    },
+    "ConfigurationPackResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "packs": { "items": { "$ref": "#/$defs/ConfigurationPackSummary" }, "type": "array" },
+        "pack": { "$ref": "#/$defs/ConfigurationPackSummary" },
+        "assignment": { "$ref": "#/$defs/ConfigurationAssignment" },
+        "plan": { "$ref": "#/$defs/ConfigurationProjectionPlan" },
+        "projection": { "$ref": "#/$defs/ConfigurationProjectionResult" },
+        "promotion_preview": { "$ref": "#/$defs/ConfigurationPromotionPreview" }
+      },
+      "required": ["packs"],
+      "type": "object"
+    },
     "ProfileSummary": {
       "additionalProperties": false,
       "properties": {
@@ -706,6 +811,38 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
             "description": "Returns safe app-local Project Identity projections without canonical paths."
+          }
+        }
+      }
+    },
+    "/api/v1/configuration-packs": {
+      "get": {
+        "operationId": "getConfigurationPacks",
+        "responses": {
+          "200": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackResponse" } } },
+            "description": "Returns immutable configuration pack version metadata without document content or Identity Home details."
+          },
+          "default": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/UsageErrorResponse" } } },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "manageConfigurationPack",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackRequest" } } },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackResponse" } } },
+            "description": "Creates and approves bounded declarative drafts, assigns approved versions, previews and explicitly applies projections, or previews and explicitly promotes local overrides."
+          },
+          "default": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/UsageErrorResponse" } } },
+            "description": "Returns a stable redacted error code."
           }
         }
       }

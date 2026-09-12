@@ -560,6 +560,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.browserProfiles(response, request)
+	case ConfigurationPacksPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserConfigurationPacks(response, request)
 	case ProfileLifecyclePath:
 		if !server.authorize(response, request) {
 			return

@@ -72,6 +72,46 @@ func (store *Store) GetConfigurationPack(ctx context.Context, id, version string
 	return store.getConfigurationPack(ctx, id, version)
 }
 
+func (store *Store) ListConfigurationPacks(ctx context.Context) ([]configpack.Pack, error) {
+	if store == nil || store.db == nil {
+		return nil, coded(apperrors.StoreReadFailed, ErrConfigurationPackState)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(ctx, `SELECT configuration_pack_id, pack_version, state, content_digest, content_json, created_at
+		FROM configuration_pack_versions ORDER BY configuration_pack_id, pack_version`)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+	}
+	defer rows.Close()
+	packs := make([]configpack.Pack, 0)
+	for rows.Next() {
+		var id, version, state, createdAt string
+		var digest, content []byte
+		if err := rows.Scan(&id, &version, &state, &digest, &content, &createdAt); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+		}
+		files, err := configpack.UnmarshalFiles(content)
+		if err != nil || !validPackDigest(digest, files) {
+			return nil, apperrors.New(apperrors.ConfigurationPackInvalid, configpack.ErrInvalid)
+		}
+		created, err := parseStoredTime(createdAt)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+		}
+		pack := configpack.Pack{ID: id, Version: version, State: configpack.State(state), Digest: hex.EncodeToString(digest), Files: files, CreatedAt: created}
+		if err := pack.Validate(); err != nil {
+			return nil, err
+		}
+		packs = append(packs, pack)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrConfigurationPackState, err))
+	}
+	return packs, nil
+}
+
 func (store *Store) getConfigurationPack(ctx context.Context, id, version string) (configpack.Pack, error) {
 	var state, createdAt string
 	var digest, content []byte
