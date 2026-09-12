@@ -18,7 +18,8 @@ The current preview includes:
 - normalized usage evidence, activity, projects, and analytics;
 - repository-first checkpoints and Safe Continuation handoffs;
 - reviewed Shared Configuration Packs;
-- an authenticated, loopback-only dashboard with Overview, Profiles, and Sessions flows.
+- an authenticated, loopback-only dashboard with Overview, Profiles, Sessions,
+  and Capacity/Compare Analytics flows.
 
 Some dashboard destinations remain placeholders, persistent native service
 installation is not yet an end-user feature, and no supported binary release
@@ -244,6 +245,10 @@ Implemented dashboard flows include:
 - **Sessions:** one metadata timeline with profile/project/date/record-type
   filters, independent launch and observed details, source/provenance and
   correlation confidence, keyboard return, and narrow-screen disclosures.
+- **Analytics:** selected-profile Capacity history with range and provider-window
+  filters, a native chart backed by an equivalent semantic table, and an explicit
+  Compare view that keeps identities, subscription windows, evidence state,
+  source, provenance, and API credit/spend units separate.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
@@ -349,6 +354,28 @@ Managed Launches and Observed Sessions remain distinct record types. Correlation
 metadata is evidence, not proof that two records are the same process.
 
 ## Analytics, retention, and export
+
+Open **Analytics** (under **More** on narrow screens) for retained usage history.
+**Capacity** starts in the selected profile scope and can request 30 days, 90
+days, 13 months, or all retained history. The provider-window filter changes
+which compatible percentage series are shown; it does not combine limits or
+reinterpret their provider reset boundaries. Missing months remain explicit
+gaps. The chart and its semantic table use the same filtered samples, and table
+rows become disclosures on narrow screens.
+
+**Compare** is an explicit Combined Identity View. It does not change Selected
+Profile and never pools quotas. Each profile retains its own availability,
+evidence age, source, provenance, capture time, and provider windows. API
+credit/spend appears only when the service has compatible currency or credit
+metrics; ordinary token or percentage measurements are not relabeled as money.
+The Tokens, Projects, Models, and Activity tabs remain unavailable in this
+development preview.
+
+History reloads read the local service database; they do not collect new
+provider evidence. Use **Refresh** or `usage refresh` for supported collection.
+The dashboard receives only the service's allowlisted aggregate projection—no
+Identity Home paths, workspace names, raw provider payloads, or authentication
+material.
 
 Use `--json` where machine-readable output is needed. Review a dry run before
 purging or exporting:

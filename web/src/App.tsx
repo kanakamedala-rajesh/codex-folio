@@ -20,6 +20,7 @@ import { copy as c, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
 import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
+import { Analytics } from "./Analytics";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -106,12 +107,12 @@ function Capacity({ snapshot, now }: { snapshot?: UsageSnapshotResponse; now: nu
                   >
                     <path
                       className="stroke-rule"
-                      d="M37 153 A100 100 0 1 1 203 153"
+                      d="M37 163 A100 100 0 1 1 203 163"
                       fill="none"
                       strokeWidth="12"
                     />
                     <path
-                      d="M37 153 A100 100 0 1 1 203 153"
+                      d="M37 163 A100 100 0 1 1 203 163"
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="12"
@@ -470,6 +471,20 @@ export function App() {
     } else if (error instanceof TypeError) setStatus("unavailable");
     else setMessage(c.refreshFailed);
   };
+  const readAnalyticsHistory = async (profileId: string, from: string) =>
+    api.manageAnalyticsHistory(
+      {
+        action: "aggregates",
+        scope: {
+          profile_id: profileId,
+          project_id: "*",
+          from,
+          to: "all",
+          classes: ["aggregates"],
+        },
+      },
+      { headers: { "X-CodexFolio-CSRF": csrf.current } },
+    );
   async function load(includeProfiles = false) {
     const [next, selected, inventory] = await Promise.all([
       api.getAnalytics("combined_identity"),
@@ -933,6 +948,16 @@ export function App() {
                       ?.eligible,
                   )
                 }
+              />
+            ) : route === "Analytics" && data ? (
+              <Analytics
+                key={selection?.profile_id ?? "unselected"}
+                data={data}
+                selection={selection}
+                now={now}
+                heading={heading}
+                readHistory={readAnalyticsHistory}
+                expired={failure}
               />
             ) : (
               <>

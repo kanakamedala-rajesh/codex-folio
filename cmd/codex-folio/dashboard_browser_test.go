@@ -255,7 +255,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	service := &usageCommandService{workflow: workflow, resolver: launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.153.4"}}, store: state}
 	for _, alias := range []string{"Work", "Personal"} {
 		if _, err := service.Refresh(context.Background(), alias, usage.TriggerExplicitRefresh); err != nil {
-			t.Fatal(err)
+			t.Fatalf("refresh current dashboard fixture for %s: %v", alias, err)
 		}
 	}
 	if err := os.WriteFile(control, []byte("offline"), 0600); err != nil {
@@ -311,7 +311,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, CommandToken: "browser-fixture-command"})
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,6 +383,47 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			}
 		}
 	}()
+	analyticsSeedErrors := make(chan error, 1)
+	if suite == "deep" {
+		go func() {
+			seeded := false
+			for {
+				select {
+				case <-stopLaunches:
+					return
+				case <-time.After(10 * time.Millisecond):
+				}
+				mode, readErr := os.ReadFile(control)
+				if readErr != nil {
+					continue
+				}
+				if string(mode) == "analytics-seed" && !seeded {
+					if seedErr := seedDashboardAnalyticsHistory(state); seedErr != nil {
+						analyticsSeedErrors <- seedErr
+						_ = os.WriteFile(control, []byte("analytics-seed-failed"), 0600)
+						return
+					}
+					if writeErr := os.WriteFile(control, []byte("analytics-seeded"), 0600); writeErr != nil {
+						analyticsSeedErrors <- writeErr
+						return
+					}
+					seeded = true
+				}
+				if string(mode) == "analytics-clean" && seeded {
+					scope := usage.HistoryScope{ProfileID: "*", ProjectID: "*", From: "all", To: "all", Classes: []string{"aggregates"}}
+					if _, purgeErr := state.PurgeAnalytics(context.Background(), scope, scope.Confirmation()); purgeErr != nil {
+						analyticsSeedErrors <- purgeErr
+						_ = os.WriteFile(control, []byte("analytics-clean-failed"), 0600)
+						return
+					}
+					if writeErr := os.WriteFile(control, []byte("analytics-cleaned"), 0600); writeErr != nil {
+						analyticsSeedErrors <- writeErr
+					}
+					return
+				}
+			}
+		}()
+	}
 	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
 	if suite == "benchmark" {
@@ -413,6 +454,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	select {
 	case launchErr := <-launchErrors:
 		t.Fatal("browser launch fixture failed:", launchErr)
+	default:
+	}
+	select {
+	case seedErr := <-analyticsSeedErrors:
+		t.Fatal("browser analytics fixture failed:", seedErr)
 	default:
 	}
 	if suite == "deep" {
@@ -471,6 +517,82 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	record, err := state.GetManagedLaunch(context.Background(), plan.LeaseID)
 	if err != nil || record.ProfileAlias != "Work" || record.State != launch.StateRunning {
 		t.Fatal("selection changed running launch")
+	}
+	return nil
+}
+
+func seedDashboardAnalyticsHistory(state *store.Store) error {
+	ctx := context.Background()
+	metrics := usage.Registry()[:2]
+	for _, alias := range []string{"Work", "Personal"} {
+		target, err := state.ResolveUsageProfile(ctx, alias)
+		if err != nil {
+			return fmt.Errorf("resolve analytics fixture profile %s: %w", alias, err)
+		}
+		target.LoginIdentity = "analytics-shared-login@example.test"
+		target.Workspace = "analytics-private-workspace"
+		for monthIndex := 0; monthIndex < 13; monthIndex++ {
+			if monthIndex == 3 {
+				continue
+			}
+			captured := time.Date(2025, time.August+time.Month(monthIndex), 1, 23, 30, 0, 0, time.UTC)
+			snapshot := usage.NewUnavailableSnapshot("0.153.4", captured, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+			snapshot.Status = usage.AvailabilityPartial
+			snapshot.TriggerReason = usage.TriggerExplicitRefresh
+			for metricIndex, metric := range metrics {
+				start := captured.Add(-time.Duration([]int{300, 10080}[metricIndex]) * time.Minute)
+				end := captured.Add(time.Duration([]int{300, 10080}[metricIndex]) * time.Minute)
+				provenance := usage.ProvenanceProvider
+				source, sourceVersion := usage.SourceCodexAppServer, "0.153.4"
+				freshness, availability := usage.FreshnessFresh, usage.AvailabilityAvailable
+				assumptions, uncertainty := "", ""
+				if monthIndex == 1 && metricIndex == 1 {
+					provenance, source, sourceVersion = usage.ProvenanceLocal, usage.SourceDerived, "derived-v1"
+				}
+				if monthIndex == 2 && metricIndex == 0 {
+					provenance, source, sourceVersion = usage.ProvenanceEstimated, usage.SourceDerived, "estimate-v1"
+					assumptions, uncertainty = "bounded fixture estimate", "not provider reported"
+				}
+				if monthIndex == 4 && metricIndex == 0 {
+					freshness, availability = usage.FreshnessStale, usage.AvailabilityStale
+				}
+				if monthIndex == 5 && metricIndex == 1 {
+					availability = usage.AvailabilityContradictory
+				}
+				observation := usage.Observation{
+					Metric: metric, Value: float64(18 + monthIndex*2 + metricIndex*7),
+					ObservedAt: captured, CapturedAt: captured, WindowStart: &start, WindowEnd: &end,
+					WindowTimezone: "UTC", Source: source, SourceVersion: sourceVersion,
+					Provenance: provenance, Freshness: freshness, Availability: availability,
+					Assumptions: assumptions, Uncertainty: uncertainty,
+				}
+				snapshot.Observations = append(snapshot.Observations, observation)
+				if monthIndex == 5 && metricIndex == 1 {
+					conflict := observation
+					conflict.Value = 77
+					conflict.Source = usage.SourceDerived
+					conflict.SourceVersion = "conflict-v1"
+					conflict.Provenance = usage.ProvenanceLocal
+					snapshot.Observations = append(snapshot.Observations, conflict)
+				}
+				snapshot.Availability[metricIndex].State = availability
+				snapshot.Availability[metricIndex].Reason = ""
+				snapshot.Availability[metricIndex].Provenance = provenance
+			}
+			if _, err := state.SaveUsageSnapshot(ctx, target, snapshot); err != nil {
+				return fmt.Errorf("save analytics fixture profile %s month %d: %w", alias, monthIndex, err)
+			}
+		}
+	}
+	if _, err := state.SetAnalyticsRetention(ctx, "30"); err != nil {
+		return fmt.Errorf("set analytics fixture retention: %w", err)
+	}
+	result, err := state.RetainAnalytics(ctx)
+	if err != nil {
+		return fmt.Errorf("compact analytics fixture: %w", err)
+	}
+	if result.More {
+		return fmt.Errorf("compact analytics fixture left more work: %#v", result)
 	}
 	return nil
 }

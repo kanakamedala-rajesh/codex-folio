@@ -8,6 +8,7 @@ import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
 import axe from "axe-core";
 import { testSessions } from "./sessions-browser-test.mjs";
+import { testAnalytics } from "./analytics-browser-test.mjs";
 
 const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
 assert.ok(["deep", "smoke", "benchmark", "reentry"].includes(phase), "unknown browser phase");
@@ -169,6 +170,16 @@ try {
   } else if (phase === "reentry") {
     await page.goto(link);
     await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
+    const capacityGauges = page.locator('main svg[viewBox="0 0 240 175"]');
+    assert.equal(await capacityGauges.count(), 2);
+    assert.ok(
+      await capacityGauges.evaluateAll((gauges) =>
+        gauges.every((gauge) =>
+          [...gauge.querySelectorAll("path")].every((path) => path.getBBox().y >= 6),
+        ),
+      ),
+      "capacity gauge arc geometry must keep its complete stroke inside the SVG viewport",
+    );
     assert.ok(!page.url().includes("bootstrap="));
     await page.waitForFunction(() => !document.querySelector("select")?.disabled);
     await context.setOffline(true);
@@ -299,6 +310,16 @@ try {
       await choose("Work");
       await capture("overview-wide", 1440, 1000);
       await testSessions({ page, context, link, capture, scanAccessibility, check });
+      await testAnalytics({
+        page,
+        link,
+        control,
+        capture,
+        scanAccessibility,
+        check,
+        results,
+        axeSource: axe.source,
+      });
       assert.notEqual(
         await page
           .getByRole("navigation", { name: "Primary", exact: true })
