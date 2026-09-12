@@ -91,6 +91,16 @@ async function profileAction(name) {
   const response = await completed;
   assert.equal(response.status(), 200, await response.text());
 }
+async function lifecycleAction(name, action) {
+  const completed = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/profile-lifecycle") &&
+      response.request().method() === "POST" &&
+      response.request().postDataJSON().action === action,
+  );
+  await page.getByRole("button", { name, exact: true }).click();
+  return completed;
+}
 async function capture(name, width, height) {
   await page.setViewportSize({ width, height });
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -417,10 +427,13 @@ try {
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Personal", exact: true }).click();
+      const selectedProfile = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/selection") && response.request().method() === "PUT",
+      );
       await page.getByRole("button", { name: "Select", exact: true }).click();
-      await page
-        .getByText("Selected Profile updated for future interactive launches.", { exact: true })
-        .waitFor();
+      assert.equal((await selectedProfile).status(), 200);
+      await page.getByText("Ready · Selected", { exact: true }).first().waitFor();
       await capture("profiles-wide", 1440, 1000);
       await capture("profiles-narrow", 390, 844);
       await capture("profiles-reflow", 720, 1000);
@@ -470,7 +483,116 @@ try {
         await capture(mode, 1440, 1000);
         check(`${mode} provider fixture remains explicit`);
       }
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Profiles", exact: true })
+        .click();
+      await assertFocusedHeading("Profiles");
+
+      await page.getByRole("button", { name: "Work Studio", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      assert.equal(
+        await page.getByRole("heading", { name: "Review local removal", exact: true }).count(),
+        1,
+        await page.locator("main").innerText(),
+      );
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Work");
+      const blockedRemoval = lifecycleAction("Confirm local removal", "remove");
+      assert.equal((await blockedRemoval).status(), 409);
+      await page
+        .getByText("Removal is blocked while this Identity Profile has a running Managed Launch.", {
+          exact: true,
+        })
+        .waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+      await page.getByRole("button", { name: "Research", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");
+      const quarantine = await lifecycleAction("Confirm local removal", "remove");
+      assert.equal(quarantine.status(), 200, await quarantine.text());
+      await page
+        .getByText("Identity Profile moved to seven-day local quarantine.", { exact: true })
+        .waitFor();
+      assert.match(await page.locator("main").innerText(), /Recoverable until/);
+      await lifecycleAction("Restore", "restore");
+      await page
+        .getByText("Identity Profile restored from local quarantine.", { exact: true })
+        .waitFor();
+
+      await page.getByRole("button", { name: "Research", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");
+      await lifecycleAction("Confirm local removal", "remove");
+      await page
+        .getByText("Identity Profile moved to seven-day local quarantine.", { exact: true })
+        .waitFor();
+      await page.getByRole("button", { name: "Purge permanently", exact: true }).click();
+      await assertFocusedHeading("Review final local purge");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");
+      await lifecycleAction("Confirm final purge", "purge");
+      await page
+        .getByText("Quarantined local profile permanently purged.", { exact: true })
+        .waitFor();
+
+      await choose("Work", false);
+      await choose("Personal", false);
+      await page.getByRole("button", { name: "Personal", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("personal");
+      assert.equal(
+        await page.getByRole("button", { name: "Confirm local removal", exact: true }).isDisabled(),
+        true,
+      );
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Personal", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Personal");
+      assert.match(await page.locator("main").innerText(), /Replacement Selected Profile/);
+      assert.equal(
+        await page.getByRole("button", { name: "Confirm local removal", exact: true }).isDisabled(),
+        true,
+      );
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.equal(await scope().inputValue(), "Personal");
+      assert.match(
+        await page
+          .getByRole("row")
+          .filter({ has: page.getByRole("button", { name: "Personal", exact: true }) })
+          .innerText(),
+        /Ready · Selected/,
+      );
+      await page.getByRole("button", { name: "Personal", exact: true }).click();
+      await page.getByText("Removal and recovery", { exact: true }).click();
+      await lifecycleAction("Review local removal", "preview");
+      await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Personal");
+      await page.getByLabel("Replacement Selected Profile", { exact: true }).selectOption("Work");
+      await scanAccessibility("profile-removal");
+      await capture("removal-wide", 1440, 1000);
+      await capture("removal-narrow", 390, 844);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await lifecycleAction("Confirm local removal", "remove");
+      await page
+        .getByText(
+          "Local registration removed. The Referenced Identity Home and remote OpenAI identity are unchanged.",
+          { exact: true },
+        )
+        .waitFor();
+      assert.match(await page.locator("main").innerText(), /Work Studio/);
+      check(
+        "managed quarantine, restore and purge; referenced non-ownership; running, selection, exact-confirmation and cancellation protections",
+      );
       // Session-expiry checks advance only the fixture's server clock.
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Overview", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Refresh", exact: true }).waitFor();
       writeFileSync(control, "expired");
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
       await page.getByRole("heading", { name: "Relaunch CodexFolio", exact: true }).waitFor();

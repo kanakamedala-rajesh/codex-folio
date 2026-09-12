@@ -206,6 +206,13 @@ before purge; restore reverses quarantine while eligible. Referenced removal
 unregisters the profile and leaves external files untouched. Read the command's
 preview and error before retrying a blocked lifecycle action.
 
+The Profiles dashboard exposes the same service-enforced lifecycle. Open
+**Removal and recovery**, review the local-only effect, type the exact CLI Alias,
+and choose a ready replacement when removing the Selected Profile. Quarantined
+Managed profiles show their recovery deadline with **Restore** and explicit
+**Purge permanently** actions. Cancellation and mismatched confirmation leave
+profile state unchanged.
+
 ## Dashboard operation and security
 
 Start the service and copy its printed URL into a local browser:
@@ -230,7 +237,8 @@ Implemented dashboard flows include:
   Project Identity launch view with terminal handoff and lifecycle status;
 - **Profiles:** safe inventory, Managed/Referenced onboarding, Pending resume,
   local metadata edits, selection, installed-Codex discovery, and
-  reauthentication, including the same launch view for eligible profiles.
+  reauthentication, local removal, managed quarantine recovery/purge, and the
+  same launch view for eligible profiles.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.

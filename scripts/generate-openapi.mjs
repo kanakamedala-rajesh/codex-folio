@@ -144,6 +144,7 @@ function validateContract(contract, productVersion) {
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
+  const profileLifecyclePath = `/api/${apiVersion}/profile-lifecycle`;
   const profilesPath = `/api/${apiVersion}/profiles`;
   const projectsPath = `/api/${apiVersion}/projects`;
   const selectionPath = `/api/${apiVersion}/selection`;
@@ -158,6 +159,7 @@ function validateContract(contract, productVersion) {
       historyPath,
       bootstrapPath,
       metadataPath,
+      profileLifecyclePath,
       profilesPath,
       projectsPath,
       selectionPath,
@@ -302,6 +304,21 @@ function validateContract(contract, productVersion) {
     ["200", "default"],
   );
 
+  const profileLifecyclePathItem = contract.paths[profileLifecyclePath];
+  assertObject(profileLifecyclePathItem, `path ${profileLifecyclePath}`);
+  assertExactKeys(profileLifecyclePathItem, ["get", "post"], `path ${profileLifecyclePath}`);
+  const listProfileQuarantineOperation = profileLifecyclePathItem.get;
+  const manageProfileLifecycleOperation = profileLifecyclePathItem.post;
+  assertExactKeys(listProfileQuarantineOperation, ["operationId", "responses"], `GET ${profileLifecyclePath}`);
+  assertExactKeys(manageProfileLifecycleOperation, ["operationId", "requestBody", "responses"], `POST ${profileLifecyclePath}`);
+  assertIdentifier(listProfileQuarantineOperation.operationId, "list profile quarantine operationId");
+  assertIdentifier(manageProfileLifecycleOperation.operationId, "manage profile lifecycle operationId");
+  const profileLifecycleListResponseReference = responseReference(listProfileQuarantineOperation, `GET ${profileLifecyclePath}`, ["200", "default"]);
+  const profileLifecycleRequestReference = requestReference(manageProfileLifecycleOperation.requestBody, `POST ${profileLifecyclePath} request body`);
+  const profileLifecycleRecordReference = responseReference(manageProfileLifecycleOperation, `POST ${profileLifecyclePath}`, ["200", "default"]);
+  assertEqual(errorResponseReference(listProfileQuarantineOperation, `GET ${profileLifecyclePath}`), "#/$defs/UsageErrorResponse", "profile lifecycle list error response");
+  assertEqual(errorResponseReference(manageProfileLifecycleOperation, `POST ${profileLifecyclePath}`), "#/$defs/UsageErrorResponse", "profile lifecycle mutation error response");
+
   const usageOperation = contract.paths[usageRefreshPath]?.post;
   assertObject(usageOperation, `POST ${usageRefreshPath}`);
   assertExactKeys(usageOperation, ["operationId", "requestBody", "responses"], `POST ${usageRefreshPath}`);
@@ -364,6 +381,9 @@ function validateContract(contract, productVersion) {
     "UsageMetricAmbiguity",
     "UsageCandidate",
     ...historySchemaNames,
+    schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
+    schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
+    schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -463,6 +483,9 @@ function validateContract(contract, productVersion) {
     contract.$defs.UsageCandidate,
     "UsageCandidate",
   );
+  const profileLifecycleRecordFields = schemaFields(contract.$defs.ProfileLifecycleRecord, "ProfileLifecycleRecord");
+  const profileLifecycleListResponseFields = schemaFields(contract.$defs.ProfileLifecycleListResponse, "ProfileLifecycleListResponse");
+  const profileLifecycleRequestFields = schemaFields(contract.$defs.ProfileLifecycleRequest, "ProfileLifecycleRequest");
 
   return {
     historyPath,
@@ -498,6 +521,12 @@ function validateContract(contract, productVersion) {
     profileEditRequestFields,
     profileAuthenticationRequestFields,
     profileAuthenticationResponseFields,
+    profileLifecyclePath,
+    listProfileQuarantineOperationId: listProfileQuarantineOperation.operationId,
+    manageProfileLifecycleOperationId: manageProfileLifecycleOperation.operationId,
+    profileLifecycleRecordFields,
+    profileLifecycleListResponseFields,
+    profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType: "ProjectIdentity",
     projectsOperationId: projectsOperation.operationId,
@@ -657,6 +686,12 @@ function renderGo(productVersion, sourceHash, contractShape) {
     profileEditRequestFields,
     profileAuthenticationRequestFields,
     profileAuthenticationResponseFields,
+    profileLifecyclePath,
+    listProfileQuarantineOperationId,
+    manageProfileLifecycleOperationId,
+    profileLifecycleRecordFields,
+    profileLifecycleListResponseFields,
+    profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType,
     projectsOperationId,
@@ -699,6 +734,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const authenticateProfileMethod = goIdentifier(
     authenticateProfileOperationId,
   );
+  const listProfileQuarantineMethod = goIdentifier(listProfileQuarantineOperationId);
+  const manageProfileLifecycleMethod = goIdentifier(manageProfileLifecycleOperationId);
   const projectsMethod = goIdentifier(projectsOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
@@ -724,6 +761,9 @@ function renderGo(productVersion, sourceHash, contractShape) {
       "ProfileAuthenticationResponse",
       profileAuthenticationResponseFields,
     ),
+    renderGoStruct("ProfileLifecycleRecord", profileLifecycleRecordFields),
+    renderGoStruct("ProfileLifecycleListResponse", profileLifecycleListResponseFields),
+    renderGoStruct("ProfileLifecycleRequest", profileLifecycleRequestFields),
     renderGoStruct(projectIdentityType, projectIdentityFields),
     renderGoStruct(projectsResponseType, projectsResponseFields),
     renderGoStruct(selectionRequestType, selectionRequestFields),
@@ -762,6 +802,7 @@ const (
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
 \tMetadataPath         = "${metadataPath}"
+\tProfileLifecyclePath = "${profileLifecyclePath}"
 \tProfilesPath         = "${profilesPath}"
 \tProjectsPath         = "${projectsPath}"
 \tSelectionPath        = "${selectionPath}"
@@ -1001,6 +1042,47 @@ func (client *Client) ${authenticateProfileMethod}(ctx context.Context, input Pr
 \treturn result, response, err
 }
 
+func (client *Client) ${listProfileQuarantineMethod}(ctx context.Context) (ProfileLifecycleListResponse, *http.Response, error) {
+\tvar result ProfileLifecycleListResponse
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfileLifecyclePath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${manageProfileLifecycleMethod}(ctx context.Context, input ProfileLifecycleRequest) (ProfileLifecycleRecord, *http.Response, error) {
+\tvar result ProfileLifecycleRecord
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfileLifecyclePath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
 func (client *Client) ${selectionGetMethod}(ctx context.Context) (${selectionResponseType}, *http.Response, error) {
 \tvar result ${selectionResponseType}
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+SelectionPath, nil)
@@ -1130,6 +1212,12 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     profileEditRequestFields,
     profileAuthenticationRequestFields,
     profileAuthenticationResponseFields,
+    profileLifecyclePath,
+    listProfileQuarantineOperationId,
+    manageProfileLifecycleOperationId,
+    profileLifecycleRecordFields,
+    profileLifecycleListResponseFields,
+    profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType,
     projectsOperationId,
@@ -1201,6 +1289,15 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     .join("\n");
   const profileAuthenticationResponseLines = profileAuthenticationResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const profileLifecycleRecordLines = profileLifecycleRecordFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const profileLifecycleListResponseLines = profileLifecycleListResponseFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const profileLifecycleRequestLines = profileLifecycleRequestFields
+    .map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`)
     .join("\n");
   const projectIdentityLines = projectIdentityFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
@@ -1278,6 +1375,18 @@ ${profileAuthenticationRequestLines}
 
 export interface ProfileAuthenticationResponse {
 ${profileAuthenticationResponseLines}
+}
+
+export interface ProfileLifecycleRecord {
+${profileLifecycleRecordLines}
+}
+
+export interface ProfileLifecycleListResponse {
+${profileLifecycleListResponseLines}
+}
+
+export interface ProfileLifecycleRequest {
+${profileLifecycleRequestLines}
 }
 
 export interface ${projectIdentityType} {
@@ -1416,6 +1525,23 @@ export interface ApiPaths {
       };
     };
   };
+  "${profileLifecyclePath}": {
+    get: {
+      operationId: "${listProfileQuarantineOperationId}";
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleListResponse } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${manageProfileLifecycleOperationId}";
+      requestBody: ProfileLifecycleRequest;
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleRecord } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${selectionPath}": {
     get: {
       operationId: "${selectionGetOperationId}";
@@ -1470,6 +1596,11 @@ export interface CodexFolioApiClient {
     request: ProfileAuthenticationRequest,
     init?: RequestInit,
   ): Promise<ProfileAuthenticationResponse>;
+  ${listProfileQuarantineOperationId}(init?: RequestInit): Promise<ProfileLifecycleListResponse>;
+  ${manageProfileLifecycleOperationId}(
+    request: ProfileLifecycleRequest,
+    init?: RequestInit,
+  ): Promise<ProfileLifecycleRecord>;
   ${projectsOperationId}(init?: RequestInit): Promise<${projectsResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
@@ -1613,6 +1744,38 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ProfileAuthenticationResponse;
+    },
+    async ${listProfileQuarantineOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${profileLifecyclePath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleListResponse;
+    },
+    async ${manageProfileLifecycleOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${profileLifecyclePath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleRecord;
     },
     async ${projectsOperationId}(init = {}) {
       const headers = new Headers(init.headers);

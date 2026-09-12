@@ -306,6 +306,51 @@
       "required": ["profiles"],
       "type": "object"
     },
+    "ProfileLifecycleRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "$ref": "#/$defs/ProfileSummary" },
+        "action": {
+          "enum": ["quarantined", "deregistered", "restored", "purged"],
+          "type": "string"
+        },
+        "state": { "enum": ["", "prepared", "quarantined"], "type": "string" },
+        "quarantined_at": { "type": "string" },
+        "purge_after": { "type": "string" },
+        "remote_identity_affected": { "type": "boolean" }
+      },
+      "required": [
+        "profile",
+        "action",
+        "state",
+        "quarantined_at",
+        "purge_after",
+        "remote_identity_affected"
+      ],
+      "type": "object"
+    },
+    "ProfileLifecycleListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "quarantined": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProfileLifecycleRecord" }
+        }
+      },
+      "required": ["quarantined"],
+      "type": "object"
+    },
+    "ProfileLifecycleRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["preview", "remove", "restore", "purge"], "type": "string" },
+        "alias": { "type": "string" },
+        "replacement": { "type": "string" },
+        "confirmation": { "type": "string" }
+      },
+      "required": ["action", "alias"],
+      "type": "object"
+    },
     "ProfileEditRequest": {
       "additionalProperties": false,
       "properties": {
@@ -734,6 +779,58 @@
               }
             },
             "description": "Prepares or completes Codex-owned authentication without returning raw authentication output."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
+    "/api/v1/profile-lifecycle": {
+      "get": {
+        "operationId": "listProfileQuarantine",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileLifecycleListResponse" }
+              }
+            },
+            "description": "Returns browser-safe managed-home quarantine records with recovery expiry."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "manageProfileLifecycle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileLifecycleRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileLifecycleRecord" }
+              }
+            },
+            "description": "Previews or applies one server-confirmed local Identity Profile lifecycle action."
           },
           "default": {
             "content": {

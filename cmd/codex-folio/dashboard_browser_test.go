@@ -149,6 +149,10 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
+	referencedMarker := filepath.Join(personalHome, "browser-removal-marker")
+	if err := os.WriteFile(referencedMarker, []byte("externally owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	control := filepath.Join(t.TempDir(), "scenario")
 	if err := os.WriteFile(control, []byte("stale-seed"), 0600); err != nil {
 		t.Fatal(err)
@@ -282,7 +286,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err := os.MkdirAll(referencedHome, 0700); err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileAuthentication: profileAuthentication, Launches: launches, Projects: projects, CommandToken: "browser-fixture-command"})
+	profileLifecycle, err := newProfileLifecycle(paths, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, Launches: launches, Projects: projects, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,6 +386,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if runnerErr != nil {
 		t.Fatal("Overview browser journey failed:", runnerErr)
 	}
+	if content, err := os.ReadFile(referencedMarker); err != nil || string(content) != "externally owned" {
+		t.Fatalf("referenced Identity Home marker changed: %q, %v", content, err)
+	}
 	select {
 	case launchErr := <-launchErrors:
 		t.Fatal("browser launch fixture failed:", launchErr)
@@ -400,7 +411,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		}
 		return result
 	}
-	for _, alias := range []string{"Work", "Personal"} {
+	aliases := []string{"Work", "Personal"}
+	if suite == "deep" {
+		aliases = []string{"Work"}
+	}
+	for _, alias := range aliases {
 		if _, err := service.Refresh(context.Background(), alias, usage.TriggerExplicitRefresh); err != nil {
 			t.Fatal(err)
 		}
@@ -420,8 +435,12 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	found := false
+	expectedSelected := "Personal"
+	if suite == "deep" {
+		expectedSelected = "Work"
+	}
 	for _, p := range selected.Profiles {
-		if p.Selected && p.Alias == "Personal" {
+		if p.Selected && p.Alias == expectedSelected {
 			found = true
 		}
 	}

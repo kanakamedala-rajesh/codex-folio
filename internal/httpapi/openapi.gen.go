@@ -19,9 +19,10 @@ const (
 	AnalyticsPath        = "/api/v1/analytics"
 	HistoryPath          = "/api/v1/analytics/history"
 	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "c6402e53d72f3ad12aa5d456690d139f93659cd8ce0a97aed7550fb53350b323"
+	ContractSourceSHA256 = "aef9b2903e8f9887c4fddf59b3ca52ab742b6578281f058afe613105c44150c0"
 	BootstrapPath        = "/api/v1/bootstrap"
 	MetadataPath         = "/api/v1/meta"
+	ProfileLifecyclePath = "/api/v1/profile-lifecycle"
 	ProfilesPath         = "/api/v1/profiles"
 	ProjectsPath         = "/api/v1/projects"
 	SelectionPath        = "/api/v1/selection"
@@ -328,6 +329,26 @@ type ProfileAuthenticationResponse struct {
 	Outcome         string             `json:"outcome"`
 	TerminalCommand string             `json:"terminal_command"`
 	Warnings        []string           `json:"warnings"`
+}
+
+type ProfileLifecycleRecord struct {
+	Profile                ProfileSummary `json:"profile"`
+	Action                 string         `json:"action"`
+	State                  string         `json:"state"`
+	QuarantinedAt          string         `json:"quarantined_at"`
+	PurgeAfter             string         `json:"purge_after"`
+	RemoteIdentityAffected bool           `json:"remote_identity_affected"`
+}
+
+type ProfileLifecycleListResponse struct {
+	Quarantined []ProfileLifecycleRecord `json:"quarantined"`
+}
+
+type ProfileLifecycleRequest struct {
+	Action       string  `json:"action"`
+	Alias        string  `json:"alias"`
+	Replacement  *string `json:"replacement,omitempty"`
+	Confirmation *string `json:"confirmation,omitempty"`
 }
 
 type ProjectIdentity struct {
@@ -707,6 +728,65 @@ func (client *Client) AuthenticateProfile(ctx context.Context, input ProfileAuth
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfilesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ListProfileQuarantine(ctx context.Context) (ProfileLifecycleListResponse, *http.Response, error) {
+	var result ProfileLifecycleListResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfileLifecyclePath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ManageProfileLifecycle(ctx context.Context, input ProfileLifecycleRequest) (ProfileLifecycleRecord, *http.Response, error) {
+	var result ProfileLifecycleRecord
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfileLifecyclePath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}

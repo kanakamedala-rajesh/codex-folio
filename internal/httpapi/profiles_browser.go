@@ -17,6 +17,95 @@ import (
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
+func (server *Server) browserProfileLifecycle(response http.ResponseWriter, request *http.Request) {
+	if server.profileLifecycle == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method == http.MethodGet {
+		records, err := server.profileLifecycle.ListQuarantined(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+			return
+		}
+		result := ProfileLifecycleListResponse{Quarantined: make([]ProfileLifecycleRecord, 0, len(records))}
+		for _, record := range records {
+			projected, err := server.browserLifecycleRecord(request, record)
+			if err != nil {
+				server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+				return
+			}
+			result.Quarantined = append(result.Quarantined, projected)
+		}
+		writeJSON(response, http.StatusOK, result)
+		return
+	}
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodGet+", "+http.MethodPost)
+		return
+	}
+	var input ProfileLifecycleRequest
+	if !server.decodeProfileRequest(response, request, &input) {
+		return
+	}
+	if strings.TrimSpace(input.Alias) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	var record profile.RemovalRecord
+	var err error
+	switch input.Action {
+	case "preview":
+		record, err = server.profileLifecycle.PreviewRemoval(request.Context(), input.Alias)
+	case "remove":
+		record, err = server.profileLifecycle.PreviewRemoval(request.Context(), input.Alias)
+		if err == nil && valueOrEmpty(input.Confirmation) != record.Profile.Alias {
+			err = apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("profile confirmation did not match the exact CLI Alias"))
+		}
+		if err == nil {
+			record, err = server.profileLifecycle.Remove(request.Context(), input.Alias, valueOrEmpty(input.Replacement))
+		}
+	case "restore":
+		record, err = server.profileLifecycle.Restore(request.Context(), input.Alias)
+	case "purge":
+		record, err = server.profileLifecycle.PreviewQuarantined(request.Context(), input.Alias)
+		if err == nil && valueOrEmpty(input.Confirmation) != record.Profile.Alias {
+			err = apperrors.New(apperrors.ProfileConfirmationInvalid, errors.New("profile confirmation did not match the exact CLI Alias"))
+		}
+		if err == nil {
+			record, err = server.profileLifecycle.Purge(request.Context(), input.Alias)
+		}
+	default:
+		err = profile.ErrProfileStateInvalid
+	}
+	if err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileQuarantineInvalid))
+		return
+	}
+	projected, err := server.browserLifecycleRecord(request, record)
+	if err != nil {
+		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+		return
+	}
+	writeJSON(response, http.StatusOK, projected)
+}
+
+func (server *Server) browserLifecycleRecord(request *http.Request, record profile.RemovalRecord) (ProfileLifecycleRecord, error) {
+	projected := browserProfileSummary(record.Profile)
+	return ProfileLifecycleRecord{
+		Profile: projected, Action: string(record.Action), State: string(record.State),
+		QuarantinedAt: lifecycleTime(record.QuarantinedAt), PurgeAfter: lifecycleTime(record.PurgeAfter),
+		RemoteIdentityAffected: record.RemoteIdentityAffected,
+	}, nil
+}
+
+func lifecycleTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
 func (server *Server) browserProfiles(response http.ResponseWriter, request *http.Request) {
 	switch request.Method {
 	case http.MethodGet:
@@ -244,14 +333,7 @@ func (server *Server) profileByAlias(request *http.Request, alias string) (Profi
 }
 
 func (server *Server) browserProfile(request *http.Request, item profile.IdentityProfile) (ProfileSummary, error) {
-	mode := item.IdentityHomeOwnership
-	if mode == "" {
-		mode = profile.HomeOwnershipManaged
-	}
-	result := ProfileSummary{
-		ProfileId: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, LoginIdentity: item.Email, Workspace: item.Workspace,
-		Status: string(item.Status), IdentityHomeMode: string(mode), AuthenticationMethod: string(item.AuthenticationMethod), Selected: item.Selected,
-	}
+	result := browserProfileSummary(item)
 	if server.configurationPacks != nil {
 		assignment, err := server.configurationPacks.Assignment(request.Context(), item.Alias)
 		if err == nil {
@@ -275,6 +357,17 @@ func (server *Server) browserProfile(request *http.Request, item profile.Identit
 		}
 	}
 	return result, nil
+}
+
+func browserProfileSummary(item profile.IdentityProfile) ProfileSummary {
+	mode := item.IdentityHomeOwnership
+	if mode == "" {
+		mode = profile.HomeOwnershipManaged
+	}
+	return ProfileSummary{
+		ProfileId: item.ID, Alias: item.Alias, DisplayName: item.DisplayName, LoginIdentity: item.Email, Workspace: item.Workspace,
+		Status: string(item.Status), IdentityHomeMode: string(mode), AuthenticationMethod: string(item.AuthenticationMethod), Selected: item.Selected,
+	}
 }
 
 func profileStages(stages profile.SetupStages) ProfileSetupStages {

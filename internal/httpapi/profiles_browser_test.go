@@ -8,9 +8,42 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/profile"
 )
+
+type browserLifecycleRepository struct {
+	record      profile.RemovalRecord
+	replacement string
+}
+
+func (repository *browserLifecycleRepository) ListQuarantinedProfiles(context.Context) ([]profile.RemovalRecord, error) {
+	return []profile.RemovalRecord{repository.record}, nil
+}
+
+func (repository *browserLifecycleRepository) BeginProfileRemoval(_ context.Context, _ string, replacement string) (profile.RemovalRecord, error) {
+	repository.replacement = replacement
+	return repository.record, nil
+}
+func (*browserLifecycleRepository) CompleteProfileQuarantine(context.Context, string) error {
+	return nil
+}
+func (*browserLifecycleRepository) CancelProfileRemoval(context.Context, string) error { return nil }
+func (repository *browserLifecycleRepository) GetProfile(context.Context, string) (profile.IdentityProfile, error) {
+	return repository.record.Profile, nil
+}
+func (repository *browserLifecycleRepository) GetQuarantinedProfile(context.Context, string) (profile.RemovalRecord, error) {
+	return repository.record, nil
+}
+func (*browserLifecycleRepository) RestoreProfile(context.Context, string) error { return nil }
+func (*browserLifecycleRepository) PurgeProfile(context.Context, string) error   { return nil }
+
+type browserHomeLifecycle struct{}
+
+func (browserHomeLifecycle) Quarantine(context.Context, string, string) error { return nil }
+func (browserHomeLifecycle) Restore(context.Context, string, string) error    { return nil }
+func (browserHomeLifecycle) Purge(context.Context, string) error              { return nil }
 
 const testProfilesPath = "/api/v1/profiles"
 
@@ -191,5 +224,73 @@ func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testi
 	wantReauthenticationCommand := `codex-folio profile reauthenticate Work --device-code ` + quotedOverride
 	if reauthenticated.StatusCode != http.StatusOK || reauthenticatedResponse.Outcome != "terminal_required" || reauthenticatedResponse.TerminalCommand != wantReauthenticationCommand {
 		t.Fatalf("reauthenticated status/response = %d/%#v", reauthenticated.StatusCode, reauthenticatedResponse)
+	}
+}
+
+func TestAuthorizedProfileLifecycleRequiresServerConfirmationAndReturnsSafeRecord(t *testing.T) {
+	repository := &browserLifecycleRepository{record: profile.RemovalRecord{
+		Profile: profile.IdentityProfile{
+			ID: "profile-1", Alias: "Work", DisplayName: "Work", Status: profile.StatusReady,
+			IdentityHomeOwnership: profile.HomeOwnershipManaged, IdentityHomePath: "/secret/home",
+		},
+		Action: profile.RemovalQuarantined, State: profile.QuarantineReady,
+		QuarantinedAt: time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC),
+		PurgeAfter:    time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC),
+	}}
+	lifecycle, err := profile.NewLifecycle(repository, browserHomeLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, _, _ := startTestServer(t, Options{ProfileLifecycle: lifecycle})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	_ = exchange.Body.Close()
+	quarantine, err := doRequest(client, http.MethodGet, origin+ProfileLifecyclePath, server.Address(), origin, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quarantineBody := readBody(t, quarantine)
+	if quarantine.StatusCode != http.StatusOK || !strings.Contains(quarantineBody, `"quarantined":[`) || !strings.Contains(quarantineBody, `"purge_after":"2026-09-18T10:00:00Z"`) {
+		t.Fatalf("quarantine status/body = %d/%s", quarantine.StatusCode, quarantineBody)
+	}
+	withoutCSRF, err := doRequest(client, http.MethodPost, origin+ProfileLifecyclePath, server.Address(), origin, []byte(`{"action":"remove","alias":"Work","replacement":"Personal","confirmation":"Work"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutCSRF.StatusCode != http.StatusForbidden || repository.replacement != "" {
+		t.Fatalf("remove without CSRF status/replacement = %d/%q, want %d/empty", withoutCSRF.StatusCode, repository.replacement, http.StatusForbidden)
+	}
+	_ = withoutCSRF.Body.Close()
+
+	mismatched, err := doRequest(client, http.MethodPost, origin+ProfileLifecyclePath, server.Address(), origin, []byte(`{"action":"remove","alias":"Work","replacement":"Personal","confirmation":"work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedBody := readBody(t, mismatched)
+	if mismatched.StatusCode != http.StatusConflict || !strings.Contains(mismatchedBody, `"code":"CF_PROFILE_CONFIRMATION_INVALID"`) {
+		t.Fatalf("mismatched confirmation status/body = %d/%s", mismatched.StatusCode, mismatchedBody)
+	}
+
+	removed, err := doRequest(client, http.MethodPost, origin+ProfileLifecyclePath, server.Address(), origin, []byte(`{"action":"remove","alias":"Work","replacement":"Personal","confirmation":"Work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removedBody := readBody(t, removed)
+	if removed.StatusCode != http.StatusOK || !strings.Contains(removedBody, `"action":"quarantined"`) || !strings.Contains(removedBody, `"purge_after":"2026-09-18T10:00:00Z"`) || repository.replacement != "Personal" {
+		t.Fatalf("remove status/body/replacement = %d/%s/%q", removed.StatusCode, removedBody, repository.replacement)
+	}
+	for _, excluded := range []string{"/secret/home", "identity_home_id", "identity_home_path"} {
+		if strings.Contains(removedBody, excluded) {
+			t.Fatalf("lifecycle response exposed %q: %s", excluded, removedBody)
+		}
 	}
 }

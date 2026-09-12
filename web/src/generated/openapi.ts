@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "c6402e53d72f3ad12aa5d456690d139f93659cd8ce0a97aed7550fb53350b323" as const;
+  "aef9b2903e8f9887c4fddf59b3ca52ab742b6578281f058afe613105c44150c0" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -306,6 +306,26 @@ export interface ProfileAuthenticationResponse {
   warnings: string[];
 }
 
+export interface ProfileLifecycleRecord {
+  profile: ProfileSummary;
+  action: string;
+  state: string;
+  quarantined_at: string;
+  purge_after: string;
+  remote_identity_affected: boolean;
+}
+
+export interface ProfileLifecycleListResponse {
+  quarantined: ProfileLifecycleRecord[];
+}
+
+export interface ProfileLifecycleRequest {
+  action: string;
+  alias: string;
+  replacement?: string;
+  confirmation?: string;
+}
+
 export interface ProjectIdentity {
   project_id: string;
   alias: string;
@@ -496,6 +516,23 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/profile-lifecycle": {
+    get: {
+      operationId: "listProfileQuarantine";
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleListResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageProfileLifecycle";
+      requestBody: ProfileLifecycleRequest;
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleRecord } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/selection": {
     get: {
       operationId: "getSelection";
@@ -550,6 +587,11 @@ export interface CodexFolioApiClient {
     request: ProfileAuthenticationRequest,
     init?: RequestInit,
   ): Promise<ProfileAuthenticationResponse>;
+  listProfileQuarantine(init?: RequestInit): Promise<ProfileLifecycleListResponse>;
+  manageProfileLifecycle(
+    request: ProfileLifecycleRequest,
+    init?: RequestInit,
+  ): Promise<ProfileLifecycleRecord>;
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
@@ -693,6 +735,38 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ProfileAuthenticationResponse;
+    },
+    async listProfileQuarantine(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profile-lifecycle", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleListResponse;
+    },
+    async manageProfileLifecycle(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profile-lifecycle", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleRecord;
     },
     async getProjects(init = {}) {
       const headers = new Headers(init.headers);

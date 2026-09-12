@@ -10,12 +10,17 @@ import (
 
 type LifecycleRepository interface {
 	BeginProfileRemoval(context.Context, string, string) (RemovalRecord, error)
+	ListQuarantinedProfiles(context.Context) ([]RemovalRecord, error)
 	CompleteProfileQuarantine(context.Context, string) error
 	CancelProfileRemoval(context.Context, string) error
 	GetProfile(context.Context, string) (IdentityProfile, error)
 	GetQuarantinedProfile(context.Context, string) (RemovalRecord, error)
 	RestoreProfile(context.Context, string) error
 	PurgeProfile(context.Context, string) error
+}
+
+func (lifecycle *Lifecycle) ListQuarantined(ctx context.Context) ([]RemovalRecord, error) {
+	return lifecycle.repository.ListQuarantinedProfiles(contextOrBackground(ctx))
 }
 
 func (lifecycle *Lifecycle) PreviewRemoval(ctx context.Context, alias string) (RemovalRecord, error) {

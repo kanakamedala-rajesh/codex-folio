@@ -121,7 +121,9 @@ normal terminal input, signals, and exit status are preserved.
 In the dashboard:
 
 - **Overview** shows current or last-known usage evidence and eligible profiles.
-- **Profiles** lets you add, resume, edit, select, or reauthenticate profiles.
+- **Profiles** lets you add, resume, edit, select, reauthenticate, remove, restore,
+  or purge profiles. Removal requires the exact CLI Alias; selected profiles need
+  a replacement, and running Managed Launches block removal.
 - **Refresh** requests new supported usage evidence.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
@@ -134,6 +136,10 @@ start; a nonzero exit is not quota evidence by itself.
 
 Unavailable or stale evidence is not zero usage. Check its state, source, and
 capture time before acting on it.
+
+Managed Identity Homes remain recoverable in Profiles for seven days after
+removal. Referenced Identity Homes are only unregistered: CodexFolio never
+deletes or rewrites their external files or the remote OpenAI identity.
 
 ## 6. Stop or try again safely
 

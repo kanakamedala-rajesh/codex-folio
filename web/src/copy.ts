@@ -147,8 +147,39 @@ export const profileCopy = {
   launch: "Launch Codex",
   launchGuidance: "Run this in your project terminal; the dashboard has not launched Codex:",
   removal: "Removal and recovery",
+  reviewRemoval: "Review local removal",
+  remoteUnaffected: "Profiles · This never deletes a remote OpenAI identity",
+  removalWarning:
+    "Running Managed Launches block removal. Choose a replacement if removing Selected Profile.",
+  confirmAlias: "Type CLI Alias to confirm",
+  confirmAliasHelp: "The value must match the exact CLI Alias, including letter case.",
+  replacement: "Replacement Selected Profile",
+  chooseReplacement: "Choose a valid replacement",
+  confirmRemoval: "Confirm local removal",
   managedRemoval: "Managed home: seven-day quarantine.",
   referencedRemoval: "Referenced home: unregister only; external files stay in place.",
+  managedRemovalDetail:
+    "Managed Identity Home: seven-day quarantine, then explicit purge. Restore within quarantine to recover the profile.",
+  referencedRemovalDetail:
+    "Referenced Identity Home: unregister only. External files are never quarantined, deleted or rewritten.",
+  recovery: "Managed Identity Home recovery",
+  recoverableUntil: "Recoverable until",
+  restore: "Restore",
+  purge: "Purge permanently",
+  reviewPurge: "Review final local purge",
+  purgeWarning:
+    "Final purge permanently removes this quarantined local profile and its Managed Identity Home.",
+  confirmPurge: "Confirm final purge",
+  quarantinedMessage: "Identity Profile moved to seven-day local quarantine.",
+  deregisteredMessage:
+    "Local registration removed. The Referenced Identity Home and remote OpenAI identity are unchanged.",
+  restoredMessage: "Identity Profile restored from local quarantine.",
+  purgedMessage: "Quarantined local profile permanently purged.",
+  removalBlocked: "Removal is blocked while this Identity Profile has a running Managed Launch.",
+  replacementRequired: "Choose a different Ready Identity Profile as the replacement selection.",
+  confirmationInvalid: "Type the exact CLI Alias to confirm this local action.",
+  quarantineInvalid: "This local quarantine action is no longer available. Refresh Profiles.",
+  quarantineExpired: "The restoration window has expired. Review final purge instead.",
   managed: "Managed",
   referenced: "Referenced",
   reusedHome: "Reused for reauthentication",
@@ -214,6 +245,11 @@ export const profileErrorCopy: Record<string, string> = {
   CF_PROFILE_AUTHENTICATION_UNAVAILABLE: profileCopy.authenticationUnavailable,
   CF_PROFILE_HOME_INVALID: profileCopy.homeInvalid,
   CF_PROFILE_VALIDATION_FAILED: profileCopy.validationFailed,
+  CF_PROFILE_REMOVAL_BLOCKED: profileCopy.removalBlocked,
+  CF_PROFILE_REPLACEMENT_REQUIRED: profileCopy.replacementRequired,
+  CF_PROFILE_CONFIRMATION_INVALID: profileCopy.confirmationInvalid,
+  CF_PROFILE_QUARANTINE_INVALID: profileCopy.quarantineInvalid,
+  CF_PROFILE_QUARANTINE_EXPIRED: profileCopy.quarantineExpired,
 };
 
 export const launchCopy = {

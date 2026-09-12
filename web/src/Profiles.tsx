@@ -1,21 +1,25 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useId, useState, type RefObject } from "react";
 import {
   UsageRefreshError,
   type ProfileAuthenticationRequest,
   type ProfileAuthenticationResponse,
   type ProfileEditRequest,
+  type ProfileLifecycleRecord,
+  type ProfileLifecycleRequest,
   type ProfileSummary,
 } from "./generated/openapi";
 import { profileCopy as c, profileErrorCopy, stateCopy } from "./copy";
 
 type Props = {
   profiles: ProfileSummary[];
+  quarantined: ProfileLifecycleRecord[];
   busy: boolean;
   heading: RefObject<HTMLHeadingElement | null>;
   message: string;
   select: (alias: string) => Promise<void>;
   edit: (request: ProfileEditRequest) => Promise<void>;
   authenticate: (request: ProfileAuthenticationRequest) => Promise<ProfileAuthenticationResponse>;
+  lifecycle: (request: ProfileLifecycleRequest) => Promise<ProfileLifecycleRecord>;
   launch: (profile: ProfileSummary) => void;
   launchable: (profile: ProfileSummary) => boolean;
 };
@@ -79,17 +83,23 @@ function profileFailure(error: unknown) {
 
 export function Profiles({
   profiles,
+  quarantined,
   busy,
   heading,
   message,
   select,
   edit,
   authenticate,
+  lifecycle,
   launch,
   launchable,
 }: Props) {
-  const [view, setView] = useState<"inventory" | "setup" | "edit" | "reauthenticate">("inventory");
+  const [view, setView] = useState<
+    "inventory" | "setup" | "edit" | "reauthenticate" | "remove" | "purge"
+  >("inventory");
   const [selectedAlias, setSelectedAlias] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [replacement, setReplacement] = useState("");
   const [form, setForm] = useState<Form>(emptyForm);
   const [result, setResult] = useState<ProfileAuthenticationResponse | null>(null);
   const [localMessage, setLocalMessage] = useState("");
@@ -97,6 +107,7 @@ export function Profiles({
     profiles.find((item) => item.alias === selectedAlias) ??
     profiles.find((item) => item.selected) ??
     profiles[0];
+  const quarantineRecord = quarantined.find((item) => item.profile.alias === selectedAlias);
 
   useEffect(() => {
     heading.current?.focus();
@@ -106,10 +117,58 @@ export function Profiles({
     setSelectedAlias(item?.alias ?? "");
     setForm(profileForm(item));
     setResult(null);
+    setConfirmation("");
+    setReplacement("");
     setLocalMessage(
       next === "setup" ? c.setupGuidance : next === "reauthenticate" ? c.reauthGuidance : "",
     );
     setView(next);
+  }
+
+  async function openRemoval(item: ProfileSummary) {
+    open("remove", item);
+    try {
+      await lifecycle({ action: "preview", alias: item.alias });
+    } catch (error) {
+      setLocalMessage(profileFailure(error));
+    }
+  }
+
+  async function applyRemoval() {
+    if (!current) return;
+    try {
+      const response = await lifecycle({
+        action: "remove",
+        alias: current.alias,
+        replacement: replacement || undefined,
+        confirmation,
+      });
+      setLocalMessage(
+        response.action === "deregistered" ? c.deregisteredMessage : c.quarantinedMessage,
+      );
+      close();
+    } catch (error) {
+      setLocalMessage(profileFailure(error));
+    }
+  }
+
+  async function restore(alias: string) {
+    try {
+      await lifecycle({ action: "restore", alias });
+      setLocalMessage(c.restoredMessage);
+    } catch (error) {
+      setLocalMessage(profileFailure(error));
+    }
+  }
+
+  async function purge() {
+    try {
+      await lifecycle({ action: "purge", alias: selectedAlias, confirmation });
+      setLocalMessage(c.purgedMessage);
+      close();
+    } catch (error) {
+      setLocalMessage(profileFailure(error));
+    }
   }
 
   function close() {
@@ -204,6 +263,89 @@ export function Profiles({
         <div className="mt-6 flex flex-wrap gap-3">
           <button className={primaryClass} disabled={busy} onClick={() => void saveEdit()}>
             {c.save}
+          </button>
+          <button className={buttonClass} disabled={busy} onClick={close}>
+            {c.cancel}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (view === "remove" && current) {
+    const replacements = profiles.filter(
+      (item) => item.status === "ready" && item.alias !== current.alias,
+    );
+    return (
+      <section>
+        <PageHeader heading={heading} title={c.reviewRemoval} detail={c.remoteUnaffected} />
+        <p role="status" className="mb-4 min-h-[1.5em] max-w-[75ch] text-warning">
+          {localMessage || c.removalWarning}
+        </p>
+        <div className="grid max-w-5xl gap-5 md:grid-cols-2">
+          <Field
+            label={c.confirmAlias}
+            value={confirmation}
+            onChange={setConfirmation}
+            help={c.confirmAliasHelp}
+          />
+          {current.selected && (
+            <label className="grid min-w-0 gap-[0.4rem]">
+              {c.replacement}
+              <select
+                aria-label={c.replacement}
+                className={inputClass}
+                value={replacement}
+                onChange={(event) => setReplacement(event.target.value)}
+              >
+                <option value="">{c.chooseReplacement}</option>
+                {replacements.map((item) => (
+                  <option key={item.profile_id} value={item.alias}>
+                    {item.display_name} · {item.alias}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        <div className="my-6 max-w-5xl border-y border-rule py-5">
+          <p className="mb-3">{c.managedRemovalDetail}</p>
+          <p>{c.referencedRemovalDetail}</p>
+        </div>
+        <div className="flex flex-wrap gap-3 max-md:[&_button]:grow">
+          <button
+            className={primaryClass}
+            disabled={busy || confirmation !== current.alias || (current.selected && !replacement)}
+            onClick={() => void applyRemoval()}
+          >
+            {c.confirmRemoval}
+          </button>
+          <button className={buttonClass} disabled={busy} onClick={close}>
+            {c.cancel}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (view === "purge" && quarantineRecord) {
+    return (
+      <section>
+        <PageHeader heading={heading} title={c.reviewPurge} detail={c.remoteUnaffected} />
+        <p className="mb-5 max-w-[75ch] text-warning">{c.purgeWarning}</p>
+        <Field
+          label={c.confirmAlias}
+          value={confirmation}
+          onChange={setConfirmation}
+          help={c.confirmAliasHelp}
+        />
+        <div className="mt-6 flex flex-wrap gap-3 max-md:[&_button]:grow">
+          <button
+            className={primaryClass}
+            disabled={busy || confirmation !== quarantineRecord.profile.alias}
+            onClick={() => void purge()}
+          >
+            {c.confirmPurge}
           </button>
           <button className={buttonClass} disabled={busy} onClick={close}>
             {c.cancel}
@@ -387,6 +529,40 @@ export function Profiles({
         {c.add}
       </button>
       <p className="mt-3 mb-4 text-sm text-muted">{c.inventory}</p>
+      {quarantined.length > 0 && (
+        <section className="mb-7 border-y border-rule py-5">
+          <h2 className="mb-3 text-[1.4rem] font-bold">{c.recovery}</h2>
+          {quarantined.map((record) => (
+            <div
+              className="flex flex-wrap items-center justify-between gap-4 border-t border-rule py-4 first:border-0"
+              key={record.profile.profile_id}
+            >
+              <p className="m-0 min-w-0 wrap-anywhere">
+                <strong>{record.profile.display_name || record.profile.alias}</strong>
+                <span className="block text-sm text-muted">
+                  {c.recoverableUntil} {date.format(new Date(record.purge_after))}
+                </span>
+              </p>
+              <div className="flex flex-wrap gap-3 max-md:w-full max-md:[&_button]:grow">
+                <button
+                  className={buttonClass}
+                  disabled={busy || Date.parse(record.purge_after) <= Date.now()}
+                  onClick={() => void restore(record.profile.alias)}
+                >
+                  {c.restore}
+                </button>
+                <button
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => open("purge", record.profile)}
+                >
+                  {c.purge}
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
       <div className="hidden overflow-x-auto lg:block">
         <table className="w-full border-collapse text-left">
           <thead>
@@ -513,6 +689,13 @@ export function Profiles({
             <summary className="min-h-11 cursor-pointer py-3">{c.removal}</summary>
             <p className="mb-2">{c.managedRemoval}</p>
             <p>{c.referencedRemoval}</p>
+            <button
+              className={`${buttonClass} mt-4`}
+              disabled={busy}
+              onClick={() => void openRemoval(current)}
+            >
+              {c.reviewRemoval}
+            </button>
           </details>
         </section>
       )}
@@ -554,16 +737,24 @@ function Field({
   onChange: (value: string) => void;
   help?: string;
 }) {
+  const id = useId();
+  const helpId = help ? `${id}-help` : undefined;
   return (
-    <label className="grid min-w-0 gap-[0.4rem]">
-      {label}
+    <div className="grid min-w-0 gap-[0.4rem]">
+      <label htmlFor={id}>{label}</label>
       <input
+        id={id}
+        aria-describedby={helpId}
         className={inputClass}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-      {help && <small className="text-muted">{help}</small>}
-    </label>
+      {help && (
+        <small id={helpId} className="text-muted">
+          {help}
+        </small>
+      )}
+    </div>
   );
 }
 

@@ -6,6 +6,8 @@ import {
   type ActivityRecord,
   type ProfileAuthenticationRequest,
   type ProfileEditRequest,
+  type ProfileLifecycleRecord,
+  type ProfileLifecycleRequest,
   type ProfileSummary,
   type ProjectIdentity,
   type SelectionResponse,
@@ -419,6 +421,7 @@ export function App() {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [quarantined, setQuarantined] = useState<ProfileLifecycleRecord[]>([]);
   const [combined, setCombined] = useState(false);
   const [route, setRoute] = useState("Overview");
   const [busy, setBusy] = useState(false);
@@ -461,12 +464,15 @@ export function App() {
         if (e instanceof UsageRefreshError && e.status === 409) return null;
         throw e;
       }),
-      includeProfiles ? api.getProfiles() : null,
+      includeProfiles ? Promise.all([api.getProfiles(), api.listProfileQuarantine()]) : null,
     ]);
     setNow(Date.now());
     setData(next);
     setSelection(selected);
-    if (inventory) setProfiles(inventory.profiles);
+    if (inventory) {
+      setProfiles(inventory[0].profiles);
+      setQuarantined(inventory[1].quarantined);
+    }
     return next;
   }
   async function refresh(trigger: string, current: AnalyticsResponse) {
@@ -667,6 +673,29 @@ export function App() {
       setBusy(false);
     }
   }
+  async function manageProfileLifecycle(request: ProfileLifecycleRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageProfileLifecycle(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      if (request.action !== "preview") await load(true);
+      return result;
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof UsageRefreshError && [401, 403].includes(error.status))
+      ) {
+        failure(error);
+      }
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
   async function openLaunch(target: LaunchTarget) {
     try {
       const [projectResult, next] = await Promise.all([
@@ -833,12 +862,14 @@ export function App() {
             ) : route === "Profiles" ? (
               <Profiles
                 profiles={profiles}
+                quarantined={quarantined}
                 busy={busy}
                 heading={heading}
                 message={message}
                 select={choose}
                 edit={editProfile}
                 authenticate={authenticateProfile}
+                lifecycle={manageProfileLifecycle}
                 launch={(profile) => void openLaunch(profile)}
                 launchable={(profile) =>
                   Boolean(

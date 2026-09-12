@@ -114,6 +114,10 @@ func (store *Store) GetQuarantinedProfile(ctx context.Context, alias string) (pr
 	ctx = contextOrBackground(ctx)
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
+	return store.getQuarantinedProfile(ctx, alias)
+}
+
+func (store *Store) getQuarantinedProfile(ctx context.Context, alias string) (profile.RemovalRecord, error) {
 	var profileID, state, quarantinedAt, purgeAfter string
 	if err := store.db.QueryRowContext(ctx, `SELECT q.profile_id, q.state, q.quarantined_at, q.purge_after
 		FROM profile_quarantine q JOIN cli_aliases a ON a.profile_id = q.profile_id WHERE a.alias = ? COLLATE NOCASE`, alias).Scan(&profileID, &state, &quarantinedAt, &purgeAfter); err != nil {
@@ -138,6 +142,45 @@ func (store *Store) GetQuarantinedProfile(ctx context.Context, alias string) (pr
 		return profile.RemovalRecord{}, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
 	}
 	return profile.RemovalRecord{Profile: item, Action: profile.RemovalQuarantined, State: profile.QuarantineState(state), QuarantinedAt: quarantinedTime, PurgeAfter: purgeTime}, nil
+}
+
+func (store *Store) ListQuarantinedProfiles(ctx context.Context) ([]profile.RemovalRecord, error) {
+	if store == nil || store.db == nil {
+		return nil, coded(apperrors.StoreReadFailed, ErrProfileState)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	rows, err := store.db.QueryContext(ctx, `SELECT a.alias FROM profile_quarantine q JOIN cli_aliases a ON a.profile_id = q.profile_id ORDER BY q.purge_after, a.alias`)
+	if err != nil {
+		store.operationMu.RUnlock()
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	aliases := []string{}
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			_ = rows.Close()
+			store.operationMu.RUnlock()
+			return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+		}
+		aliases = append(aliases, alias)
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		store.operationMu.RUnlock()
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrProfileState, err))
+	}
+	records := make([]profile.RemovalRecord, 0, len(aliases))
+	for _, alias := range aliases {
+		record, err := store.getQuarantinedProfile(ctx, alias)
+		if err != nil {
+			store.operationMu.RUnlock()
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	store.operationMu.RUnlock()
+	return records, nil
 }
 
 func (store *Store) CompleteProfileQuarantine(ctx context.Context, profileID string) error {
