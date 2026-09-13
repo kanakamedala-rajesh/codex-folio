@@ -68,7 +68,7 @@ func seedDashboardActivity(t *testing.T, state *store.Store, projects *activity.
 			tokens  int64
 			start   time.Time
 		}
-		sessions := []session{{"018f4f70-6f77-7c3f-9b77-93aa087dfc50", otherRepository, "gpt-5", 84, day.Add(-48*time.Hour + 10*time.Hour)}}
+		sessions := []session{{"018f4f70-6f77-7c3f-9b77-93aa087dfc50", otherRepository, "gpt-5", 84, day.Add(-45*24*time.Hour + 10*time.Hour)}}
 		if alias == "Work" {
 			sessions = []session{
 				{correlated, repository, "gpt-5", 42, day.Add(-24*time.Hour + 10*time.Hour)},
@@ -124,14 +124,22 @@ func TestDashboardActivityFixturePreservesIndependentMetadata(t *testing.T) {
 		t.Fatalf("fixture records = %d, error = %v", len(records), err)
 	}
 	states := map[string]int{}
+	foundOlderPersonal := false
 	for _, record := range records {
 		states[record.Correlation.State]++
+		if record.ProfileAlias == "Personal" && record.TokensUsed != nil && *record.TokensUsed == 84 {
+			age := time.Since(record.LastObservedAt)
+			foundOlderPersonal = age > 30*24*time.Hour && age < 90*24*time.Hour
+		}
 		if record.RecordType == activity.RecordTypeManagedLaunch && (record.Lifecycle != "exited" || record.ExitStatus == nil || *record.ExitStatus != 17 || record.Model != "" || record.TokensUsed != nil) {
 			t.Fatalf("managed facts were conflated: %#v", record)
 		}
 		if record.SourceSessionID == "018f4f70-6f77-7c3f-9b77-93aa087dfc4f" && (record.ProjectID != "" || record.Model != "" || record.TokensUsed == nil || *record.TokensUsed != 0) {
 			t.Fatalf("partial observation = %#v", record)
 		}
+	}
+	if !foundOlderPersonal {
+		t.Fatal("fixture does not contain a supported Personal observation between 30 and 90 days old")
 	}
 	if states[activity.CorrelationCorrelated] != 2 || states[activity.CorrelationContradictory] != 1 || states[activity.CorrelationUncorrelated] != 3 {
 		t.Fatalf("fixture correlations = %#v", states)

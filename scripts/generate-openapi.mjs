@@ -212,7 +212,8 @@ function validateContract(contract, productVersion) {
   if (!Array.isArray(activityOperation.parameters) || activityOperation.parameters.length !== 2) {
     throw new Error(`GET ${activityPath} must declare profile and project query parameters`);
   }
-  const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`);
+  const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`, ["200", "default"]);
+  assertEqual(errorResponseReference(activityOperation, `GET ${activityPath}`), "#/$defs/UsageErrorResponse", "activity error response reference");
 
   const analyticsOperation = contract.paths[analyticsPath]?.get;
   assertObject(analyticsOperation, `GET ${analyticsPath}`);
@@ -236,11 +237,20 @@ function validateContract(contract, productVersion) {
   const selectionResponseReference = responseReference(getSelectionOperation, `GET ${selectionPath}`);
   assertEqual(responseReference(setSelectionOperation, `PUT ${selectionPath}`), selectionResponseReference, "selection response reference");
 
-  const projectsOperation = contract.paths[projectsPath]?.get;
-  assertObject(projectsOperation, `GET ${projectsPath}`);
-  assertExactKeys(projectsOperation, ["operationId", "responses"], `GET ${projectsPath}`);
-  assertIdentifier(projectsOperation.operationId, "projects operationId");
-  const projectsResponseReference = responseReference(projectsOperation, `GET ${projectsPath}`);
+  const projectsPathItem = contract.paths[projectsPath];
+  assertObject(projectsPathItem, `path ${projectsPath}`);
+  assertExactKeys(projectsPathItem, ["get", "put"], `path ${projectsPath}`);
+  const getProjectsOperation = projectsPathItem.get;
+  const editProjectOperation = projectsPathItem.put;
+  assertExactKeys(getProjectsOperation, ["operationId", "responses"], `GET ${projectsPath}`);
+  assertExactKeys(editProjectOperation, ["operationId", "requestBody", "responses"], `PUT ${projectsPath}`);
+  assertIdentifier(getProjectsOperation.operationId, "get projects operationId");
+  assertIdentifier(editProjectOperation.operationId, "edit project operationId");
+  const projectEditRequestReference = requestReference(editProjectOperation.requestBody, `PUT ${projectsPath} request body`);
+  const projectsResponseReference = responseReference(getProjectsOperation, `GET ${projectsPath}`, ["200", "default"]);
+  assertEqual(errorResponseReference(getProjectsOperation, `GET ${projectsPath}`), "#/$defs/UsageErrorResponse", "projects error response reference");
+  assertEqual(responseReference(editProjectOperation, `PUT ${projectsPath}`, ["200", "default"]), projectsResponseReference, "project edit response reference");
+  assertEqual(errorResponseReference(editProjectOperation, `PUT ${projectsPath}`), "#/$defs/UsageErrorResponse", "project edit error response");
 
   const configurationPacksPathItem = contract.paths[configurationPacksPath];
   assertObject(configurationPacksPathItem, `path ${configurationPacksPath}`);
@@ -398,6 +408,7 @@ function validateContract(contract, productVersion) {
     "UsageAggregate",
     "UsageMetricAmbiguity",
     "UsageCandidate",
+    schemaNameFromReference(projectEditRequestReference, "project edit request"),
     ...historySchemaNames,
     ...configurationSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
@@ -478,6 +489,10 @@ function validateContract(contract, productVersion) {
     contract.$defs.ProjectIdentity,
     "ProjectIdentity",
   );
+  const projectEditRequestFields = schemaFields(
+    contract.$defs.ProjectEditRequest,
+    "ProjectEditRequest",
+  );
   const activityResponseFields = schemaFields(
     contract.$defs[schemaNames[15]],
     schemaNames[15],
@@ -554,7 +569,10 @@ function validateContract(contract, productVersion) {
     profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType: "ProjectIdentity",
-    projectsOperationId: projectsOperation.operationId,
+    projectEditOperationId: editProjectOperation.operationId,
+    projectEditRequestFields,
+    projectEditRequestType: schemaNameFromReference(projectEditRequestReference, "project edit request"),
+    projectsOperationId: getProjectsOperation.operationId,
     projectsPath,
     projectsResponseFields,
     projectsResponseType: schemaNames[11],
@@ -724,6 +742,9 @@ function renderGo(productVersion, sourceHash, contractShape) {
     profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType,
+    projectEditOperationId,
+    projectEditRequestFields,
+    projectEditRequestType,
     projectsOperationId,
     projectsPath,
     projectsResponseFields,
@@ -769,6 +790,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const listProfileQuarantineMethod = goIdentifier(listProfileQuarantineOperationId);
   const manageProfileLifecycleMethod = goIdentifier(manageProfileLifecycleOperationId);
   const projectsMethod = goIdentifier(projectsOperationId);
+  const editProjectMethod = goIdentifier(projectEditOperationId);
   const selectionGetMethod = goIdentifier(selectionGetOperationId);
   const selectionSetMethod = goIdentifier(selectionSetOperationId);
   const usageLatestMethod = goIdentifier(usageLatestOperationId);
@@ -798,6 +820,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     renderGoStruct("ProfileLifecycleListResponse", profileLifecycleListResponseFields),
     renderGoStruct("ProfileLifecycleRequest", profileLifecycleRequestFields),
     renderGoStruct(projectIdentityType, projectIdentityFields),
+    renderGoStruct(projectEditRequestType, projectEditRequestFields),
     renderGoStruct(projectsResponseType, projectsResponseFields),
     renderGoStruct(selectionRequestType, selectionRequestFields),
     renderGoStruct(selectionResponseType, selectionResponseFields),
@@ -1054,6 +1077,28 @@ func (client *Client) ${projectsMethod}(ctx context.Context) (${projectsResponse
 \treturn result, response, nil
 }
 
+func (client *Client) ${editProjectMethod}(ctx context.Context, input ${projectEditRequestType}) (${projectsResponseType}, *http.Response, error) {
+\tvar result ${projectsResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+ProjectsPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
 func (client *Client) ${getProfilesMethod}(ctx context.Context) (ProfilesResponse, *http.Response, error) {
 \tvar result ProfilesResponse
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfilesPath, nil)
@@ -1300,6 +1345,9 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     profileLifecycleRequestFields,
     projectIdentityFields,
     projectIdentityType,
+    projectEditOperationId,
+    projectEditRequestFields,
+    projectEditRequestType,
     projectsOperationId,
     projectsPath,
     projectsResponseFields,
@@ -1380,6 +1428,9 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     .map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`)
     .join("\n");
   const projectIdentityLines = projectIdentityFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const projectEditRequestLines = projectEditRequestFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const projectsResponseLines = projectsResponseFields
@@ -1473,6 +1524,10 @@ ${profileLifecycleRequestLines}
 
 export interface ${projectIdentityType} {
 ${projectIdentityLines}
+}
+
+export interface ${projectEditRequestType} {
+${projectEditRequestLines}
 }
 
 export interface ${projectsResponseType} {
@@ -1657,6 +1712,14 @@ export interface ApiPaths {
       operationId: "${projectsOperationId}";
       responses: { 200: { content: { "application/json": ${projectsResponseType} } } };
     };
+    put: {
+      operationId: "${projectEditOperationId}";
+      requestBody: ${projectEditRequestType};
+      responses: {
+        200: { content: { "application/json": ${projectsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
   };
   "${usageRefreshPath}": {
     post: {
@@ -1706,6 +1769,7 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<ProfileLifecycleRecord>;
   ${projectsOperationId}(init?: RequestInit): Promise<${projectsResponseType}>;
+  ${projectEditOperationId}(request: ${projectEditRequestType}, init?: RequestInit): Promise<${projectsResponseType}>;
   ${selectionGetOperationId}(init?: RequestInit): Promise<${selectionResponseType}>;
   ${selectionSetOperationId}(request: ${selectionRequestType}, init?: RequestInit): Promise<${selectionResponseType}>;
   ${usageLatestOperationId}(alias: string, init?: RequestInit): Promise<${usageResponseType}>;
@@ -1798,7 +1862,8 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET ${activityPath} failed with HTTP " + response.status);
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ${activityResponseType};
     },
@@ -1923,7 +1988,25 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET ${projectsPath} failed with HTTP " + response.status);
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${projectsResponseType};
+    },
+    async ${projectEditOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${projectsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ${projectsResponseType};
     },

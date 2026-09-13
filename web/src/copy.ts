@@ -114,6 +114,7 @@ export const stateCopy: Record<string, string> = {
   field_missing: "Field missing",
   capability_unsupported: "Unsupported capability",
   collection_failed: "Collection failed",
+  local_metadata: "Local metadata",
 };
 export const provenanceCopy: Record<string, string> = {
   "Provider-reported Metric": "Provider reported",
@@ -130,6 +131,71 @@ export const analyticsCopy = {
   sections: "Analytics sections",
   tabs: ["Capacity", "Tokens", "Projects", "Models", "Activity", "Compare"],
   comingLater: "Available in a later analytics slice",
+  project: "Project",
+  allProjects: "All projects",
+  tokensTitle: "Token observations",
+  tokensSubtitle:
+    "Observed-session token metadata only. Values keep their record, project, source and provenance.",
+  projectsTitle: "Projects",
+  projectsSubtitle:
+    "App-local Project Aliases and basenames. Canonical repository paths stay private.",
+  modelsTitle: "Models",
+  modelsSubtitle:
+    "Models observed in supported local session metadata; this is not provider capability or task-suitability data.",
+  activityTitle: "Activity",
+  activitySubtitle:
+    "Managed Launches and Observed Sessions remain distinct. Correlation never implies causation.",
+  noTokens: "Token metrics are unsupported for the records matching these filters.",
+  noProjects: "No Project Identity matches these filters.",
+  noModels: "Model metadata is unsupported for the records matching these filters.",
+  noActivity: "No Managed Launch or Observed Session matches these filters.",
+  observedRecords: (count: number) =>
+    `${count} matching ${count === 1 ? "record" : "records"} from normalized activity history.`,
+  tokensChart:
+    "Token observations by activity record. Exact values and evidence are in the following table.",
+  projectsChart:
+    "Activity records by Project Identity. Exact counts and identity metadata are in the following table.",
+  modelsChart:
+    "Activity records by observed model. Exact counts and evidence are in the following table.",
+  chartTableNote: "Bars summarize the same rows as the following accessible table.",
+  record: "Record",
+  tokens: "Tokens",
+  model: "Model",
+  records: "Records",
+  lastObserved: "Last observed",
+  recordType: "Record type",
+  lifecycle: "Lifecycle",
+  correlation: "Correlation",
+  evidence: "Evidence",
+  unsupported: "Unsupported",
+  editAlias: "Edit Project Alias",
+  alias: "Project Alias",
+  basename: "Basename",
+  saveAlias: "Save Alias",
+  cancelAlias: "Cancel",
+  aliasSaved:
+    "Project Alias updated. Historical records now use the current app-local alias in this view.",
+  aliasFailed: "Project Alias could not be updated.",
+  activityLoading: "Loading normalized activity history.",
+  activityLoaded: (count: number) =>
+    `${count} normalized activity ${count === 1 ? "record" : "records"} loaded.`,
+  activityRetained: (count: number) =>
+    `${count} previously loaded activity ${count === 1 ? "record" : "records"} retained.`,
+  activityLoadFailed:
+    "Normalized activity history could not be refreshed. Previously loaded records are retained.",
+  projectsLoading: "Loading Project Identities.",
+  projectsLoaded: (count: number) =>
+    `${count} Project ${count === 1 ? "Identity" : "Identities"} loaded.`,
+  projectsLoadFailed:
+    "Project Identities could not be refreshed. Previously loaded identities are retained.",
+  projectsInitialLoadFailed:
+    "Project Identities could not be loaded. No Project Identity result is available.",
+  projectPrivacy:
+    "Ordinary analytics use the current Project Alias or basename. Canonical paths are not returned to the browser.",
+  sourceEvidence: (source: string, version: string, provenance: string) =>
+    `${source}${version ? ` ${version}` : ""} · ${provenance}`,
+  observedSession: "Observed Session",
+  managedLaunch: "Managed Launch",
   scope: "Analytics scope",
   history: "History range",
   window: "Capacity window",

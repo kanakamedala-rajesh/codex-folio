@@ -525,6 +525,15 @@
       "required": ["project_id", "alias", "basename", "created_at", "updated_at"],
       "type": "object"
     },
+    "ProjectEditRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string"},
+        "alias": {"type": "string"}
+      },
+      "required": ["project_id", "alias"],
+      "type": "object"
+    },
     "ProjectsResponse": {
       "additionalProperties": false,
       "properties": {
@@ -756,6 +765,10 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityResponse"}}},
             "description": "Returns the safe filtered Managed Launch and Observed Session timeline."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
           }
         }
       }
@@ -811,6 +824,27 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
             "description": "Returns safe app-local Project Identity projections without canonical paths."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "put": {
+        "operationId": "editProject",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectEditRequest"}}},
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
+            "description": "Edits a safe app-local Project Alias without exposing or changing its canonical path."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
           }
         }
       }

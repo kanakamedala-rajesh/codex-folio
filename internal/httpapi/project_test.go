@@ -125,4 +125,27 @@ func TestProjectAPIsReturnOnlySafeProjections(t *testing.T) {
 	if len(result.Projects) != 1 || result.Projects[0].ProjectId != created.Project.ID || strings.Contains(string(generated), root) {
 		t.Fatalf("generated API projection = %s", generated)
 	}
+
+	editBody, _ := json.Marshal(ProjectEditRequest{ProjectId: created.Project.ID, Alias: "Browser Alias"})
+	withoutCSRF, err := doRequest(client, http.MethodPut, origin+ProjectsPath, server.Address(), origin, editBody, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutCSRF.StatusCode != http.StatusForbidden {
+		t.Fatalf("project edit without CSRF = %d, want %d", withoutCSRF.StatusCode, http.StatusForbidden)
+	}
+	_ = withoutCSRF.Body.Close()
+	editResponse, err := doRequest(client, http.MethodPut, origin+ProjectsPath, server.Address(), origin, editBody, bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var edited ProjectsResponse
+	if err := json.NewDecoder(editResponse.Body).Decode(&edited); err != nil {
+		t.Fatal(err)
+	}
+	_ = editResponse.Body.Close()
+	encodedEdit, _ := json.Marshal(edited)
+	if len(edited.Projects) != 1 || edited.Projects[0].Alias != "Browser Alias" || strings.Contains(string(encodedEdit), root) {
+		t.Fatalf("edited browser projection = %s", encodedEdit)
+	}
 }

@@ -471,13 +471,13 @@ export function App() {
     } else if (error instanceof TypeError) setStatus("unavailable");
     else setMessage(c.refreshFailed);
   };
-  const readAnalyticsHistory = async (profileId: string, from: string) =>
+  const readAnalyticsHistory = async (profileId: string, projectId: string, from: string) =>
     api.manageAnalyticsHistory(
       {
         action: "aggregates",
         scope: {
           profile_id: profileId,
-          project_id: "*",
+          project_id: projectId,
           from,
           to: "all",
           classes: ["aggregates"],
@@ -485,6 +485,8 @@ export function App() {
       },
       { headers: { "X-CodexFolio-CSRF": csrf.current } },
     );
+  const editAnalyticsProject = (request: { project_id: string; alias: string }) =>
+    api.editProject(request, { headers: { "X-CodexFolio-CSRF": csrf.current } });
   async function load(includeProfiles = false) {
     const [next, selected, inventory] = await Promise.all([
       api.getAnalytics("combined_identity"),
@@ -957,6 +959,11 @@ export function App() {
                 now={now}
                 heading={heading}
                 readHistory={readAnalyticsHistory}
+                readProjects={() => api.getProjects()}
+                readActivity={(profileAlias, projectId) =>
+                  api.getActivity(profileAlias, projectId).then((result) => result.records)
+                }
+                editProject={editAnalyticsProject}
                 expired={failure}
               />
             ) : (

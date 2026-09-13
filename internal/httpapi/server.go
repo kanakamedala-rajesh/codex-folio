@@ -546,11 +546,19 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		if !server.authorize(response, request) {
 			return
 		}
-		if !isReadMethod(request.Method) {
-			server.writeMethodError(response, http.MethodGet)
+		if request.Method == http.MethodGet {
+			server.getProjects(response, request)
 			return
 		}
-		server.getProjects(response, request)
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		if request.Method != http.MethodPut {
+			server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+			return
+		}
+		server.editProject(response, request)
 	case ProfilesPath:
 		if !server.authorize(response, request) {
 			return

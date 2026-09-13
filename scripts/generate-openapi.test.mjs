@@ -38,6 +38,23 @@ test("the generated usage client exposes safe error identifiers", async () => {
   );
 });
 
+test("the generated analytics readers preserve expired-session status", async () => {
+  const { createCodexFolioApiClient, UsageRefreshError } = await import("../web/src/generated/openapi.ts");
+  const client = createCodexFolioApiClient("", async () => new Response(
+    JSON.stringify({ code: "CF_HTTPAPI_FORBIDDEN", message: "Browser authorization expired." }),
+    { status: 403, headers: { "Content-Type": "application/json" } },
+  ));
+
+  for (const read of [() => client.getActivity(), () => client.getProjects()]) {
+    await assert.rejects(
+      read(),
+      (error) => error instanceof UsageRefreshError
+        && error.code === "CF_HTTPAPI_FORBIDDEN"
+        && error.status === 403,
+    );
+  }
+});
+
 test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const fixtureDirectory = mkdtempSync(join(tmpdir(), "codex-folio-openapi-"));
   t.after(() => rmSync(fixtureDirectory, { force: true, recursive: true }));

@@ -131,10 +131,12 @@ In the dashboard:
 - **Sessions** filters recorded Managed Launches and Observed Sessions by
   profile, project, date, and record type. Open a row for metadata-only details;
   **Back to Sessions** retains your filters.
-- **Analytics** shows a selected profile's retained Capacity history and an
-  explicit Compare view. History gaps remain unavailable, provider windows stay
-  separate, and chart values have the same semantic table underneath. Compare
-  does not pool quotas or change Selected Profile.
+- **Analytics** provides Capacity, Tokens, Projects, Models, Activity, and
+  Compare. The profile, history, and project filters are shared across the
+  detailed tabs. Charts have equivalent semantic tables; absent token/model
+  metadata stays explicitly unsupported. Projects uses app-local aliases and
+  basenames, lets you edit an alias, and never displays the canonical repository
+  path. Compare does not pool quotas or change Selected Profile.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated

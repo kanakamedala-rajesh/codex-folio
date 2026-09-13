@@ -19,7 +19,7 @@ const (
 	AnalyticsPath          = "/api/v1/analytics"
 	HistoryPath            = "/api/v1/analytics/history"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "26a44751d3fc018aeda58f6d9ba266568c47c7a8ca4e36826704f6e2821c5227"
+	ContractSourceSHA256   = "b0ae89c4c2ddc6af5313670144c23b556df8cf51a7da7f48a36b60077d757a74"
 	BootstrapPath          = "/api/v1/bootstrap"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
@@ -429,6 +429,11 @@ type ProjectIdentity struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+type ProjectEditRequest struct {
+	ProjectId string `json:"project_id"`
+	Alias     string `json:"alias"`
+}
+
 type ProjectsResponse struct {
 	Projects []ProjectIdentity `json:"projects"`
 }
@@ -789,6 +794,38 @@ func (client *Client) GetProjects(ctx context.Context) (ProjectsResponse, *http.
 		return result, response, err
 	}
 	return result, response, nil
+}
+
+func (client *Client) EditProject(ctx context.Context, input ProjectEditRequest) (ProjectsResponse, *http.Response, error) {
+	var result ProjectsResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+ProjectsPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) GetProfiles(ctx context.Context) (ProfilesResponse, *http.Response, error) {

@@ -19,7 +19,7 @@ The current preview includes:
 - repository-first checkpoints and Safe Continuation handoffs;
 - reviewed Shared Configuration Packs;
 - an authenticated, loopback-only dashboard with Overview, Profiles, Sessions,
-  and Capacity/Compare Analytics flows.
+  and Capacity/Tokens/Projects/Models/Activity/Compare Analytics flows.
 
 Some dashboard destinations remain placeholders, persistent native service
 installation is not yet an end-user feature, and no supported binary release
@@ -245,10 +245,12 @@ Implemented dashboard flows include:
 - **Sessions:** one metadata timeline with profile/project/date/record-type
   filters, independent launch and observed details, source/provenance and
   correlation confidence, keyboard return, and narrow-screen disclosures.
-- **Analytics:** selected-profile Capacity history with range and provider-window
-  filters, a native chart backed by an equivalent semantic table, and an explicit
-  Compare view that keeps identities, subscription windows, evidence state,
-  source, provenance, and API credit/spend units separate.
+- **Analytics:** selected-profile Capacity, Tokens, Projects, Models, and
+  Activity tabs with shared profile/history/project filters, native charts
+  backed by equivalent semantic tables, explicit unsupported states, safe
+  Project Alias editing, and an explicit Compare view that keeps identities,
+  subscription windows, evidence state, source, provenance, and API
+  credit/spend units separate.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
@@ -368,8 +370,20 @@ Profile and never pools quotas. Each profile retains its own availability,
 evidence age, source, provenance, capture time, and provider windows. API
 credit/spend appears only when the service has compatible currency or credit
 metrics; ordinary token or percentage measurements are not relabeled as money.
-The Tokens, Projects, Models, and Activity tabs remain unavailable in this
-development preview.
+
+**Tokens**, **Projects**, **Models**, and **Activity** reuse the same profile,
+history-range, and Project Identity filters. Tokens remain attached to their
+Observed Session records and are not silently summed across overlapping
+evidence. Models report only supported locally observed metadata—not provider
+capability or task suitability. Activity keeps Managed Launch and Observed
+Session rows separate and carries source, provenance, lifecycle, and correlation
+state. An absent dimension is shown as unsupported or unavailable, never zero.
+
+Projects uses the encrypted app-local identity mapping but sends only Project
+Aliases and basenames to the browser. Choose **Edit Project Alias** to change the
+ordinary display name. This does not move the repository, change its canonical
+mapping, or write CodexFolio artifacts into it. Historical rows resolve the
+current alias by Project ID.
 
 History reloads read the local service database; they do not collect new
 provider evidence. Use **Refresh** or `usage refresh` for supported collection.

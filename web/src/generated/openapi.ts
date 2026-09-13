@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "26a44751d3fc018aeda58f6d9ba266568c47c7a8ca4e36826704f6e2821c5227" as const;
+  "b0ae89c4c2ddc6af5313670144c23b556df8cf51a7da7f48a36b60077d757a74" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -403,6 +403,11 @@ export interface ProjectIdentity {
   updated_at: string;
 }
 
+export interface ProjectEditRequest {
+  project_id: string;
+  alias: string;
+}
+
 export interface ProjectsResponse {
   projects: ProjectIdentity[];
 }
@@ -635,6 +640,14 @@ export interface ApiPaths {
       operationId: "getProjects";
       responses: { 200: { content: { "application/json": ProjectsResponse } } };
     };
+    put: {
+      operationId: "editProject";
+      requestBody: ProjectEditRequest;
+      responses: {
+        200: { content: { "application/json": ProjectsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
   };
   "/api/v1/usage/refresh": {
     post: {
@@ -684,6 +697,7 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<ProfileLifecycleRecord>;
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
+  editProject(request: ProjectEditRequest, init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
   getLatestUsage(alias: string, init?: RequestInit): Promise<UsageSnapshotResponse>;
@@ -776,7 +790,8 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET /api/v1/activity failed with HTTP " + response.status);
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ActivityResponse;
     },
@@ -901,7 +916,25 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET /api/v1/projects failed with HTTP " + response.status);
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProjectsResponse;
+    },
+    async editProject(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/projects", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ProjectsResponse;
     },

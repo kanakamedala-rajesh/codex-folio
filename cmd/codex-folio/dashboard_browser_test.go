@@ -387,6 +387,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if suite == "deep" {
 		go func() {
 			seeded := false
+			activitySeeded := false
 			for {
 				select {
 				case <-stopLaunches:
@@ -408,6 +409,22 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 						return
 					}
 					seeded = true
+				}
+				if string(mode) == "analytics-activity-seed" && seeded && !activitySeeded {
+					_, seedErr := state.SetAnalyticsRetention(context.Background(), "90")
+					if seedErr == nil {
+						_, seedErr = activities.Refresh(context.Background(), "Personal")
+					}
+					if seedErr != nil {
+						analyticsSeedErrors <- seedErr
+						_ = os.WriteFile(control, []byte("analytics-activity-seed-failed"), 0600)
+						return
+					}
+					if writeErr := os.WriteFile(control, []byte("analytics-activity-seeded"), 0600); writeErr != nil {
+						analyticsSeedErrors <- writeErr
+						return
+					}
+					activitySeeded = true
 				}
 				if string(mode) == "analytics-clean" && seeded {
 					scope := usage.HistoryScope{ProfileID: "*", ProjectID: "*", From: "all", To: "all", Classes: []string{"aggregates"}}

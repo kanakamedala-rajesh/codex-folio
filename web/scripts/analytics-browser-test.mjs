@@ -28,17 +28,52 @@ export async function testAnalytics({
   const selectedBefore = await (
     await page.request.get(new URL("/api/v1/selection", link).href)
   ).json();
-  const responsePromise = page.waitForResponse(
+  await page.route("**/api/v1/projects", async (route) => {
+    await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+  });
+  const failedProjects = page.waitForResponse(
+    (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "GET",
+  );
+  const initialHistory = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/v1/analytics/history") &&
       response.request().method() === "POST",
   );
-  const started = performance.now();
   const analyticsLink = page
     .getByRole("navigation", { name: "Primary", exact: true })
     .getByRole("button", { name: "Analytics", exact: true });
   await analyticsLink.focus();
   await analyticsLink.press("Enter");
+  assert.equal((await initialHistory).status(), 200);
+  assert.equal((await failedProjects).status(), 500);
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await page
+    .getByText("Project Identities could not be loaded. No Project Identity result is available.", {
+      exact: true,
+    })
+    .first()
+    .waitFor();
+  assert.ok(
+    await page.getByRole("status").filter({ hasText: "No Project Identity result" }).count(),
+  );
+  assert.doesNotMatch(await page.locator("main").innerText(), /No Project Identity matches/);
+  await page.unroute("**/api/v1/projects");
+  await page
+    .getByRole("navigation", { name: "Primary", exact: true })
+    .getByRole("button", { name: "Overview", exact: true })
+    .click();
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/analytics/history") &&
+      response.request().method() === "POST",
+  );
+  const reloadedProjects = page.waitForResponse(
+    (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "GET",
+  );
+  const started = performance.now();
+  await analyticsLink.focus();
+  await analyticsLink.press("Enter");
+  assert.equal((await reloadedProjects).status(), 200);
   const response = await responsePromise;
   assert.equal(response.status(), 200, await response.text());
   const payload = await response.text();
@@ -178,6 +213,281 @@ export async function testAnalytics({
     await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
     false,
   );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  writeFileSync(control, "analytics-activity-seed");
+  await waitForControl("analytics-activity-seeded", "analytics-activity-seed-failed");
+
+  const tabCases = [
+    ["Tokens", "Token observations", /42[\s\S]*Observed during session/],
+    ["Models", "Models", /gpt-5[\s\S]*Local metadata[\s\S]*Observed during session/],
+    ["Activity", "Activity", /Managed Launch[\s\S]*Observed Session/],
+  ];
+  for (const [tabName, heading, evidence] of tabCases) {
+    const activityResponse = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: tabName, exact: true }).click();
+    const loaded = await activityResponse;
+    assert.equal(loaded.status(), 200);
+    assert.equal(new URL(loaded.url()).searchParams.get("profile"), "Work");
+    assert.equal(new URL(loaded.url()).searchParams.has("project"), false);
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    await page.getByText(/normalized activity records loaded\./).waitFor();
+    assert.match(await page.locator("main").innerText(), evidence);
+    if (tabName === "Tokens") assert.match(await page.getByRole("table").innerText(), /\b0\b/);
+    assert.doesNotMatch(await page.locator("main").innerText(), /Managed Launch Launch/);
+    assert.ok(await page.getByRole("img").count());
+    assert.ok(await page.getByRole("table").count());
+    await scanAccessibility(`analytics-${tabName.toLowerCase()}`);
+    await capture(`analytics-${tabName.toLowerCase()}-wide`, 1440, 1000);
+    await capture(`analytics-${tabName.toLowerCase()}-narrow`, 390, 844);
+    if (tabName === "Models") {
+      const modelDisclosure = page.getByRole("table").locator("summary").first();
+      await modelDisclosure.focus();
+      await modelDisclosure.press("Enter");
+      assert.match(
+        await modelDisclosure.locator("xpath=..").innerText(),
+        /Records[\s\S]*Last observed[\s\S]*Evidence/,
+      );
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+        false,
+      );
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+
+  const projectsResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  assert.equal((await projectsResponse).status(), 200);
+  await page.getByRole("heading", { name: "Projects", exact: true }).first().waitFor();
+  assert.match(await page.locator("main").innerText(), /Atlas[\s\S]*Zephyr/);
+  assert.match(await page.getByRole("table").innerText(), /Locally derived/);
+  assert.match(await page.getByRole("table").innerText(), /Observed during session/);
+  assert.doesNotMatch(
+    await page.locator("main").innerText(),
+    /\/tmp\/|canonical_path|identity_home/i,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  const projectDisclosure = page.getByRole("table").locator("summary").first();
+  assert.equal(await projectDisclosure.isVisible(), true);
+  await projectDisclosure.focus();
+  await projectDisclosure.press("Space");
+  assert.equal(await projectDisclosure.evaluate((summary) => summary.parentElement.open), true);
+  const editResponse = page.waitForResponse(
+    (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Edit Project Alias", exact: true }).first().click();
+  await page.getByRole("textbox", { name: "Project Alias", exact: true }).fill("Atlas Research");
+  await page.getByRole("button", { name: "Save Alias", exact: true }).click();
+  const edited = await editResponse;
+  const editPayload = await edited.json();
+  assert.equal(edited.status(), 200, JSON.stringify(editPayload));
+  assert.deepEqual(edited.request().postDataJSON(), {
+    project_id: requestProjectId(editPayload),
+    alias: "Atlas Research",
+  });
+  assert.match(
+    await page.locator("main").innerText(),
+    /Atlas Research[\s\S]*Project Alias updated/,
+  );
+  await page.setViewportSize({ width: 640, height: 500 });
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+  const zoomMetrics = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    visualWidth: window.visualViewport?.width,
+    visualScale: window.visualViewport?.scale,
+    narrowLayout: window.matchMedia("(max-width: 767px)").matches,
+    overflow: document.documentElement.scrollWidth > window.innerWidth,
+  }));
+  assert.deepEqual(zoomMetrics, {
+    innerWidth: 640,
+    visualWidth: 320,
+    visualScale: 2,
+    narrowLayout: true,
+    overflow: false,
+  });
+  await projectDisclosure.focus();
+  if (await projectDisclosure.evaluate((summary) => summary.parentElement.open)) {
+    await projectDisclosure.press("Enter");
+  }
+  await projectDisclosure.press("Enter");
+  assert.equal(await projectDisclosure.evaluate((summary) => summary.parentElement.open), true);
+  const zoomedEdit = projectDisclosure.locator("xpath=../dl//button", {
+    hasText: "Edit Project Alias",
+  });
+  await zoomedEdit.focus();
+  assert.equal(await zoomedEdit.isVisible(), true);
+  await cdp.send("Emulation.resetPageScaleFactor");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await scanAccessibility("analytics-projects");
+  await capture("analytics-projects-wide", 1440, 1000);
+  await capture("analytics-projects-narrow", 390, 844);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  const profileResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page
+    .getByRole("combobox", { name: "Analytics scope", exact: true })
+    .selectOption({ label: "Personal" });
+  const personal = await profileResponse;
+  assert.equal(personal.status(), 200);
+  assert.equal(new URL(personal.url()).searchParams.get("profile"), "Personal");
+  const personalRecords = (await personal.json()).records;
+  assert.ok(personalRecords.some((record) => record.tokens_used === "84"));
+  assert.equal(
+    await page.getByRole("combobox", { name: "History range", exact: true }).inputValue(),
+    "90-days",
+  );
+  await page.getByText(/normalized activity records loaded\./).waitFor();
+  assert.match(await page.getByRole("table").innerText(), /Atlas Research[\s\S]*Zephyr/);
+
+  const ninetyDayTabs = [
+    ["Tokens", "Token observations", 1, /84/],
+    ["Projects", "Projects", 2, /Zephyr/],
+    ["Models", "Models", 1, /gpt-5/],
+    [
+      "Activity",
+      "Activity",
+      personalRecords.length,
+      new RegExp(`${personalRecords.length} matching records`),
+    ],
+  ];
+  for (const [tabName, heading, rows, oldEvidence] of ninetyDayTabs) {
+    const filteredResponse = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: tabName, exact: true }).click();
+    assert.equal((await filteredResponse).status(), 200);
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    await page.locator("main").filter({ hasText: oldEvidence }).waitFor();
+    assert.equal(await page.getByRole("table").locator("tbody tr").count(), rows, tabName);
+    assert.match(await page.locator("main").innerText(), oldEvidence);
+    if (tabName === "Projects") {
+      const zephyrRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "Zephyr" });
+      assert.equal(await zephyrRow.locator("td").nth(2).innerText(), "1");
+    }
+  }
+
+  const rangeResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("combobox", { name: "History range", exact: true }).selectOption("30-days");
+  const recent = await rangeResponse;
+  assert.equal(recent.status(), 200);
+  assert.equal(new URL(recent.url()).searchParams.get("profile"), "Personal");
+  assert.equal(new URL(recent.url()).searchParams.has("project"), false);
+
+  const thirtyDayTabs = [
+    ["Tokens", "Token observations", null, /Token metrics are unsupported/, /84/],
+    ["Projects", "Projects", 2, /Zephyr/, null],
+    ["Models", "Models", null, /Model metadata is unsupported/, /gpt-5/],
+    [
+      "Activity",
+      "Activity",
+      personalRecords.length - 1,
+      new RegExp(`${personalRecords.length - 1} matching records`),
+      new RegExp(`${personalRecords.length} matching records`),
+    ],
+  ];
+  for (const [tabName, heading, rows, expected, oldEvidence] of thirtyDayTabs) {
+    const filteredResponse = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: tabName, exact: true }).click();
+    assert.equal((await filteredResponse).status(), 200);
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    await page.locator("main").filter({ hasText: expected }).waitFor();
+    if (rows === null) assert.equal(await page.getByRole("table").count(), 0);
+    else assert.equal(await page.getByRole("table").locator("tbody tr").count(), rows, tabName);
+    assert.match(await page.locator("main").innerText(), expected);
+    if (oldEvidence) assert.doesNotMatch(await page.locator("main").innerText(), oldEvidence);
+    if (tabName === "Projects") {
+      const zephyrRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "Zephyr" });
+      assert.equal(await zephyrRow.locator("td").nth(2).innerText(), "0");
+    }
+  }
+
+  const restoreRangeResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("combobox", { name: "History range", exact: true }).selectOption("90-days");
+  assert.equal((await restoreRangeResponse).status(), 200);
+
+  const projectResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page
+    .getByRole("combobox", { name: "Project", exact: true })
+    .selectOption({ label: "Zephyr" });
+  const zephyr = await projectResponse;
+  const zephyrQuery = new URL(zephyr.url()).searchParams;
+  assert.equal(zephyr.status(), 200);
+  assert.equal(zephyrQuery.get("profile"), "Personal");
+  assert.ok(zephyrQuery.get("project"));
+  assert.match(await page.getByRole("table").innerText(), /Zephyr/);
+  assert.doesNotMatch(await page.getByRole("table").innerText(), /Atlas Research/);
+
+  const filteredTabs = [
+    ["Models", "Models", /gpt-5[\s\S]*1/],
+    ["Activity", "Activity", /Observed Session/],
+    ["Tokens", "Token observations", /84/],
+    ["Projects", "Projects", /Zephyr[\s\S]*1/],
+  ];
+  for (const [tabName, heading, expected] of filteredTabs) {
+    const filteredResponse = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: tabName, exact: true }).click();
+    const filtered = await filteredResponse;
+    const query = new URL(filtered.url()).searchParams;
+    assert.equal(query.get("profile"), "Personal");
+    assert.equal(query.get("project"), zephyrQuery.get("project"));
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    assert.match(await page.getByRole("table").innerText(), expected);
+  }
+
+  const atlasResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page
+    .getByRole("combobox", { name: "Project", exact: true })
+    .selectOption({ label: "Atlas Research" });
+  assert.equal((await atlasResponse).status(), 200);
+  const unsupportedTokenResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Tokens", exact: true }).click();
+  assert.equal((await unsupportedTokenResponse).status(), 200);
+  await page
+    .getByText("Token metrics are unsupported for the records matching these filters.", {
+      exact: true,
+    })
+    .waitFor();
+  const unsupportedModelResponse = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  assert.equal((await unsupportedModelResponse).status(), 200);
+  await page
+    .getByText("Model metadata is unsupported for the records matching these filters.", {
+      exact: true,
+    })
+    .waitFor();
+  check(
+    "all analytics tabs share profile, history, and Project Alias filters, send supported service filters, preserve exact zeroes, and state absent dimensions explicitly",
+  );
+  check(
+    "Project Alias editing uses the authenticated generated client and never projects canonical paths",
+  );
+  check(
+    "390px Projects reflow and Chromium 200% page scale keep keyboard disclosures and alias editing operable without essential horizontal overflow",
+  );
+
   writeFileSync(control, "analytics-clean");
   await waitForControl("analytics-cleaned", "analytics-clean-failed");
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -186,4 +496,9 @@ export async function testAnalytics({
     .getByRole("button", { name: "Overview", exact: true })
     .click();
   await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
+}
+
+function requestProjectId(payload) {
+  assert.equal(payload.projects.length, 2);
+  return payload.projects.find((project) => project.alias === "Atlas Research").project_id;
 }

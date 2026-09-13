@@ -1,8 +1,12 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from "react";
 import type {
   AnalyticsResponse,
+  ActivityRecord,
   HistoryAggregate,
   HistoryResponse,
+  ProjectEditRequest,
+  ProjectIdentity,
+  ProjectsResponse,
   SelectionResponse,
   UsageObservation,
   UsageSnapshotResponse,
@@ -28,7 +32,15 @@ const cell =
 type HistoryRange = "30-days" | "90-days" | "13-months" | "all";
 type WindowFilter = "both" | (typeof metricKeys)[number];
 
-type HistoryReader = (profileId: string, from: string) => Promise<HistoryResponse>;
+type HistoryReader = (
+  profileId: string,
+  projectId: string,
+  from: string,
+) => Promise<HistoryResponse>;
+type ProjectReader = () => Promise<ProjectsResponse>;
+type ProjectEditor = (request: ProjectEditRequest) => Promise<ProjectsResponse>;
+type ActivityReader = (profileAlias: string, projectId: string) => Promise<ActivityRecord[]>;
+type AnalyticsTab = "capacity" | "tokens" | "projects" | "models" | "activity" | "compare";
 
 interface AnalyticsProps {
   data: AnalyticsResponse;
@@ -36,6 +48,9 @@ interface AnalyticsProps {
   now: number;
   heading: RefObject<HTMLHeadingElement | null>;
   readHistory: HistoryReader;
+  readProjects: ProjectReader;
+  editProject: ProjectEditor;
+  readActivity: ActivityReader;
   expired: (error: unknown) => void;
 }
 
@@ -476,23 +491,519 @@ function observationsEvidence(observations: UsageObservation[]) {
     : c.unavailable;
 }
 
-export function Analytics({ data, selection, now, heading, readHistory, expired }: AnalyticsProps) {
-  const [tab, setTab] = useState<"capacity" | "compare">("capacity");
+function activityType(value: string) {
+  return value === "managed_launch" ? c.managedLaunch : c.observedSession;
+}
+
+function activityEvidence(record: ActivityRecord) {
+  return c.sourceEvidence(
+    label(record.source),
+    record.source_version,
+    record.record_type === "managed_launch"
+      ? provenanceCopy["Locally-derived Metric"]
+      : provenance(record.provenance),
+  );
+}
+
+function contributingEvidence(records: ActivityRecord[]) {
+  return [...new Set(records.map(activityEvidence))].join("; ") || c.unavailable;
+}
+
+function currentProject(record: ActivityRecord, projects: ProjectIdentity[]) {
+  const project = projects.find((item) => item.project_id === record.project_id);
+  return (
+    project?.alias ||
+    project?.basename ||
+    record.project_alias ||
+    record.project_basename ||
+    c.unavailable
+  );
+}
+
+function filteredActivity(
+  records: ActivityRecord[],
+  profileId: string,
+  projectId: string,
+  range: HistoryRange,
+  now: number,
+) {
+  const from = historyStart(range, now);
+  const threshold = from === "all" ? Number.NEGATIVE_INFINITY : Date.parse(from);
+  return records.filter(
+    (record) =>
+      (!profileId || record.profile_id === profileId) &&
+      (!projectId || record.project_id === projectId) &&
+      Date.parse(record.last_observed_at || record.started_at) >= threshold,
+  );
+}
+
+function EvidenceChart({
+  rows,
+  label: chartLabel,
+}: {
+  rows: { label: string; value: number }[];
+  label: string;
+}) {
+  if (!rows.length) return null;
+  const maximum = Math.max(...rows.map((row) => row.value), 1);
+  const height = 36 + rows.length * 42;
+  return (
+    <svg
+      className="h-auto w-full max-w-[60rem]"
+      viewBox={`0 0 900 ${height}`}
+      role="img"
+      aria-label={chartLabel}
+    >
+      {rows.map((row, index) => {
+        const y = 18 + index * 42;
+        const width = (Math.max(0, row.value) / maximum) * 590;
+        return (
+          <g key={row.label}>
+            <text x="0" y={y + 18} fill="var(--text)" fontSize="15">
+              {row.label.length > 26 ? `${row.label.slice(0, 25)}…` : row.label}
+            </text>
+            <rect x="220" y={y} width="590" height="24" fill="none" stroke="var(--rule)" />
+            <rect x="220" y={y} width={width} height="24" fill="var(--cyan)" />
+            <text x="825" y={y + 18} fill="var(--text)" fontSize="15">
+              {number.format(row.value)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function RecordTable({
+  records,
+  projects,
+  mode,
+}: {
+  records: ActivityRecord[];
+  projects: ProjectIdentity[];
+  mode: "tokens" | "activity";
+}) {
+  const visible =
+    mode === "tokens" ? records.filter((record) => record.tokens_used !== "") : records;
+  if (!visible.length)
+    return <p className="mb-4 max-w-[75ch]">{mode === "tokens" ? c.noTokens : c.noActivity}</p>;
+  return (
+    <table className="w-full border-collapse tabular-nums">
+      <caption className="pt-[0.6rem] pb-4 text-left text-[0.9rem] text-muted">
+        {mode === "tokens" ? c.tokensSubtitle : c.activitySubtitle}
+      </caption>
+      <thead className="max-md:sr-only">
+        <tr>
+          {[
+            c.lastObserved,
+            c.recordType,
+            c.profile,
+            c.project,
+            mode === "tokens" ? c.tokens : c.lifecycle,
+            c.evidence,
+          ].map((heading) => (
+            <th key={heading} scope="col" className={`${cell} font-semibold`}>
+              {heading}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {visible.map((record) => {
+          const evidence = activityEvidence(record);
+          return (
+            <tr key={record.id}>
+              <th scope="row" className={`${cell} max-md:hidden font-semibold`}>
+                {instant(record.last_observed_at || record.started_at)}
+              </th>
+              <td colSpan={6} className="border-b border-rule py-2 md:hidden">
+                <details className="py-2">
+                  <summary className="min-h-11 cursor-pointer py-3 font-semibold">
+                    {activityType(record.record_type)} · {record.profile_alias}
+                  </summary>
+                  <dl className="grid grid-cols-[minmax(7rem,0.7fr)_1fr] gap-x-4 gap-y-2 pb-3">
+                    <dt className="text-muted">{c.lastObserved}</dt>
+                    <dd>{instant(record.last_observed_at || record.started_at)}</dd>
+                    <dt className="text-muted">{c.project}</dt>
+                    <dd>{currentProject(record, projects)}</dd>
+                    <dt className="text-muted">{mode === "tokens" ? c.tokens : c.lifecycle}</dt>
+                    <dd>
+                      {mode === "tokens"
+                        ? record.tokens_used || c.unsupported
+                        : label(record.lifecycle) || c.unavailable}
+                    </dd>
+                    <dt className="text-muted">{c.evidence}</dt>
+                    <dd>
+                      {evidence}
+                      {record.correlation_state
+                        ? ` · ${c.correlation}: ${label(record.correlation_state)}`
+                        : ""}
+                    </dd>
+                  </dl>
+                </details>
+              </td>
+              <td className={`${cell} max-md:hidden`}>{activityType(record.record_type)}</td>
+              <td className={`${cell} max-md:hidden`}>{record.profile_alias}</td>
+              <td className={`${cell} max-md:hidden`}>{currentProject(record, projects)}</td>
+              <td className={`${cell} max-md:hidden`}>
+                {mode === "tokens"
+                  ? record.tokens_used || c.unsupported
+                  : label(record.lifecycle) || c.unavailable}
+              </td>
+              <td className={`${cell} max-md:hidden text-sm`}>
+                {evidence}
+                {record.correlation_state
+                  ? ` · ${c.correlation}: ${label(record.correlation_state)}`
+                  : ""}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function TokenView({
+  records,
+  projects,
+}: {
+  records: ActivityRecord[];
+  projects: ProjectIdentity[];
+}) {
+  const supported = records.filter((record) => record.tokens_used !== "");
+  return (
+    <section className="border-t border-rule py-6">
+      <h2 className="mb-4 text-[1.4rem] font-bold">{c.tokensTitle}</h2>
+      <p className="mb-4 max-w-[75ch] text-muted">{c.tokensSubtitle}</p>
+      <EvidenceChart
+        label={c.tokensChart}
+        rows={supported.map((record) => ({
+          label: `${record.profile_alias} · ${currentProject(record, projects)}`,
+          value: Number(record.tokens_used),
+        }))}
+      />
+      {supported.length ? <p className="mb-4 text-sm text-muted">{c.chartTableNote}</p> : null}
+      <RecordTable records={records} projects={projects} mode="tokens" />
+    </section>
+  );
+}
+
+function ModelView({ records }: { records: ActivityRecord[] }) {
+  const groups = new Map<string, ActivityRecord[]>();
+  for (const record of records)
+    if (record.model) groups.set(record.model, [...(groups.get(record.model) ?? []), record]);
+  const rows = [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  return (
+    <section className="border-t border-rule py-6">
+      <h2 className="mb-4 text-[1.4rem] font-bold">{c.modelsTitle}</h2>
+      <p className="mb-4 max-w-[75ch] text-muted">{c.modelsSubtitle}</p>
+      {!rows.length ? (
+        <p>{c.noModels}</p>
+      ) : (
+        <>
+          <EvidenceChart
+            label={c.modelsChart}
+            rows={rows.map(([name, items]) => ({ label: name, value: items.length }))}
+          />
+          <p className="mb-4 text-sm text-muted">{c.chartTableNote}</p>
+          <table className="w-full border-collapse">
+            <caption className="sr-only">{c.modelsSubtitle}</caption>
+            <thead className="max-md:sr-only">
+              <tr>
+                {[c.model, c.records, c.lastObserved, c.evidence].map((heading) => (
+                  <th key={heading} scope="col" className={`${cell} font-semibold`}>
+                    {heading}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([name, items]) => {
+                const latest = [...items].sort(
+                  (left, right) =>
+                    Date.parse(right.last_observed_at) - Date.parse(left.last_observed_at),
+                )[0];
+                return (
+                  <tr key={name}>
+                    <th scope="row" className={`${cell} max-md:hidden font-semibold`}>
+                      {name}
+                    </th>
+                    <td colSpan={4} className="border-b border-rule py-2 md:hidden">
+                      <details className="py-2">
+                        <summary className="min-h-11 cursor-pointer py-3 font-semibold">
+                          {name} · {number.format(items.length)}
+                        </summary>
+                        <dl className="grid grid-cols-[minmax(7rem,0.7fr)_1fr] gap-x-4 gap-y-2 pb-3">
+                          <dt className="text-muted">{c.records}</dt>
+                          <dd>{number.format(items.length)}</dd>
+                          <dt className="text-muted">{c.lastObserved}</dt>
+                          <dd>{instant(latest.last_observed_at)}</dd>
+                          <dt className="text-muted">{c.evidence}</dt>
+                          <dd>{contributingEvidence(items)}</dd>
+                        </dl>
+                      </details>
+                    </td>
+                    <td className={`${cell} max-md:hidden`}>{items.length}</td>
+                    <td className={`${cell} max-md:hidden`}>{instant(latest.last_observed_at)}</td>
+                    <td className={`${cell} max-md:hidden text-sm`}>
+                      {contributingEvidence(items)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProjectView({
+  projects,
+  records,
+  loadState,
+  editProject,
+  onError,
+}: {
+  projects: ProjectIdentity[];
+  records: ActivityRecord[];
+  loadState: "loading" | "loaded" | "failed";
+  editProject: ProjectEditor;
+  onError: (error: unknown) => void;
+}) {
+  const [editing, setEditing] = useState("");
+  const [alias, setAlias] = useState("");
+  const [message, setMessage] = useState("");
+  const counts = new Map<string, number>();
+  for (const record of records)
+    if (record.project_id) counts.set(record.project_id, (counts.get(record.project_id) ?? 0) + 1);
+  async function save(projectId: string) {
+    try {
+      await editProject({ project_id: projectId, alias });
+      setEditing("");
+      setMessage(c.aliasSaved);
+    } catch (error) {
+      setMessage(c.aliasFailed);
+      onError(error);
+    }
+  }
+  if (!projects.length && loadState !== "loaded") {
+    return (
+      <section className="border-t border-rule py-6">
+        <h2 className="mb-4 text-[1.4rem] font-bold">{c.projectsTitle}</h2>
+        <p className="mb-4 max-w-[75ch] text-muted">{c.projectsSubtitle}</p>
+        <p className="mb-4 max-w-[75ch]">
+          {loadState === "loading" ? c.projectsLoading : c.projectsInitialLoadFailed}
+        </p>
+      </section>
+    );
+  }
+  if (!projects.length) return <p className="mb-4 max-w-[75ch]">{c.noProjects}</p>;
+  return (
+    <section className="border-t border-rule py-6">
+      <h2 className="mb-4 text-[1.4rem] font-bold">{c.projectsTitle}</h2>
+      <p className="mb-4 max-w-[75ch] text-muted">{c.projectsSubtitle}</p>
+      <EvidenceChart
+        label={c.projectsChart}
+        rows={projects.map((project) => ({
+          label: project.alias || project.basename,
+          value: counts.get(project.project_id) ?? 0,
+        }))}
+      />
+      <p className="mb-4 text-sm text-muted">{c.chartTableNote}</p>
+      <p role="status" className="mb-4">
+        {message}
+      </p>
+      <table className="w-full border-collapse">
+        <caption className="sr-only">{c.projectPrivacy}</caption>
+        <thead className="max-md:sr-only">
+          <tr>
+            {[c.alias, c.basename, c.records, c.lastObserved, c.evidence, c.editAlias].map(
+              (heading) => (
+                <th key={heading} scope="col" className={`${cell} font-semibold`}>
+                  {heading}
+                </th>
+              ),
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {projects.map((project) => {
+            const latest = records
+              .filter((record) => record.project_id === project.project_id)
+              .sort(
+                (left, right) =>
+                  Date.parse(right.last_observed_at) - Date.parse(left.last_observed_at),
+              )[0];
+            const projectRecords = records.filter(
+              (record) => record.project_id === project.project_id,
+            );
+            const aliasControl = (suffix: string) =>
+              editing === project.project_id ? (
+                <form
+                  className="flex flex-wrap gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void save(project.project_id);
+                  }}
+                >
+                  <label
+                    className="sr-only"
+                    htmlFor={`project-alias-${suffix}-${project.project_id}`}
+                  >
+                    {c.alias}
+                  </label>
+                  <input
+                    id={`project-alias-${suffix}-${project.project_id}`}
+                    value={alias}
+                    onChange={(event) => setAlias(event.target.value)}
+                    required
+                    maxLength={120}
+                    className={field}
+                  />
+                  <button className={button} type="submit">
+                    {c.saveAlias}
+                  </button>
+                  <button className={button} type="button" onClick={() => setEditing("")}>
+                    {c.cancelAlias}
+                  </button>
+                </form>
+              ) : (
+                <button
+                  className={button}
+                  onClick={() => {
+                    setAlias(project.alias || project.basename);
+                    setEditing(project.project_id);
+                    setMessage("");
+                  }}
+                >
+                  {c.editAlias}
+                </button>
+              );
+            return (
+              <tr key={project.project_id}>
+                <th scope="row" className={`${cell} max-md:hidden font-semibold`}>
+                  {project.alias || project.basename}
+                </th>
+                <td colSpan={6} className="border-b border-rule py-2 md:hidden">
+                  <details className="py-2">
+                    <summary className="min-h-11 cursor-pointer py-3 font-semibold">
+                      {project.alias || project.basename} · {number.format(projectRecords.length)}
+                    </summary>
+                    <dl className="grid grid-cols-[minmax(7rem,0.7fr)_1fr] gap-x-4 gap-y-2 pb-3">
+                      <dt className="text-muted">{c.basename}</dt>
+                      <dd>{project.basename}</dd>
+                      <dt className="text-muted">{c.records}</dt>
+                      <dd>{number.format(projectRecords.length)}</dd>
+                      <dt className="text-muted">{c.lastObserved}</dt>
+                      <dd>{latest ? instant(latest.last_observed_at) : c.unavailable}</dd>
+                      <dt className="text-muted">{c.evidence}</dt>
+                      <dd>{contributingEvidence(projectRecords)}</dd>
+                      <dt className="text-muted">{c.editAlias}</dt>
+                      <dd>{aliasControl("narrow")}</dd>
+                    </dl>
+                  </details>
+                </td>
+                <td className={`${cell} max-md:hidden`}>{project.basename}</td>
+                <td className={`${cell} max-md:hidden`}>{projectRecords.length}</td>
+                <td className={`${cell} max-md:hidden`}>
+                  {latest ? instant(latest.last_observed_at) : c.unavailable}
+                </td>
+                <td className={`${cell} max-md:hidden text-sm`}>
+                  {contributingEvidence(projectRecords)}
+                </td>
+                <td className={`${cell} max-md:hidden`}>{aliasControl("wide")}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="mt-4 max-w-[75ch] text-muted">{c.projectPrivacy}</p>
+    </section>
+  );
+}
+
+export function Analytics({
+  data,
+  selection,
+  now,
+  heading,
+  readHistory,
+  expired,
+  readProjects,
+  editProject,
+  readActivity,
+}: AnalyticsProps) {
+  const [tab, setTab] = useState<AnalyticsTab>("capacity");
   const [profileId, setProfileId] = useState(
     selection?.profile_id ?? data.candidates[0]?.profile_id ?? "",
   );
   const [range, setRange] = useState<HistoryRange>("13-months");
   const [windowFilter, setWindowFilter] = useState<WindowFilter>("both");
+  const [projectId, setProjectId] = useState("");
+  const [projects, setProjects] = useState<ProjectIdentity[]>([]);
+  const [activity, setActivity] = useState<ActivityRecord[]>(data.activity);
   const [aggregates, setAggregates] = useState<HistoryAggregate[]>([]);
   const [status, setStatus] = useState<string>(c.loading);
+  const [activityStatus, setActivityStatus] = useState(c.activityRetained(data.activity.length));
+  const [projectStatus, setProjectStatus] = useState<string>(c.projectsLoading);
+  const [projectLoadState, setProjectLoadState] = useState<"loading" | "loaded" | "failed">(
+    "loading",
+  );
   const historyNow = useRef(now);
   const loadHistory = useEffectEvent(readHistory);
   const handleExpired = useEffectEvent(expired);
+  const loadProjects = useEffectEvent(readProjects);
+  const loadActivity = useEffectEvent(readActivity);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadProjects()
+      .then((result) => {
+        if (!cancelled) {
+          setProjects(result.projects);
+          setProjectLoadState("loaded");
+          setProjectStatus(c.projectsLoaded(result.projects.length));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setProjectLoadState("failed");
+        setProjectStatus(c.projectsInitialLoadFailed);
+        handleExpired(error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tab === "capacity" || tab === "compare") return;
+    let cancelled = false;
+    const alias = data.candidates.find((item) => item.profile_id === profileId)?.alias ?? "";
+    loadActivity(alias, projectId)
+      .then((result) => {
+        if (!cancelled) {
+          setActivity(result);
+          setActivityStatus(c.activityLoaded(result.length));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setActivityStatus(c.activityLoadFailed);
+        handleExpired(error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data.candidates, profileId, projectId, range, tab]);
 
   useEffect(() => {
     if (tab !== "capacity" || !profileId) return;
     let cancelled = false;
-    loadHistory(profileId, historyStart(range, historyNow.current))
+    loadHistory(profileId, projectId || "*", historyStart(range, historyNow.current))
       .then((result) => {
         if (cancelled) return;
         setAggregates(result.aggregates ?? []);
@@ -507,13 +1018,49 @@ export function Analytics({ data, selection, now, heading, readHistory, expired 
     return () => {
       cancelled = true;
     };
-  }, [profileId, range, tab]);
+  }, [profileId, projectId, range, tab]);
 
   const samples = useMemo(() => samplesFor(aggregates, windowFilter), [aggregates, windowFilter]);
   const profile = data.candidates.find((item) => item.profile_id === profileId);
   const snapshot = data.profiles.find((item) => item.profile_id === profileId);
   const primary = currentReading(snapshot, metricKeys[0]);
   const secondary = currentReading(snapshot, metricKeys[1]);
+  const visibleActivity = useMemo(
+    () => filteredActivity(activity, profileId, projectId, range, now),
+    [activity, profileId, projectId, range, now],
+  );
+  const visibleProjects = projectId
+    ? projects.filter((item) => item.project_id === projectId)
+    : projects;
+  const title =
+    tab === "capacity"
+      ? c.title
+      : tab === "compare"
+        ? c.compareTitle
+        : tab === "tokens"
+          ? c.tokensTitle
+          : tab === "projects"
+            ? c.projectsTitle
+            : tab === "models"
+              ? c.modelsTitle
+              : c.activityTitle;
+  const subtitle =
+    tab === "capacity"
+      ? c.subtitle
+      : tab === "compare"
+        ? c.compareSubtitle
+        : tab === "tokens"
+          ? c.tokensSubtitle
+          : tab === "projects"
+            ? c.projectsSubtitle
+            : tab === "models"
+              ? c.modelsSubtitle
+              : c.activitySubtitle;
+  const editProjectAndRefresh: ProjectEditor = async (request) => {
+    const result = await editProject(request);
+    setProjects(result.projects);
+    return result;
+  };
 
   return (
     <>
@@ -523,32 +1070,26 @@ export function Analytics({ data, selection, now, heading, readHistory, expired 
           tabIndex={-1}
           className="mb-4 max-w-[30ch] text-[clamp(1.8rem,3.3vw,2.75rem)] font-bold leading-[1.16] tracking-[-0.025em]"
         >
-          {tab === "capacity" ? c.title : c.compareTitle}
+          {title}
         </h1>
-        <p className="mb-4 max-w-[75ch] text-muted">
-          {tab === "capacity" ? c.subtitle : c.compareSubtitle}
-        </p>
+        <p className="mb-4 max-w-[75ch] text-muted">{subtitle}</p>
       </header>
       <nav className="mb-6 flex flex-wrap gap-3" aria-label={c.sections}>
         {c.tabs.map((item) => {
-          const implemented = item === "Capacity" || item === "Compare";
           const selectedTab = tab === item.toLowerCase();
           return (
             <button
               key={item}
-              disabled={!implemented}
               aria-current={selectedTab ? "page" : undefined}
-              title={!implemented ? c.comingLater : undefined}
               onClick={() => {
-                if (!implemented) return;
-                const next = item.toLowerCase() as "capacity" | "compare";
+                const next = item.toLowerCase() as AnalyticsTab;
                 if (next === "capacity") setStatus(c.loading);
+                else if (next !== "compare") setActivityStatus(c.activityLoading);
                 setTab(next);
               }}
               className={`${button} aria-[current=page]:border-accent aria-[current=page]:text-accent`}
             >
               {item}
-              {!implemented && <span className="sr-only"> · {c.comingLater}</span>}
             </button>
           );
         })}
@@ -564,6 +1105,7 @@ export function Analytics({ data, selection, now, heading, readHistory, expired 
                 value={profileId}
                 onChange={(event) => {
                   setStatus(c.loading);
+                  setActivityStatus(c.activityLoading);
                   setProfileId(event.target.value);
                 }}
                 className={field}
@@ -581,6 +1123,7 @@ export function Analytics({ data, selection, now, heading, readHistory, expired 
                 value={range}
                 onChange={(event) => {
                   setStatus(c.loading);
+                  setActivityStatus(c.activityLoading);
                   setRange(event.target.value as HistoryRange);
                 }}
                 className={field}
@@ -592,48 +1135,106 @@ export function Analytics({ data, selection, now, heading, readHistory, expired 
               </select>
             </label>
             <label>
-              {c.window}
+              {c.project}
               <select
-                value={windowFilter}
-                onChange={(event) => setWindowFilter(event.target.value as WindowFilter)}
+                value={projectId}
+                onChange={(event) => {
+                  setStatus(c.loading);
+                  setActivityStatus(c.activityLoading);
+                  setProjectId(event.target.value);
+                }}
                 className={field}
               >
-                <option value="both">{c.bothWindows}</option>
-                <option value={metricKeys[0]}>{c.primary}</option>
-                <option value={metricKeys[1]}>{c.secondary}</option>
+                <option value="">{c.allProjects}</option>
+                {projects.map((item) => (
+                  <option key={item.project_id} value={item.project_id}>
+                    {item.alias || item.basename}
+                  </option>
+                ))}
               </select>
             </label>
+            {tab === "capacity" ? (
+              <label>
+                {c.window}
+                <select
+                  value={windowFilter}
+                  onChange={(event) => setWindowFilter(event.target.value as WindowFilter)}
+                  className={field}
+                >
+                  <option value="both">{c.bothWindows}</option>
+                  <option value={metricKeys[0]}>{c.primary}</option>
+                  <option value={metricKeys[1]}>{c.secondary}</option>
+                </select>
+              </label>
+            ) : null}
           </div>
-          <p className="mb-6 border-b border-rule pb-5">
-            {c.current}:{" "}
-            <strong>
-              {formatRemaining(primary.remaining)} {c.primaryShort}
-            </strong>{" "}
-            ·{" "}
-            <strong>
-              {formatRemaining(secondary.remaining)} {c.secondaryShort}
-            </strong>{" "}
-            · {label(primary.availability)} · {label(secondary.availability)}
-            <small className="mt-2 block text-sm text-muted">
-              {c.primaryShort}: {observationsEvidence(primary.observations)}
-              <br />
-              {c.secondaryShort}: {observationsEvidence(secondary.observations)}
-            </small>
-          </p>
-          <section className="border-t border-rule py-6">
-            <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
-              {c.capacityHistory}
-            </h2>
-            <p className="mb-4 max-w-[75ch] text-muted">
-              {c.monthlyFinal(samples.length)} · {profile?.alias ?? c.none} · {c.bucketZone}
-            </p>
+          {tab !== "capacity" ? (
             <p role="status" className="mb-4 max-w-[75ch] text-muted">
-              {status}
+              {activityStatus} {projectStatus}
             </p>
-            <HistoryChart samples={samples} />
-            {samples.length ? <HistoryTable samples={samples} /> : null}
-          </section>
-          <p className="mb-4 max-w-[75ch] text-muted">{c.boundary}</p>
+          ) : null}
+          {tab === "capacity" ? (
+            <>
+              <p className="mb-6 border-b border-rule pb-5">
+                {c.current}:{" "}
+                <strong>
+                  {formatRemaining(primary.remaining)} {c.primaryShort}
+                </strong>{" "}
+                ·{" "}
+                <strong>
+                  {formatRemaining(secondary.remaining)} {c.secondaryShort}
+                </strong>{" "}
+                · {label(primary.availability)} · {label(secondary.availability)}
+                <small className="mt-2 block text-sm text-muted">
+                  {c.primaryShort}: {observationsEvidence(primary.observations)}
+                  <br />
+                  {c.secondaryShort}: {observationsEvidence(secondary.observations)}
+                </small>
+              </p>
+              <section className="border-t border-rule py-6">
+                <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                  {c.capacityHistory}
+                </h2>
+                <p className="mb-4 max-w-[75ch] text-muted">
+                  {c.monthlyFinal(samples.length)} · {profile?.alias ?? c.none} · {c.bucketZone}
+                </p>
+                <p role="status" className="mb-4 max-w-[75ch] text-muted">
+                  {status}
+                </p>
+                <HistoryChart samples={samples} />
+                {samples.length ? <HistoryTable samples={samples} /> : null}
+              </section>
+              <p className="mb-4 max-w-[75ch] text-muted">{c.boundary}</p>
+            </>
+          ) : tab === "tokens" ? (
+            <TokenView records={visibleActivity} projects={projects} />
+          ) : tab === "projects" ? (
+            <ProjectView
+              projects={visibleProjects}
+              records={visibleActivity}
+              loadState={projectLoadState}
+              editProject={editProjectAndRefresh}
+              onError={expired}
+            />
+          ) : tab === "models" ? (
+            <ModelView records={visibleActivity} />
+          ) : (
+            <section className="border-t border-rule py-6">
+              <h2 className="mb-4 text-[1.4rem] font-bold">{c.activityTitle}</h2>
+              <p className="mb-4 max-w-[75ch] text-muted">
+                {c.observedRecords(visibleActivity.length)}
+              </p>
+              <EvidenceChart
+                label={c.activitySubtitle}
+                rows={["managed_launch", "observed_session"].map((kind) => ({
+                  label: activityType(kind),
+                  value: visibleActivity.filter((record) => record.record_type === kind).length,
+                }))}
+              />
+              <p className="mb-4 text-sm text-muted">{c.chartTableNote}</p>
+              <RecordTable records={visibleActivity} projects={projects} mode="activity" />
+            </section>
+          )}
           <p className="mb-4 max-w-[75ch] text-muted">{c.displayZone(zone)}</p>
         </>
       )}
