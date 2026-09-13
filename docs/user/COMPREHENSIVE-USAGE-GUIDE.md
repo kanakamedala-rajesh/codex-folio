@@ -387,9 +387,36 @@ current alias by Project ID.
 
 History reloads read the local service database; they do not collect new
 provider evidence. Use **Refresh** or `usage refresh` for supported collection.
-The dashboard receives only the service's allowlisted aggregate projection—no
-Identity Home paths, workspace names, raw provider payloads, or authentication
-material.
+Ordinary history views receive only the service's allowlisted aggregate
+projection—no Identity Home paths, workspace names, raw provider payloads, or
+authentication material.
+
+Choose **Local analytics data** from any Analytics tab to use the browser flows:
+
+- **Preview analytics export** selects normalized usage, availability,
+  aggregate, or activity datasets. JSON can include several datasets; CSV is
+  limited to one. The preview names every included field and count. Download
+  serializes that retained preview response rather than querying again, so the
+  downloaded rows correspond to the reviewed counts. Project Alias and basename
+  are the default; canonical project paths require the explicit checkbox.
+- **Manage retention** reads and saves the 13-calendar-month default, an
+  explicit interval of at least 30 days, or unlimited retention. An optional
+  bounded maintenance run processes at most the existing per-class batch. It
+  does not enroll a scheduler, purge aggregates, reinterpret provider windows,
+  or change diagnostics and checkpoint retention.
+- **Preview scoped purge** requires profile, project, From, To, and record-class
+  dimensions. The dry run shows counts and the 1,000-record atomic limit. Type
+  its exact confirmation only after reviewing the result. A changed scope or a
+  changed matching record set invalidates the preview, and the service rejects
+  stale confirmation instead of widening deletion.
+
+Cancelling or failing these flows does not create an analytics download or
+delete data. Browser download destinations remain user-controlled; CodexFolio
+does not upload data or choose an existing file to overwrite. Analytics export
+remains separate from portable configuration, diagnostics, and encrypted
+continuation checkpoint export. Identity Home paths, credentials, raw provider
+payloads, conversation/tool content, commands, diffs, diagnostics, and vault
+material are never analytics export fields.
 
 Use `--json` where machine-readable output is needed. Review a dry run before
 purging or exporting:
@@ -413,8 +440,9 @@ purging or exporting:
 
 Export requires an explicit output path for the real write. Canonical paths are
 excluded unless `--include-paths` is explicitly supplied. Purge returns a
-confirmation token; use the documented `--confirm TOKEN` form only after
-checking the scope and record counts.
+confirmation token bound to the scoped record set; use the documented
+`--confirm TOKEN` form only after checking the scope and record counts. If
+matching data changes, preview again to obtain a fresh token.
 
 Retention can be inspected or changed with:
 

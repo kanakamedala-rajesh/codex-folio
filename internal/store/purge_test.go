@@ -84,6 +84,46 @@ func TestAnalyticsPurgePreviewConfirmationAndProfileIsolation(t *testing.T) {
 	}
 }
 
+func TestAnalyticsPurgeRejectsConfirmationAfterMatchingRecordsChange(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	addReadyProfile(t, state, "work", "Work")
+	target, err := state.ResolveUsageProfile(ctx, "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(at time.Time) {
+		snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+		snapshot.TriggerReason = usage.TriggerExplicitRefresh
+		if _, err := state.SaveUsageSnapshot(ctx, target, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
+	scope := usage.HistoryScope{ProfileID: "work", ProjectID: "*", From: "2026-08-01T00:00:00Z", To: "2026-09-01T00:00:00Z", Classes: []string{"usage"}}
+	preview, err := state.PurgeAnalytics(ctx, scope, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	save(time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC))
+	stale, err := state.PurgeAnalytics(ctx, scope, preview.Confirmation)
+	if apperrors.Code(err) != apperrors.AnalyticsConfirmationInvalid || stale.Applied {
+		t.Fatalf("stale confirmation = %#v/%v", stale, err)
+	}
+	fresh, err := state.PurgeAnalytics(ctx, scope, "")
+	if err != nil || fresh.Confirmation == preview.Confirmation {
+		t.Fatalf("fresh preview = %#v/%v, old %#v", fresh, err, preview)
+	}
+	if applied, err := state.PurgeAnalytics(ctx, scope, fresh.Confirmation); err != nil || !applied.Applied {
+		t.Fatalf("fresh confirmation = %#v/%v", applied, err)
+	}
+}
+
 func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) {
 	state, err := openProfileTestStore(t)
 	if err != nil {
@@ -201,7 +241,11 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 	}
 	launchScope := scope
 	launchScope.Classes = []string{"managed_launches"}
-	if _, err := state.PurgeAnalytics(ctx, launchScope, launchScope.Confirmation()); err != nil {
+	launchPreview, err := state.PurgeAnalytics(ctx, launchScope, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PurgeAnalytics(ctx, launchScope, launchPreview.Confirmation); err != nil {
 		t.Fatal(err)
 	}
 	afterLaunch, err := state.ListActivity(ctx, activity.Filters{ProjectID: "project-a"})
@@ -212,6 +256,10 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 		if record.Correlation.State != activity.CorrelationUncorrelated {
 			t.Fatal("orphaned correlation projection")
 		}
+	}
+	preview, err = state.PurgeAnalytics(ctx, scope, "")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, err := state.PurgeAnalytics(ctx, scope, preview.Confirmation); err != nil {
 		t.Fatal(err)
@@ -227,7 +275,11 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 		t.Fatal("unrelated encrypted checkpoint or vault changed")
 	}
 	checkpointScope := usage.HistoryScope{ProfileID: "*", ProjectID: "project-b", From: "all", To: "all", Classes: []string{"checkpoints"}}
-	if _, err := state.PurgeAnalytics(ctx, checkpointScope, checkpointScope.Confirmation()); err != nil {
+	checkpointPreview, err := state.PurgeAnalytics(ctx, checkpointScope, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PurgeAnalytics(ctx, checkpointScope, checkpointPreview.Confirmation); err != nil {
 		t.Fatalf("completed checkpoint purge: %v", err)
 	}
 	var retainedLaunch int

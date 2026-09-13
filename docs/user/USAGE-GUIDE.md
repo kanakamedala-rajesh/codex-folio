@@ -136,7 +136,11 @@ In the dashboard:
   detailed tabs. Charts have equivalent semantic tables; absent token/model
   metadata stays explicitly unsupported. Projects uses app-local aliases and
   basenames, lets you edit an alias, and never displays the canonical repository
-  path. Compare does not pool quotas or change Selected Profile.
+  path. Compare does not pool quotas or change Selected Profile. **Local
+  analytics data** previews exact export fields and record counts before a JSON
+  or CSV browser download, configures retention from 30 days through unlimited,
+  and dry-runs fully scoped purge counts before confirmation. Canonical project
+  paths require explicit inclusion.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated
@@ -159,6 +163,10 @@ capture time before acting on it.
 Managed Identity Homes remain recoverable in Profiles for seven days after
 removal. Referenced Identity Homes are only unregistered: CodexFolio never
 deletes or rewrites their external files or the remote OpenAI identity.
+
+Analytics purge is separate from profile removal. Its confirmation is bound to
+the complete scope and the records counted by the preview; changing the scope
+or matching data makes that confirmation stale and requires a new preview.
 
 ## 6. Stop or try again safely
 

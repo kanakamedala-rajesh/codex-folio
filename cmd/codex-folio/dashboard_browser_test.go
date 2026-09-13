@@ -428,7 +428,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				}
 				if string(mode) == "analytics-clean" && seeded {
 					scope := usage.HistoryScope{ProfileID: "*", ProjectID: "*", From: "all", To: "all", Classes: []string{"aggregates"}}
-					if _, purgeErr := state.PurgeAnalytics(context.Background(), scope, scope.Confirmation()); purgeErr != nil {
+					preview, purgeErr := state.PurgeAnalytics(context.Background(), scope, "")
+					if purgeErr == nil {
+						_, purgeErr = state.PurgeAnalytics(context.Background(), scope, preview.Confirmation)
+					}
+					if purgeErr != nil {
 						analyticsSeedErrors <- purgeErr
 						_ = os.WriteFile(control, []byte("analytics-clean-failed"), 0600)
 						return

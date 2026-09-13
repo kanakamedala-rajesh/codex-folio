@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, type RefObject } from "react";
 import type {
   AnalyticsResponse,
   ActivityRecord,
@@ -12,6 +12,7 @@ import type {
   UsageSnapshotResponse,
 } from "./generated/openapi";
 import { analyticsCopy as c, provenanceCopy, stateCopy } from "./copy";
+import { AnalyticsData, type AnalyticsDataView, type HistoryManager } from "./AnalyticsData";
 
 const metricKeys = ["codex.primary.used_percent", "codex.secondary.used_percent"] as const;
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -48,6 +49,7 @@ interface AnalyticsProps {
   now: number;
   heading: RefObject<HTMLHeadingElement | null>;
   readHistory: HistoryReader;
+  manageHistory: HistoryManager;
   readProjects: ProjectReader;
   editProject: ProjectEditor;
   readActivity: ActivityReader;
@@ -931,12 +933,14 @@ export function Analytics({
   now,
   heading,
   readHistory,
+  manageHistory,
   expired,
   readProjects,
   editProject,
   readActivity,
 }: AnalyticsProps) {
   const [tab, setTab] = useState<AnalyticsTab>("capacity");
+  const [dataView, setDataView] = useState<AnalyticsDataView | null>(null);
   const [profileId, setProfileId] = useState(
     selection?.profile_id ?? data.candidates[0]?.profile_id ?? "",
   );
@@ -952,7 +956,7 @@ export function Analytics({
   const [projectLoadState, setProjectLoadState] = useState<"loading" | "loaded" | "failed">(
     "loading",
   );
-  const historyNow = useRef(now);
+  const [historyNow] = useState(now);
   const loadHistory = useEffectEvent(readHistory);
   const handleExpired = useEffectEvent(expired);
   const loadProjects = useEffectEvent(readProjects);
@@ -1003,7 +1007,7 @@ export function Analytics({
   useEffect(() => {
     if (tab !== "capacity" || !profileId) return;
     let cancelled = false;
-    loadHistory(profileId, projectId || "*", historyStart(range, historyNow.current))
+    loadHistory(profileId, projectId || "*", historyStart(range, historyNow))
       .then((result) => {
         if (cancelled) return;
         setAggregates(result.aggregates ?? []);
@@ -1018,7 +1022,7 @@ export function Analytics({
     return () => {
       cancelled = true;
     };
-  }, [profileId, projectId, range, tab]);
+  }, [historyNow, profileId, projectId, range, tab]);
 
   const samples = useMemo(() => samplesFor(aggregates, windowFilter), [aggregates, windowFilter]);
   const profile = data.candidates.find((item) => item.profile_id === profileId);
@@ -1061,6 +1065,26 @@ export function Analytics({
     setProjects(result.projects);
     return result;
   };
+
+  if (dataView) {
+    return (
+      <AnalyticsData
+        view={dataView}
+        heading={heading}
+        candidates={data.candidates}
+        projects={projects}
+        profileId={profileId}
+        projectId={projectId}
+        from={historyStart(range, historyNow)}
+        manageHistory={manageHistory}
+        expired={expired}
+        close={() => {
+          setDataView(null);
+          requestAnimationFrame(() => heading.current?.focus());
+        }}
+      />
+    );
+  }
 
   return (
     <>
@@ -1236,6 +1260,23 @@ export function Analytics({
             </section>
           )}
           <p className="mb-4 max-w-[75ch] text-muted">{c.displayZone(zone)}</p>
+          <section className="mt-6 border-t border-rule py-6">
+            <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+              {c.localData}
+            </h2>
+            <p className="mb-4 max-w-[75ch] text-muted">{c.localDataDetail}</p>
+            <div className="flex flex-wrap gap-3">
+              <button className={button} onClick={() => setDataView("export")}>
+                {c.previewAnalyticsExport}
+              </button>
+              <button className={button} onClick={() => setDataView("retention")}>
+                {c.manageRetention}
+              </button>
+              <button className={button} onClick={() => setDataView("purge")}>
+                {c.previewScopedPurge}
+              </button>
+            </div>
+          </section>
         </>
       )}
     </>

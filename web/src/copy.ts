@@ -1,4 +1,6 @@
 // Shipped English copy; dates, numbers and time zones follow the OS locale.
+const number = new Intl.NumberFormat();
+
 export const copy = {
   product: "VenkataSudha CodexFolio",
   brand: "CodexFolio",
@@ -84,6 +86,10 @@ export const copy = {
   themes: ["System", "Light", "Dark"],
   locale: "Dates and numbers",
   osLocale: "Use operating-system locale",
+  analyticsRetention: "Analytics retention",
+  analyticsRetentionDetail:
+    "13 calendar months by default · Configurable from 30 days to unlimited · Scoped purge is reviewed separately.",
+  manageAnalyticsData: "Manage analytics data",
   themeUnavailable: "Appearance changed for this tab; browser storage is unavailable.",
   secondsAgo: "seconds ago",
   minutesAgo: "minutes ago",
@@ -260,6 +266,104 @@ export const analyticsCopy = {
     "Each provider window keeps its stored boundaries, timezone, unit, source version and provenance. Monthly final selection never sums percentages or fills gaps.",
   displayZone: (value: string) =>
     `Dates display in your operating-system locale and ${value}; stored bucket zones are unchanged.`,
+  localData: "Local analytics data",
+  localDataDetail:
+    "Preview normalized exports, configure bounded retention, or review an explicit scoped purge.",
+  previewAnalyticsExport: "Preview analytics export",
+  manageRetention: "Manage retention",
+  previewScopedPurge: "Preview scoped purge",
+} as const;
+
+export const analyticsDataCopy = {
+  exportTitle: "Preview before anything leaves",
+  exportSubtitle: "Analytics · Normalized JSON or CSV",
+  separation:
+    "Analytics export is separate from portable configuration, diagnostics, and encrypted continuation checkpoints. Each has its own explicit scope.",
+  format: "Export format",
+  datasets: "Datasets",
+  dataset: "Dataset",
+  datasetLabels: {
+    usage: "Usage",
+    availability: "Availability",
+    aggregates: "Aggregates",
+    activity: "Activity",
+  },
+  usage: "Usage",
+  aggregates: "Aggregates",
+  observedSessions: "Observed Sessions",
+  managedLaunches: "Managed Launches",
+  checkpoints: "Checkpoints",
+  includePaths: "Include canonical project paths explicitly",
+  pathBoundary:
+    "Default: Project Aliases and basenames only. Identity Home paths, credentials, raw provider payloads, conversation or tool content, commands, diffs, diagnostics, and vault material are never analytics export fields.",
+  exportScope: (from: string) =>
+    `The current Analytics profile, project, and retained range are used. Start: ${from}. End: all retained history.`,
+  exportLoading: "Preparing an exact normalized export preview.",
+  exportReady: "Export preview ready. Download uses these exact retained records.",
+  exportFailed: "Export preview failed. No download was created.",
+  downloadStarted: "Browser download started from the reviewed preview.",
+  previewCaption: "Analytics export preview",
+  previewSummary: (dataset: string, count: number) =>
+    `${dataset} · ${number.format(count)} ${count === 1 ? "record" : "records"}`,
+  fields: "Included fields",
+  records: "Records",
+  excluded:
+    "Excluded content remains excluded even when canonical project paths are explicitly included. The browser chooses the download destination; CodexFolio does not upload or overwrite one.",
+  previewExport: "Preview export",
+  download: (format: string) => `Download ${format.toUpperCase()}`,
+  cancelExport: "Cancel export",
+  retentionTitle: "Analytics retention",
+  retentionSubtitle: "Local normalized history · Independent from diagnostics and checkpoints",
+  retentionLoading: "Loading the current analytics retention setting.",
+  retentionSaving: "Saving analytics retention.",
+  retentionFailed: "Analytics retention could not be updated. Existing data remains available.",
+  retentionSaved: "Analytics retention saved. Existing data was not processed.",
+  retentionMaintained: (processed: number, more: boolean) =>
+    `Analytics retention saved. ${number.format(processed)} records processed in this bounded run.${more ? " More eligible records remain for a later run." : " No additional bounded batch was reported."}`,
+  currentSetting: "Current setting:",
+  retentionSetting: "Retention setting",
+  retentionDays: "Retention days",
+  thirteenMonths: "13 calendar months",
+  unlimited: "Unlimited",
+  days: (value: string) => `${value} days`,
+  customDays: "Custom days (minimum 30)",
+  loading: "Loading…",
+  runMaintenance: "Run one bounded maintenance batch after saving",
+  retentionBoundary:
+    "Retention compacts eligible detail in bounded transactions. Aggregates keep normalized facts until explicit purge; provider windows, bucket zones, current state, and running or referenced activity keep their existing semantics. This does not enroll a scheduler.",
+  saveRetention: "Save retention",
+  back: "Back to Analytics",
+  purgeTitle: "Preview scoped purge",
+  purgeSubtitle: "Dry run first · Every scope dimension is explicit",
+  purgeIsolation:
+    "Analytics, activity, and checkpoint deletion is independent of Identity Profiles, Identity Homes, authentication, configuration packs, vault keys, and quarantine.",
+  purgeProfile: "Purge profile",
+  purgeProject: "Purge project",
+  allProfiles: "All profiles",
+  allProjects: "All projects",
+  noProject: "No Project Identity",
+  from: "From",
+  to: "To",
+  allHistory: "All retained history",
+  chooseDate: "Choose date and time",
+  fromDate: "From date and time",
+  toDate: "To date and time",
+  recordClasses: "Record classes",
+  purgeDates:
+    "From is inclusive and To is exclusive. Aggregate buckets and activity intervals must fit wholly inside the range. Checkpoints require All profiles.",
+  purgeLoading: "Counting the exact scoped records without deleting anything.",
+  purgeReady: "Purge preview ready. Review every count and type the scope-bound confirmation.",
+  purgeFailed: "Purge preview failed. Existing data remains unchanged.",
+  purgeApplying: "Applying the confirmed scoped purge.",
+  purgeApplied: "Scoped analytics data purged.",
+  purgeStale: "The confirmation is invalid or stale. Nothing was deleted; preview the scope again.",
+  purgeCaption: "Scoped purge dry-run counts",
+  recordClass: "Record class",
+  purgeLimit: (limit: number, executable: boolean) =>
+    `${executable ? "This scope can be applied" : "This scope is too large to apply"}. Atomic limit: ${number.format(limit)} affected records.`,
+  confirmation: "Scope-bound confirmation",
+  previewPurge: "Preview purge",
+  applyPurge: "Apply scoped purge",
 } as const;
 
 export const profileCopy = {

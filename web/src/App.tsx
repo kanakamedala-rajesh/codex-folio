@@ -485,6 +485,10 @@ export function App() {
       },
       { headers: { "X-CodexFolio-CSRF": csrf.current } },
     );
+  const manageAnalyticsHistory = (request: Parameters<typeof api.manageAnalyticsHistory>[0]) =>
+    api.manageAnalyticsHistory(request, {
+      headers: { "X-CodexFolio-CSRF": csrf.current },
+    });
   const editAnalyticsProject = (request: { project_id: string; alias: string }) =>
     api.editProject(request, { headers: { "X-CodexFolio-CSRF": csrf.current } });
   async function load(includeProfiles = false) {
@@ -959,6 +963,7 @@ export function App() {
                 now={now}
                 heading={heading}
                 readHistory={readAnalyticsHistory}
+                manageHistory={manageAnalyticsHistory}
                 readProjects={() => api.getProjects()}
                 readActivity={(profileAlias, projectId) =>
                   api.getActivity(profileAlias, projectId).then((result) => result.records)
@@ -1038,6 +1043,18 @@ export function App() {
                     <p className="mb-4 max-w-[75ch]">
                       {c.osLocale} · {navigator.language} · {zone}
                     </p>
+                    <section className="border-t border-rule py-6">
+                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                        {c.analyticsRetention}
+                      </h2>
+                      <p className="mb-4 max-w-[75ch] text-muted">{c.analyticsRetentionDetail}</p>
+                      <button
+                        className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink cursor-pointer hover:border-accent"
+                        onClick={() => navigate("Analytics")}
+                      >
+                        {c.manageAnalyticsData}
+                      </button>
+                    </section>
                     <p className="mb-4 max-w-[75ch] text-muted">{c.later}</p>
                   </section>
                 ) : route !== "Overview" ? (

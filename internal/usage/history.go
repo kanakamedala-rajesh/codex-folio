@@ -31,6 +31,13 @@ type HistoryScope struct {
 	Classes   []string `json:"classes"`
 }
 
+// PurgeSelectionIdentity binds a confirmation to the exact durable records
+// visible during preview without exposing those identifiers in the result.
+type PurgeSelectionIdentity struct {
+	RecordClass string
+	RecordIDs   []string
+}
+
 func (scope HistoryScope) Validate() error {
 	for _, value := range []string{scope.ProfileID, scope.ProjectID} {
 		if value == "" || len(value) > 200 || strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) >= 0 {
@@ -69,6 +76,13 @@ func (scope HistoryScope) Validate() error {
 }
 
 func (scope HistoryScope) Confirmation() string {
+	return scope.ConfirmationFor(nil)
+}
+
+// ConfirmationFor changes when either the normalized scope or its selected
+// durable records change, so an old preview cannot authorize a wider or stale
+// deletion set.
+func (scope HistoryScope) ConfirmationFor(selections []PurgeSelectionIdentity) string {
 	scope.Classes = slices.Clone(scope.Classes)
 	slices.Sort(scope.Classes)
 	for _, bound := range []*string{&scope.From, &scope.To} {
@@ -76,7 +90,18 @@ func (scope HistoryScope) Confirmation() string {
 			*bound = parsed.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	body, _ := json.Marshal(scope)
+	normalized := make([]PurgeSelectionIdentity, len(selections))
+	for index, selection := range selections {
+		normalized[index] = PurgeSelectionIdentity{RecordClass: selection.RecordClass, RecordIDs: slices.Clone(selection.RecordIDs)}
+		slices.Sort(normalized[index].RecordIDs)
+	}
+	slices.SortFunc(normalized, func(left, right PurgeSelectionIdentity) int {
+		return strings.Compare(left.RecordClass, right.RecordClass)
+	})
+	body, _ := json.Marshal(struct {
+		Scope      HistoryScope
+		Selections []PurgeSelectionIdentity
+	}{Scope: scope, Selections: normalized})
 	digest := sha256.Sum256(body)
 	return "purge-" + hex.EncodeToString(digest[:12])
 }

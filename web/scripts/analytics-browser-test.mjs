@@ -4,6 +4,47 @@ import { performance } from "node:perf_hooks";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 
+function parseCSV(contents) {
+  const rows = [];
+  let row = [],
+    cell = "",
+    quoted = false;
+  for (let index = 0; index < contents.length; index++) {
+    const character = contents[index];
+    if (quoted && character === '"' && contents[index + 1] === '"') {
+      cell += '"';
+      index++;
+    } else if (character === '"') quoted = !quoted;
+    else if (character === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && contents[index + 1] === "\n") index++;
+      row.push(cell);
+      if (row.some((value) => value !== "")) rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += character;
+  }
+  return rows;
+}
+
+function exportedScalar(record, field) {
+  if (field === "metric_key") return record.metric?.metric_key;
+  if (field === "value_kind") return record.metric?.value_kind;
+  if (field === "unit") return record.metric?.unit;
+  if (field === "metric_scope") return record.metric?.scope;
+  if (field === "aggregation") return record.metric?.aggregation;
+  if (field.startsWith("correlation_"))
+    return record.correlation?.[field.slice("correlation_".length)];
+  return record[field];
+}
+
+function csvExpected(value) {
+  const text = value === undefined || value === null ? "" : String(value);
+  return text && "=+-@\t\r".includes(text[0]) ? `'${text}` : text;
+}
+
 export async function testAnalytics({
   page,
   link,
@@ -488,6 +529,238 @@ export async function testAnalytics({
     "390px Projects reflow and Chromium 200% page scale keep keyboard disclosures and alias editing operable without essential horizontal overflow",
   );
 
+  const profilesBeforeDataControls = await (
+    await page.request.get(new URL("/api/v1/profiles", link).href)
+  ).json();
+  const capacityHistory = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Capacity", exact: true }).click();
+  assert.equal((await capacityHistory).status(), 200);
+
+  await page.getByRole("button", { name: "Preview analytics export", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Preview before anything leaves", exact: true })
+    .waitFor();
+  assert.match(
+    await page.locator("main").innerText(),
+    /separate from portable configuration, diagnostics, and encrypted continuation checkpoints/i,
+  );
+  await page.getByRole("checkbox", { name: "Usage", exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: "Activity", exact: true }).check();
+  const defaultExportResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Preview export", exact: true }).click();
+  const defaultExport = await defaultExportResponse;
+  assert.equal(defaultExport.status(), 200, await defaultExport.text());
+  const defaultExportRequest = defaultExport.request().postDataJSON();
+  assert.equal(defaultExportRequest.action, "export");
+  assert.deepEqual(defaultExportRequest.export.datasets, ["activity"]);
+  assert.equal(defaultExportRequest.export.include_paths, false);
+  const defaultExportPayload = await defaultExport.json();
+  assert.equal(defaultExportPayload.export.preview.length, 1);
+  assert.equal(defaultExportPayload.export.preview[0].dataset, "activity");
+  assert.ok(defaultExportPayload.export.preview[0].record_count > 0);
+  assert.ok(!defaultExportPayload.export.preview[0].fields.includes("canonical_path"));
+  assert.doesNotMatch(
+    JSON.stringify(defaultExportPayload),
+    /canonical_path|identity_home|credential/i,
+  );
+  const exportTable = page.getByRole("table", { name: "Analytics export preview" });
+  assert.match(await exportTable.innerText(), /Included fields[\s\S]*Records[\s\S]*Activity/);
+
+  await page
+    .getByRole("checkbox", { name: "Include canonical project paths explicitly", exact: true })
+    .check();
+  assert.equal(await page.getByRole("button", { name: "Download JSON", exact: true }).count(), 0);
+  const pathExportResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Preview export", exact: true }).click();
+  const pathExport = await pathExportResponse;
+  assert.equal(pathExport.status(), 200);
+  const pathPayload = await pathExport.json();
+  assert.ok(pathPayload.export.preview[0].fields.includes("canonical_path"));
+  assert.ok(pathPayload.export.records.activity.some((record) => record.canonical_path));
+
+  await page
+    .getByRole("checkbox", { name: "Include canonical project paths explicitly", exact: true })
+    .uncheck();
+  const jsonPreviewResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Preview export", exact: true }).click();
+  const jsonPreview = await jsonPreviewResponse;
+  const jsonPreviewPayload = await jsonPreview.json();
+  const jsonDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download JSON", exact: true }).click();
+  const downloadedJSON = await jsonDownload;
+  assert.equal(downloadedJSON.suggestedFilename(), "codex-folio-analytics.json");
+  const downloadedJSONPath = await downloadedJSON.path();
+  assert.ok(downloadedJSONPath);
+  const jsonContents = JSON.parse(readFileSync(downloadedJSONPath, "utf8"));
+  assert.deepEqual(jsonContents, jsonPreviewPayload.export);
+
+  await page.getByRole("combobox", { name: "Export format", exact: true }).selectOption("csv");
+  for (const [label, dataset] of [
+    ["Usage", "usage"],
+    ["Availability", "availability"],
+    ["Aggregates", "aggregates"],
+    ["Activity", "activity"],
+  ]) {
+    await page.getByRole("radio", { name: label, exact: true }).check();
+    const csvPreviewResponse = page.waitForResponse(
+      (item) =>
+        item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Preview export", exact: true }).click();
+    const csvPreviewPayload = await (await csvPreviewResponse).json();
+    const csvDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download CSV", exact: true }).click();
+    const downloadedCSV = await csvDownload;
+    assert.equal(downloadedCSV.suggestedFilename(), "codex-folio-analytics.csv");
+    const downloadedCSVPath = await downloadedCSV.path();
+    assert.ok(downloadedCSVPath);
+    const csvRows = parseCSV(readFileSync(downloadedCSVPath, "utf8"));
+    const fields = csvPreviewPayload.export.preview[0].fields;
+    const records = csvPreviewPayload.export.records[dataset];
+    assert.deepEqual(csvRows[0], fields);
+    assert.deepEqual(
+      csvRows.slice(1),
+      records.map((record) => fields.map((field) => csvExpected(exportedScalar(record, field)))),
+    );
+  }
+  check("analytics JSON and CSV downloads serialize the exact cached field/count preview");
+  await scanAccessibility("analytics-export");
+  await capture("analytics-export-wide", 1440, 1000);
+  await capture("analytics-export-narrow", 390, 844);
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+    false,
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Cancel export", exact: true }).click();
+
+  const retentionRead = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Manage retention", exact: true }).click();
+  assert.equal((await retentionRead).request().postDataJSON().action, "retention");
+  await page
+    .locator("strong")
+    .filter({ hasText: /^90 days$/ })
+    .waitFor();
+  await page
+    .getByRole("combobox", { name: "Retention setting", exact: true })
+    .selectOption("unlimited");
+  await page.waitForTimeout(1_100);
+  assert.equal(
+    await page.getByRole("combobox", { name: "Retention setting", exact: true }).inputValue(),
+    "unlimited",
+  );
+  const retentionSave = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Save retention", exact: true }).click();
+  assert.deepEqual((await retentionSave).request().postDataJSON(), {
+    action: "retention",
+    setting: "unlimited",
+    run: false,
+  });
+  await page
+    .locator("strong")
+    .filter({ hasText: /^Unlimited$/ })
+    .waitFor();
+  await page
+    .getByText("Analytics retention saved. Existing data was not processed.", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "Back to Analytics", exact: true }).click();
+
+  await page.getByRole("button", { name: "Preview scoped purge", exact: true }).click();
+  await page.getByRole("heading", { name: "Preview scoped purge", exact: true }).waitFor();
+  await page
+    .getByRole("combobox", { name: "Purge profile", exact: true })
+    .selectOption({ label: "Personal" });
+  await page.getByRole("combobox", { name: "Purge project", exact: true }).selectOption("*");
+  await page.getByRole("checkbox", { name: "Observed Sessions", exact: true }).check();
+  const purgePreviewResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Preview purge", exact: true }).click();
+  const purgePreview = await purgePreviewResponse;
+  assert.equal(purgePreview.status(), 200, await purgePreview.text());
+  const purgePreviewRequest = purgePreview.request().postDataJSON();
+  assert.deepEqual(purgePreviewRequest, {
+    action: "purge",
+    scope: {
+      profile_id: requestProfileId(profilesBeforeDataControls, "Personal"),
+      project_id: "*",
+      from: "all",
+      to: "all",
+      classes: ["observed_sessions"],
+    },
+  });
+  const purgePayload = await purgePreview.json();
+  assert.equal(purgePayload.purge.applied, false);
+  assert.equal(purgePayload.purge.record_limit, 1000);
+  const formattedPurgeLimit = await page.evaluate(() => new Intl.NumberFormat().format(1000));
+  await page
+    .getByText(
+      `This scope can be applied. Atomic limit: ${formattedPurgeLimit} affected records.`,
+      {
+        exact: true,
+      },
+    )
+    .waitFor();
+  assert.ok(purgePayload.purge.counts.some((count) => count.record_class === "observed_sessions"));
+  await page.getByRole("textbox", { name: "Scope-bound confirmation", exact: true }).fill("wrong");
+  assert.equal(
+    await page.getByRole("button", { name: "Apply scoped purge", exact: true }).isDisabled(),
+    true,
+  );
+  await page.getByRole("combobox", { name: "Purge project", exact: true }).selectOption("none");
+  assert.equal(
+    await page.getByRole("textbox", { name: "Scope-bound confirmation", exact: true }).count(),
+    0,
+  );
+  await page.getByRole("combobox", { name: "Purge project", exact: true }).selectOption("*");
+  const secondPurgePreviewResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Preview purge", exact: true }).click();
+  const secondPurgePreview = await secondPurgePreviewResponse;
+  const secondPurgePayload = await secondPurgePreview.json();
+  await page
+    .getByRole("textbox", { name: "Scope-bound confirmation", exact: true })
+    .fill(secondPurgePayload.purge.confirmation);
+  const purgeApplyResponse = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Apply scoped purge", exact: true }).click();
+  const purgeApply = await purgeApplyResponse;
+  assert.equal(purgeApply.status(), 200, await purgeApply.text());
+  assert.equal((await purgeApply.json()).purge.applied, true);
+  await page.getByText("Scoped analytics data purged.", { exact: true }).waitFor();
+  const profilesAfterDataControls = await (
+    await page.request.get(new URL("/api/v1/profiles", link).href)
+  ).json();
+  assert.deepEqual(profilesAfterDataControls, profilesBeforeDataControls);
+  check(
+    "retention and scoped purge use complete generated-client requests, invalidate changed previews, and preserve profile state",
+  );
+  await scanAccessibility("analytics-purge");
+  await page.getByRole("button", { name: "Back to Analytics", exact: true }).click();
+
   writeFileSync(control, "analytics-clean");
   await waitForControl("analytics-cleaned", "analytics-clean-failed");
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -501,4 +774,8 @@ export async function testAnalytics({
 function requestProjectId(payload) {
   assert.equal(payload.projects.length, 2);
   return payload.projects.find((project) => project.alias === "Atlas Research").project_id;
+}
+
+function requestProfileId(payload, alias) {
+  return payload.profiles.find((profile) => profile.alias === alias).profile_id;
 }
