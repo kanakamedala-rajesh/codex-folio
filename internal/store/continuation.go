@@ -12,6 +12,11 @@ import (
 	"venkatasudha.com/codex-folio/internal/launch"
 )
 
+const unresolvedSourceLaunchSQL = `SELECT profile_id, state FROM managed_launches
+	WHERE project_identity_id = ? AND state <> 'exited'
+	AND NOT (state = 'abandoned' AND process_id IS NULL)
+	ORDER BY rowid DESC LIMIT 1`
+
 const definitiveSourceLaunchSQL = `SELECT profile_id, state FROM managed_launches candidate
 	WHERE project_identity_id = ?
 	AND NOT (state = 'abandoned' AND process_id IS NULL)
@@ -21,6 +26,10 @@ const definitiveSourceLaunchSQL = `SELECT profile_id, state FROM managed_launche
 		AND NOT (unresolved.state = 'abandoned' AND unresolved.process_id IS NULL)
 		AND unresolved.state <> 'exited'
 	)
+	ORDER BY ended_at DESC, rowid DESC LIMIT 1`
+
+const latestExitedSourceLaunchSQL = `SELECT profile_id, state FROM managed_launches
+	WHERE project_identity_id = ? AND state = 'exited'
 	ORDER BY ended_at DESC, rowid DESC LIMIT 1`
 
 func (store *Store) SaveCheckpoint(ctx context.Context, record continuation.CheckpointRecord) error {
@@ -57,7 +66,18 @@ func (store *Store) LatestSourceLaunch(ctx context.Context, projectID string) (c
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
 	var profileID, state string
-	err := store.db.QueryRowContext(contextOrBackground(ctx), definitiveSourceLaunchSQL, projectID).Scan(&profileID, &state)
+	err := store.db.QueryRowContext(contextOrBackground(ctx), unresolvedSourceLaunchSQL, projectID).Scan(&profileID, &state)
+	if err == nil {
+		result := continuation.SourceLaunch{ProfileID: profileID, State: continuation.SourceUncertain}
+		if state == string(launch.StateRunning) {
+			result.State = continuation.SourceRunning
+		}
+		return result, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return continuation.SourceLaunch{}, coded(apperrors.StoreReadFailed, err)
+	}
+	err = store.db.QueryRowContext(contextOrBackground(ctx), latestExitedSourceLaunchSQL, projectID).Scan(&profileID, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return continuation.SourceLaunch{State: continuation.SourceUncertain}, nil
 	}

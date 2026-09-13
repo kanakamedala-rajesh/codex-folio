@@ -145,10 +145,21 @@ In the dashboard:
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated
   Launch Plan.
+- **Prepare Handoff** on an eligible alternative captures a repository-first
+  checkpoint for review. Edit the six handoff fields, inspect repository and
+  validation evidence, redact selected paths or exact text, save the sanitized
+  revision, and approve only after the source process is definitively exited.
+  Run the resulting terminal command to start a fresh foreground Codex process;
+  canceling before that point starts nothing.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
 start; a nonzero exit is not quota evidence by itself.
+
+The handoff view treats running and uncertain source-process state as blockers.
+Target capacity and eligibility are guidance until the terminal command repeats
+source, repository, target-home, authentication, usage, revision, and expiry
+checks immediately before launch. Transcript assistance remains off by default.
 
 For Shared Configuration Packs, assign only an approved version, preview every
 projection, then explicitly apply that exact preview. Profile-local conflicts

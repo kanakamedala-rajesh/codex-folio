@@ -236,6 +236,8 @@ Implemented dashboard flows include:
 - **Overview:** selected or explicit combined scope, current/last-known capacity,
   evidence age and provenance, eligible alternatives, refresh, and a shared
   Project Identity launch view with terminal handoff and lifecycle status;
+  repository-first Safe Continuation capture, evidence review, redaction,
+  revision-bound approval, cancellation, and fresh-target lifecycle tracking;
 - **Profiles:** safe inventory, Managed/Referenced onboarding, Pending resume,
   local metadata edits, selection, installed-Codex discovery, and
   reauthentication, local removal, managed quarantine recovery/purge, and the
@@ -307,6 +309,27 @@ runs, closing the launch view creates no activity. The view reports Prepared,
 Running, Exited (including nonzero status), or Failed from service activity; it
 does not infer quota exhaustion from an exit code. Changing Selected Profile
 does not mutate a launch already associated with another profile.
+
+For Safe Continuation, choose **Prepare Handoff** beside an eligible alternative.
+The browser asks the service to capture the registered Project Identity; it
+never sends an arbitrary repository path, executable, or command. Review and
+edit Goal, Completed Work, Pending Work, Known Validation, Risks, and Next
+Action. Repository branch/head/diff evidence includes provenance and
+completeness, and validation evidence keeps its source, freshness, timestamp,
+and exit status when known. Select repository paths or enter exact text to
+redact, then save the sanitized draft. Any edit creates a new revision, so a
+stale approval is rejected.
+
+Approval is available only when the managed source is definitively exited and
+the target is currently eligible. Running or uncertain source state blocks it.
+After approval, copy the displayed `codex-folio handoff` command into a terminal.
+The browser remains at **Approved · Terminal launch not started** until a real
+foreground process starts. The terminal path repeats the current repository,
+source-exit, target Identity Home, authentication, usage, checkpoint revision,
+and expiry checks before launch. Capacity may be stale or unavailable and is
+shown as cautionary evidence rather than invented certainty. Canceling the
+browser review creates no launch. Transcript assistance remains off unless you
+explicitly use the separate CLI-assisted workflow.
 
 Launching an explicit alias does not mutate Selected Profile. Starting another
 profile does not stop or switch an existing Codex process. Avoid concurrent
@@ -524,6 +547,14 @@ Prepare a fresh foreground continuation under another eligible profile:
 ./build/bin/codex-folio handoff personal . \
   --goal "Continue the reviewed repository task" \
   --next-action "Inspect the checkpoint, then resume"
+```
+
+The dashboard-approved form is revision-bound and is intentionally shorter:
+
+```sh
+./build/bin/codex-folio handoff personal \
+  --checkpoint CHECKPOINT_ID \
+  --revision APPROVED_REVISION
 ```
 
 Safe Continuation checks source-process exit, repository identity, target

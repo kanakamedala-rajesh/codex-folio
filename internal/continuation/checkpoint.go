@@ -302,6 +302,29 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	return checkpoint, nil
 }
 
+// CaptureProject is the browser-safe capture seam: callers provide an
+// app-local Project Identity and never receive or submit its canonical path.
+func (service *Service) CaptureProject(ctx context.Context, projectID string, request CaptureRequest) (Checkpoint, error) {
+	if strings.TrimSpace(projectID) == "" || invalidText(projectID) || strings.TrimSpace(request.Path) != "" || strings.TrimSpace(request.Alias) != "" {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	path, err := service.projects.CanonicalLocation(ctx, projectID)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	request.Path = path
+	return service.Capture(ctx, request)
+}
+
+// Source reports the conservative source-process state used by Safe
+// Continuation. Missing exit evidence remains uncertain.
+func (service *Service) Source(ctx context.Context, projectID string) (SourceLaunch, error) {
+	if strings.TrimSpace(projectID) == "" || invalidText(projectID) {
+		return SourceLaunch{}, ErrCheckpointInvalid
+	}
+	return service.repository.LatestSourceLaunch(ctx, projectID)
+}
+
 func (service *Service) Retention(ctx context.Context, source, setting string) (RetentionPolicy, error) {
 	if source == "" && setting == "" {
 		policy, err := service.repository.CheckpointRetention(ctx)
@@ -591,6 +614,9 @@ func (service *Service) PrepareHandoff(ctx context.Context, id, revision, target
 	workingDirectory, err := service.projects.CanonicalLocation(ctx, record.ProjectIdentityID)
 	if err != nil {
 		return PreparedHandoff{}, err
+	}
+	if _, err := service.inspector.Inspect(ctx, workingDirectory); err != nil {
+		return PreparedHandoff{}, errors.Join(ErrRepositoryInspection, err)
 	}
 	return PreparedHandoff{
 		CheckpointID: id, Revision: revision, ProjectID: record.ProjectIdentityID, SourceProfileID: source.ProfileID,

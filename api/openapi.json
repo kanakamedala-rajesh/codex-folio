@@ -1,5 +1,73 @@
 {
   "$defs": {
+    "HandoffFields": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "goal": {"type": "string"}, "completed_work": {"type": "string"},
+        "pending_work": {"type": "string"}, "known_validation": {"type": "string"},
+        "risks": {"type": "string"}, "next_action": {"type": "string"}
+      },
+      "required": ["goal", "completed_work", "pending_work", "known_validation", "risks", "next_action"]
+    },
+    "HandoffFieldEvidence": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"value": {"type": "string"}, "provenance": {"type": "string"}, "completeness": {"type": "string"}},
+      "required": ["value", "provenance", "completeness"]
+    },
+    "HandoffValidationEvidence": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "command": {"type": "string"}, "timestamp": {"type": "string"}, "exit_status": {"type": "integer"},
+        "source": {"type": "string"}, "freshness": {"type": "string"}
+      },
+      "required": ["command", "source", "freshness"]
+    },
+    "HandoffCheckpointFields": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "goal": {"$ref": "#/$defs/HandoffFieldEvidence"}, "completed_work": {"$ref": "#/$defs/HandoffFieldEvidence"},
+        "pending_work": {"$ref": "#/$defs/HandoffFieldEvidence"},
+        "known_validation": {"type": "array", "items": {"$ref": "#/$defs/HandoffValidationEvidence"}},
+        "validation_provenance": {"type": "string"}, "validation_completeness": {"type": "string"},
+        "risks": {"$ref": "#/$defs/HandoffFieldEvidence"}, "next_action": {"$ref": "#/$defs/HandoffFieldEvidence"}
+      },
+      "required": ["goal", "completed_work", "pending_work", "known_validation", "validation_provenance", "validation_completeness", "risks", "next_action"]
+    },
+    "HandoffRepository": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "branch": {"type": "string"}, "head": {"type": "string"},
+        "staged": {"type": "array", "items": {"type": "string"}}, "modified": {"type": "array", "items": {"type": "string"}},
+        "untracked": {"type": "array", "items": {"type": "string"}},
+        "files_changed": {"type": "integer"}, "insertions": {"type": "integer"}, "deletions": {"type": "integer"},
+        "binary_files": {"type": "integer"}, "provenance": {"type": "string"}, "completeness": {"type": "string"}
+      },
+      "required": ["branch", "head", "staged", "modified", "untracked", "files_changed", "insertions", "deletions", "binary_files", "provenance", "completeness"]
+    },
+    "HandoffRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "action": {"type": "string", "enum": ["capture", "show", "edit", "approve"]},
+        "project_id": {"type": "string"}, "target_alias": {"type": "string"}, "checkpoint_id": {"type": "string"},
+        "revision": {"type": "string"}, "fields": {"$ref": "#/$defs/HandoffFields"},
+        "redact_paths": {"type": "array", "items": {"type": "string"}}, "redact_text": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["action", "target_alias"]
+    },
+    "HandoffResponse": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "checkpoint_id": {"type": "string"}, "status": {"type": "string"}, "revision": {"type": "string"},
+        "source": {"type": "string"}, "project_id": {"type": "string"}, "project_alias": {"type": "string"},
+        "project_basename": {"type": "string"}, "fields": {"$ref": "#/$defs/HandoffCheckpointFields"},
+        "repository": {"$ref": "#/$defs/HandoffRepository"}, "retention": {"type": "string"},
+        "created_at": {"type": "string"}, "expires_at": {"type": "string"}, "size_bytes": {"type": "integer"},
+        "source_profile_id": {"type": "string"}, "source_alias": {"type": "string"}, "source_state": {"type": "string"},
+        "target_profile_id": {"type": "string"}, "target_alias": {"type": "string"}, "target_eligible": {"type": "boolean"},
+        "target_caution": {"type": "string"}, "terminal_command": {"type": "string"}
+      },
+      "required": ["checkpoint_id", "status", "revision", "source", "project_id", "project_alias", "project_basename", "fields", "repository", "retention", "created_at", "expires_at", "size_bytes", "source_profile_id", "source_alias", "source_state", "target_profile_id", "target_alias", "target_eligible", "target_caution", "terminal_command"]
+    },
     "HistoryScope": {
       "type": "object", "additionalProperties": false,
       "properties": {
@@ -796,6 +864,22 @@
               }
             },
             "description": "Exchanges a one-time launcher secret for a short-lived local session."
+          }
+        }
+      }
+    },
+    "/api/v1/handoff": {
+      "post": {
+        "operationId": "manageHandoff",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HandoffRequest"}}}, "required": true},
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/HandoffResponse"}}},
+            "description": "Captures, reviews, edits, or approves one repository-first continuation checkpoint."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
           }
         }
       }

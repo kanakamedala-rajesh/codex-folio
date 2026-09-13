@@ -495,6 +495,37 @@ func TestPrepareHandoffUsesOnlyApprovedCurrentCheckpointAfterExitedSource(t *tes
 	}
 }
 
+func TestPrepareHandoffRejectsRepositoryThatCannotBeInspectedAgain(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	checkpoint := Checkpoint{
+		ID: "checkpoint-1", Status: StatusApproved, Revision: "revision-1",
+		Project: Project{ID: "project-1"}, Source: SourceRepositoryFirst,
+		CreatedAt: now.Add(-time.Hour), ExpiresAt: timePointer(now.Add(time.Hour)),
+	}
+	metadata, err := encodeCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{
+		loaded: CheckpointRecord{ID: checkpoint.ID, ProjectIdentityID: checkpoint.Project.ID, Status: StatusApproved, Metadata: metadata, ExpiresAt: checkpoint.ExpiresAt},
+		source: SourceLaunch{ProfileID: "source-profile", State: SourceExited},
+	}
+	inspector := &inspectorStub{err: errors.New("repository disappeared")}
+	service, err := NewService(ServiceOptions{
+		Repository: repository, Projects: &projectStub{path: "/repo"}, Inspector: inspector, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.PrepareHandoff(context.Background(), checkpoint.ID, checkpoint.Revision, "target-profile"); !errors.Is(err, ErrRepositoryInspection) {
+		t.Fatalf("PrepareHandoff() error = %v, want ErrRepositoryInspection", err)
+	}
+	if inspector.calls != 1 || inspector.path != "/repo" {
+		t.Fatalf("repository inspection = %d calls for %q, want one current inspection", inspector.calls, inspector.path)
+	}
+}
+
 func TestPrepareHandoffRejectsUnapprovedExpiredChangedOrUnstoppedState(t *testing.T) {
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	base := Checkpoint{
@@ -551,12 +582,13 @@ type inspectorStub struct {
 	inventory RepositoryInventory
 	calls     int
 	path      string
+	err       error
 }
 
 func (stub *inspectorStub) Inspect(_ context.Context, path string) (RepositoryInventory, error) {
 	stub.calls++
 	stub.path = path
-	return stub.inventory, nil
+	return stub.inventory, stub.err
 }
 
 type checkpointRepositoryStub struct {

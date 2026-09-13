@@ -299,13 +299,126 @@ try {
       writeFileSync(control, "launch-fail");
       await page.getByText("Failed · Codex did not start", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Back", exact: true }).click();
-      await page.getByRole("button", { name: "Prepare Handoff", exact: true }).click();
-      assert.match(await page.locator("main").innerText(), /Nothing has been prepared or started/);
-      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await choose("Work");
+      const handoffActivityBefore = (
+        await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
+      ).activity.length;
+      await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
+      await assertFocusedHeading("Prepare Handoff");
+      assert.match(await page.locator("main").innerText(), /Managed Launch is still running/);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      const handoffActivityAfterCancel = (
+        await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
+      ).activity.length;
+      assert.equal(handoffActivityAfterCancel, handoffActivityBefore);
+
+      writeFileSync(control, "handoff-source-uncertain");
+      await page.waitForTimeout(100);
+      await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
+      await page.getByText(/Termination is uncertain/).waitFor();
+      await page.getByLabel("Goal", { exact: true }).fill("Finish browser-redact-sentinel export");
+      await page.getByLabel("Completed work", { exact: true }).fill("Captured repository metadata");
+      await page
+        .getByLabel("Pending work", { exact: true })
+        .fill("Validate fresh target lifecycle");
+      await page
+        .getByLabel("Known validation", { exact: true })
+        .fill("Focused browser handoff check passed");
+      await page
+        .getByLabel("Risks", { exact: true })
+        .fill("Native platforms require hosted evidence");
+      await page.getByLabel("Next action", { exact: true }).fill("Run approved checkpoint");
+      await page.getByText("Repository evidence and redaction", { exact: true }).click();
+      await page
+        .getByLabel("Redact exact text (one value per line)")
+        .fill("browser-redact-sentinel");
+      await page.getByText("handoff-notes.txt", { exact: true }).click();
+      const firstSave = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "edit",
+      );
+      await page.getByRole("button", { name: "Save sanitized draft", exact: true }).click();
+      const firstSaveResponse = await firstSave;
+      assert.equal(firstSaveResponse.status(), 200, await firstSaveResponse.text());
+      const firstRevision = await firstSaveResponse.json();
+      assert.doesNotMatch(await page.locator("main").innerText(), /browser-redact-sentinel/);
+      assert.match(await page.locator("main").innerText(), /\[REDACTED\]/);
+      assert.deepEqual(errors, [], "handoff save must not cause a browser runtime error");
+      await page.locator("#handoff-next_action").fill("Start fresh target now");
+      const secondSave = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "edit",
+      );
+      await page.getByRole("button", { name: "Save sanitized draft", exact: true }).click();
+      const secondSaveResponse = await secondSave;
+      const approvedCandidate = await secondSaveResponse.json();
+      const csrf = secondSaveResponse.request().headers()["x-codexfolio-csrf"];
+      const stale = await page.request.post(new URL("/api/v1/handoff", link).href, {
+        data: {
+          action: "approve",
+          target_alias: "Personal",
+          checkpoint_id: firstRevision.checkpoint_id,
+          revision: firstRevision.revision,
+        },
+        headers: { Origin: new URL(link).origin, "X-CodexFolio-CSRF": csrf },
+      });
+      assert.equal(stale.status(), 409, await stale.text());
+
+      writeFileSync(control, "handoff-source-exit");
+      await page.waitForTimeout(100);
+      await page.getByRole("button", { name: "Check readiness again", exact: true }).click();
+      await page.getByText(/Source process: Definitively exited/).waitFor();
+      const approval = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "approve",
+      );
+      await page.getByRole("button", { name: "Approve this revision", exact: true }).click();
+      const approvalResponse = await approval;
+      const approved = await approvalResponse.json();
+      assert.equal(approved.revision, approvedCandidate.revision);
+      assert.match(
+        await page.locator("main").innerText(),
+        /Approved · Terminal launch not started/,
+      );
+      assert.match(
+        await page.locator("main").innerText(),
+        /codex-folio handoff Personal --checkpoint/,
+      );
+      assert.doesNotMatch(
+        await page.locator("main").innerText(),
+        /CODEX_HOME|browser-fixture-command/,
+      );
+      await scanAccessibility("handoff");
+      await capture("handoff-wide", 1440, 1000);
+      await capture("handoff-narrow", 390, 844);
+      await page.emulateMedia({
+        colorScheme: "dark",
+        reducedMotion: "reduce",
+        forcedColors: "active",
+      });
+      await capture("handoff-forced", 390, 844);
+      await page.emulateMedia({
+        colorScheme: "dark",
+        reducedMotion: "reduce",
+        forcedColors: "none",
+      });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      writeFileSync(control, `handoff-run-0:${approved.checkpoint_id}:${approved.revision}`);
+      await page.getByText("Started · Running", { exact: true }).waitFor();
+      writeFileSync(control, "handoff-exit-0");
+      await page.getByText("Exited · Status · 0", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      writeFileSync(control, "handoff-restore-running");
+      await page.waitForTimeout(100);
       await page.getByRole("button", { name: "Open details", exact: true }).click();
       assert.match(await page.locator("main").innerText(), /codex.primary.used_percent/);
       await page.getByRole("button", { name: "Open details", exact: true }).click();
-      check("foreground terminal handoff, cancellation, lifecycle, nonzero exit and failed start");
+      check(
+        "foreground launch plus browser capture, redaction, revision approval, cancellation and fresh-target lifecycle",
+      );
       await capture("running-wide", 1440, 1000);
       await choose("Work");
       await capture("overview-wide", 1440, 1000);

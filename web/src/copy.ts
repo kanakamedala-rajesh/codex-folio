@@ -129,6 +129,66 @@ export const provenanceCopy: Record<string, string> = {
   "Observed during session": "Observed during session",
 };
 
+export const handoffCopy = {
+  title: "Prepare Handoff",
+  reviewTitle: "Review Safe Continuation",
+  project: "Project",
+  unknownSource: "Source profile unavailable",
+  captured: "Repository-first draft captured · Nothing has started",
+  saved: "Sanitized draft saved · Approval applies only to this revision",
+  approved: "Approved · Terminal launch not started",
+  checked: "Source and target readiness checked again",
+  operationFailed: "Handoff action was rejected. Review the current revision and readiness.",
+  prepared: "Approved · Terminal launch not started",
+  starting: "Start reported · Waiting for foreground process",
+  started: "Started · Running",
+  exited: "Exited · Status",
+  failed: "Failed · Codex did not start",
+  readiness: "Handoff readiness",
+  source: "Source process",
+  sourceRunning:
+    "Managed Launch is still running. Stop it in its terminal; CodexFolio will not kill it.",
+  sourceUncertain:
+    "Termination is uncertain. A missing exit report does not prove the source stopped.",
+  sourceExited: "Definitively exited",
+  target: "Target profile",
+  targetReady: "Ready for current review",
+  targetBlocked: "Not eligible; review authentication, Identity Home, and installed Codex support.",
+  goal: "Goal",
+  completed: "Completed work",
+  pending: "Pending work",
+  validation: "Known validation",
+  risks: "Risks",
+  next: "Next action",
+  repositoryFirst: "Repository-first checkpoint",
+  revision: "Revision",
+  expires: "Expires",
+  never: "Never",
+  evidence: "Repository evidence and redaction",
+  filesChanged: "files changed",
+  branch: "Branch",
+  head: "HEAD",
+  unknown: "Unavailable",
+  validationAge: "Validation age",
+  notRecorded: "Not recorded",
+  redactFiles: "Redact repository paths in the next revision",
+  redactText: "Redact exact text (one value per line)",
+  assistance: "Transcript assistance: Off",
+  assistanceDetail:
+    "Repository-first capture reads no transcript. Separate consented assistance belongs to a later workflow.",
+  save: "Save sanitized draft",
+  approve: "Approve this revision",
+  checkAgain: "Check readiness again",
+  cancel: "Cancel",
+  terminal: "Continue in your terminal",
+  terminalDetail:
+    "Run this service-validated handoff command to start fresh installed Codex in the foreground with normal input, output, signals, and exit status.",
+  approvalDetail:
+    "Approval is revision-bound. Source stop, target eligibility, expiry, current repository access, and revision are checked again before launch.",
+  boundary:
+    "Starts a fresh foreground Codex session in the same working directory. No thread is resumed or copied, and no arbitrary browser command is accepted.",
+} as const;
+
 export const analyticsCopy = {
   title: "Analytics",
   subtitle: "Capacity · Historical bucket zone stays attached to every record",

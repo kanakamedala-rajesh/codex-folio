@@ -506,6 +506,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.writeMetadata(response, request)
+	case HandoffPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserHandoff(response, request)
 	case SelectionPath:
 		if !server.authorize(response, request) {
 			return

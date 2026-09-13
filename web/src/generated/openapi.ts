@@ -3,7 +3,8 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "b0ae89c4c2ddc6af5313670144c23b556df8cf51a7da7f48a36b60077d757a74" as const;
+  "e213a249ef9d359e9ca025b891178850ecfcf2212e846b1969d0d3ae9641cdea" as const;
+export const HandoffPath = "/api/v1/handoff" as const;
 
 export interface HistoryScope {
   profile_id: string;
@@ -194,6 +195,89 @@ export interface ActivityCorrelation {
   managed_launch_id?: string;
   evidence_type?: string;
   confidence?: string;
+}
+
+export interface HandoffFields {
+  goal: string;
+  completed_work: string;
+  pending_work: string;
+  known_validation: string;
+  risks: string;
+  next_action: string;
+}
+
+export interface HandoffFieldEvidence {
+  value: string;
+  provenance: string;
+  completeness: string;
+}
+
+export interface HandoffValidationEvidence {
+  command: string;
+  timestamp?: string;
+  exit_status?: number;
+  source: string;
+  freshness: string;
+}
+
+export interface HandoffCheckpointFields {
+  goal: HandoffFieldEvidence;
+  completed_work: HandoffFieldEvidence;
+  pending_work: HandoffFieldEvidence;
+  known_validation: HandoffValidationEvidence[];
+  validation_provenance: string;
+  validation_completeness: string;
+  risks: HandoffFieldEvidence;
+  next_action: HandoffFieldEvidence;
+}
+
+export interface HandoffRepository {
+  branch: string;
+  head: string;
+  staged: string[];
+  modified: string[];
+  untracked: string[];
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  binary_files: number;
+  provenance: string;
+  completeness: string;
+}
+
+export interface HandoffRequest {
+  action: string;
+  project_id?: string;
+  target_alias: string;
+  checkpoint_id?: string;
+  revision?: string;
+  fields?: HandoffFields;
+  redact_paths?: string[];
+  redact_text?: string[];
+}
+
+export interface HandoffResponse {
+  checkpoint_id: string;
+  status: string;
+  revision: string;
+  source: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  fields: HandoffCheckpointFields;
+  repository: HandoffRepository;
+  retention: string;
+  created_at: string;
+  expires_at: string;
+  size_bytes: number;
+  source_profile_id: string;
+  source_alias: string;
+  source_state: string;
+  target_profile_id: string;
+  target_alias: string;
+  target_eligible: boolean;
+  target_caution: string;
+  terminal_command: string;
 }
 
 export interface ConfigurationDocument {
@@ -542,6 +626,16 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/handoff": {
+    post: {
+      operationId: "manageHandoff";
+      requestBody: HandoffRequest;
+      responses: {
+        200: { content: { "application/json": HandoffResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/analytics": {
     get: {
       operationId: "getAnalytics";
@@ -677,6 +771,7 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<ConfigurationPackResponse>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
+  manageHandoff(request: HandoffRequest, init?: RequestInit): Promise<HandoffResponse>;
   getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
     profileAlias?: string,
@@ -757,6 +852,23 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as HistoryResponse;
+    },
+    async manageHandoff(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/handoff", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HandoffResponse;
     },
     async getAnalytics(scope = "", init = {}) {
       const headers = new Headers(init.headers);

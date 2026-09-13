@@ -22,6 +22,8 @@ import (
 type handoffOptions struct {
 	launchOptions
 	historyThreadID string
+	checkpointID    string
+	revision        string
 }
 
 type historyCandidateReader interface {
@@ -52,8 +54,33 @@ func runHandoffWithHistoryDependencies(args []string, input io.Reader, stdout, s
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	return withLaunchCommandService(input, stderr, paths, options.launchOptions, openStore, diagnosticSink, newAuthenticator, ownerOptions, func(client *httpapi.CommandClient, childInput io.Reader) int {
+		if options.checkpointID != "" {
+			return runApprovedHandoffJourney(client, target, options.checkpointID, options.revision, report, childInput, stdout, stderr, newProcess, diagnosticSink)
+		}
 		return runHandoffJourneyWithHistory(client, target, capture, report, bufferedReader(childInput), stdout, stderr, newProcess, diagnosticSink, editor, options.historyThreadID, history)
 	})
+}
+
+func runApprovedHandoffJourney(client *httpapi.CommandClient, target, checkpointID, revision string, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink) int {
+	shown, err := client.Checkpoint(context.Background(), httpapi.CommandCheckpointRequest{Action: "show", ID: checkpointID})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if shown.Checkpoint.Status != continuation.StatusApproved || shown.Checkpoint.Revision != revision {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrCheckpointRevisionChanged), diagnosticSink)
+	}
+	prepared, err := client.Launch(context.Background(), httpapi.CommandLaunchRequest{
+		Action: "prepare-handoff", Alias: target, Executable: report.Executable, Version: report.Version,
+		CheckpointID: checkpointID, Revision: revision,
+	})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if prepared.Plan == nil {
+		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid), diagnosticSink)
+	}
+	exitStatus, _ := runForegroundLaunch(client, *prepared.Plan, report, input, stdout, stderr, newProcess, diagnosticSink)
+	return exitStatus
 }
 
 func runHandoffJourney(client *httpapi.CommandClient, target string, capture httpapi.CommandCheckpointRequest, report launch.Discovery, input io.Reader, stdout, stderr io.Writer, newProcess launchProcessFactory, diagnosticSink diagnostics.Sink, editor func(string, io.Reader, io.Writer, io.Writer) error) int {
@@ -206,12 +233,34 @@ func parseHandoffArguments(args []string) (string, httpapi.CommandCheckpointRequ
 	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
 		return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("handoff requires a target profile")
 	}
-	var codexBin, historyThreadID string
-	codexBinSeen, historySeen := false, false
+	var codexBin, historyThreadID, checkpointID, revision string
+	codexBinSeen, historySeen, checkpointSeen, revisionSeen, captureSpecific := false, false, false, false, false
 	captureArgs := []string{"capture"}
 	for index := 1; index < len(args); index++ {
 		arg := args[index]
 		switch {
+		case arg == "--checkpoint" || arg == "--revision":
+			seen := &checkpointSeen
+			value := &checkpointID
+			if arg == "--revision" {
+				seen, value = &revisionSeen, &revision
+			}
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || *seen {
+				return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("approved checkpoint option is invalid")
+			}
+			*seen = true
+			index++
+			*value = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--checkpoint=") || strings.HasPrefix(arg, "--revision="):
+			name, value, _ := strings.Cut(arg, "=")
+			seen, target := &checkpointSeen, &checkpointID
+			if name == "--revision" {
+				seen, target = &revisionSeen, &revision
+			}
+			if *seen {
+				return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("approved checkpoint option is invalid")
+			}
+			*seen, *target = true, strings.TrimSpace(value)
 		case arg == "--codex-bin":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") || codexBinSeen {
 				return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("codex-bin is invalid")
@@ -238,7 +287,16 @@ func parseHandoffArguments(args []string) (string, httpapi.CommandCheckpointRequ
 			}
 			historySeen = true
 			historyThreadID = strings.TrimSpace(strings.TrimPrefix(arg, "--history="))
+		case arg == "--state-root" || arg == "--vault-mode":
+			if index+1 >= len(args) {
+				return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("common option requires a value")
+			}
+			captureArgs = append(captureArgs, arg, args[index+1])
+			index++
+		case strings.HasPrefix(arg, "--state-root=") || strings.HasPrefix(arg, "--vault-mode="):
+			captureArgs = append(captureArgs, arg)
 		default:
+			captureSpecific = true
 			captureArgs = append(captureArgs, arg)
 		}
 	}
@@ -248,16 +306,25 @@ func parseHandoffArguments(args []string) (string, httpapi.CommandCheckpointRequ
 	if historySeen && launch.ResumeSessionID([]string{"resume", historyThreadID}) == "" {
 		return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("history is invalid")
 	}
+	if checkpointSeen || revisionSeen {
+		if !checkpointSeen || !revisionSeen || checkpointID == "" || revision == "" || historySeen || captureSpecific {
+			return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("approved checkpoint handoff is invalid")
+		}
+	}
 	capture, checkpointOptions, err := parseCheckpointRequest(captureArgs)
 	if err != nil || checkpointOptions.json || checkpointOptions.nonInteractive {
 		return "", httpapi.CommandCheckpointRequest{}, handoffOptions{}, errors.New("handoff arguments are invalid")
 	}
-	return args[0], capture, handoffOptions{launchOptions: launchOptions{serviceOptions: checkpointOptions.serviceOptions, codexBin: codexBin}, historyThreadID: historyThreadID}, nil
+	if checkpointSeen {
+		capture = httpapi.CommandCheckpointRequest{}
+	}
+	return args[0], capture, handoffOptions{launchOptions: launchOptions{serviceOptions: checkpointOptions.serviceOptions, codexBin: codexBin}, historyThreadID: historyThreadID, checkpointID: checkpointID, revision: revision}, nil
 }
 
 func writeHandoffUsage(stderr io.Writer, sink diagnostics.Sink) int {
 	recordServiceDiagnostic(sink, apperrors.CLIUsage, diagnostics.SeverityWarning)
 	io.WriteString(stderr, "codex-folio [CF_CLI_USAGE]: invalid handoff arguments\n")
 	io.WriteString(stderr, "Usage: codex-folio handoff TARGET [PATH] [checkpoint capture options] [--history THREAD_ID] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE]\n")
+	io.WriteString(stderr, "       codex-folio handoff TARGET --checkpoint ID --revision REVISION [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE]\n")
 	return exitUsage
 }

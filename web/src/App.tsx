@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   createCodexFolioApiClient,
   UsageRefreshError,
@@ -7,6 +7,8 @@ import {
   type ConfigurationPackRequest,
   type ConfigurationPackResponse,
   type ConfigurationPackSummary,
+  type HandoffRequest,
+  type HandoffResponse,
   type ProfileAuthenticationRequest,
   type ProfileEditRequest,
   type ProfileLifecycleRecord,
@@ -21,6 +23,7 @@ import { Profiles } from "./Profiles";
 import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
 import { Analytics } from "./Analytics";
+import { Handoff } from "./Handoff";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -35,6 +38,14 @@ const metrics = ["codex.primary.used_percent", "codex.secondary.used_percent"];
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const blankHandoffFields = {
+  goal: "",
+  completed_work: "",
+  pending_work: "",
+  known_validation: "",
+  risks: "",
+  next_action: "",
+};
 const label = (value: string) => stateCopy[value] ?? value.replaceAll("_", " ");
 const provenance = (value: string) => provenanceCopy[value] ?? value;
 function instant(value: string) {
@@ -450,6 +461,7 @@ export function App() {
     baseline: string[];
     record?: ActivityRecord;
   } | null>(null);
+  const [handoff, setHandoff] = useState<HandoffResponse | null>(null);
   const [now, setNow] = useState(Date.now);
   const [theme, setTheme] = useState(() => {
     try {
@@ -781,6 +793,43 @@ export function App() {
       failure(error);
     }
   }
+  const manageHandoff = useCallback(
+    (request: HandoffRequest) =>
+      api.manageHandoff(request, { headers: { "X-CodexFolio-CSRF": csrf.current } }),
+    [],
+  );
+  const readHandoffActivity = useCallback(
+    (profileAlias: string, projectId: string) =>
+      api.getActivity(profileAlias, projectId).then((result) => result.records),
+    [],
+  );
+  async function openHandoff(target: LaunchTarget) {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy(true);
+    setGuidance("");
+    try {
+      const projects = await api.getProjects();
+      const project = projects.projects[0];
+      if (!project) {
+        setGuidance("handoff");
+        return;
+      }
+      const captured = await manageHandoff({
+        action: "capture",
+        target_alias: target.alias,
+        project_id: project.project_id,
+        fields: blankHandoffFields,
+      });
+      setHandoff(captured);
+      requestAnimationFrame(() => heading.current?.focus());
+    } catch (error) {
+      failure(error);
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
   const selected = data?.candidates.find((p) => p.profile_id === selection?.profile_id);
   const scoped =
     data?.candidates.filter((p) => combined || p.profile_id === selection?.profile_id) ?? [];
@@ -831,6 +880,7 @@ export function App() {
   );
   function navigate(destination: string) {
     setLaunch(null);
+    setHandoff(null);
     setRoute(destination);
     setGuidance("");
     if (more.current) more.current.open = false;
@@ -913,6 +963,17 @@ export function App() {
                 <code className="wrap-anywhere">{c.relaunchCommand}</code>
                 <p className="mb-4 max-w-[75ch]">{c.authorizationDetail}</p>
               </>
+            ) : handoff ? (
+              <Handoff
+                initial={handoff}
+                heading={heading}
+                manage={manageHandoff}
+                readActivity={readHandoffActivity}
+                close={() => {
+                  setHandoff(null);
+                  requestAnimationFrame(() => heading.current?.focus());
+                }}
+              />
             ) : launch ? (
               <Launch
                 {...launch}
@@ -1098,7 +1159,35 @@ export function App() {
                                 {c.launch}
                               </button>
                               <button
-                                onClick={() => setGuidance("handoff")}
+                                disabled={
+                                  busy ||
+                                  combined ||
+                                  !data?.candidates.some(
+                                    (candidate) =>
+                                      candidate.eligible &&
+                                      candidate.profile_id !== selection?.profile_id,
+                                  )
+                                }
+                                onClick={() => {
+                                  const target =
+                                    data?.candidates.find(
+                                      (candidate) =>
+                                        candidate.profile_id === data.recommended_profile_id &&
+                                        candidate.eligible &&
+                                        candidate.profile_id !== selection?.profile_id,
+                                    ) ??
+                                    data?.candidates.find(
+                                      (candidate) =>
+                                        candidate.eligible &&
+                                        candidate.profile_id !== selection?.profile_id,
+                                    );
+                                  if (target)
+                                    void openHandoff({
+                                      profile_id: target.profile_id,
+                                      alias: target.alias,
+                                      display_name: target.alias,
+                                    });
+                                }}
                                 className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink cursor-pointer hover:border-accent disabled:cursor-not-allowed disabled:border-dashed disabled:text-muted"
                               >
                                 {c.handoff}
@@ -1174,6 +1263,19 @@ export function App() {
                                       </p>
                                     );
                                   })}
+                                  <button
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void openHandoff({
+                                        profile_id: p.profile_id,
+                                        alias: p.alias,
+                                        display_name: p.alias,
+                                      })
+                                    }
+                                    className="mt-3 min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink cursor-pointer hover:border-accent disabled:cursor-not-allowed disabled:border-dashed disabled:text-muted"
+                                  >
+                                    {c.handoff}
+                                  </button>
                                 </section>
                               ))}
                             {!data?.candidates.some(

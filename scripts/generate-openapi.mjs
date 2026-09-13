@@ -142,6 +142,7 @@ function validateContract(contract, productVersion) {
   const activityPath = `/api/${apiVersion}/activity`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
   const historyPath = `/api/${apiVersion}/analytics/history`;
+  const handoffPath = `/api/${apiVersion}/handoff`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
@@ -160,6 +161,7 @@ function validateContract(contract, productVersion) {
       historyPath,
       bootstrapPath,
       configurationPacksPath,
+      handoffPath,
       metadataPath,
       profileLifecyclePath,
       profilesPath,
@@ -373,6 +375,15 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(historyOperation, "history response", ["200", "default"]), "#/$defs/HistoryResponse", "history response");
   assertEqual(errorResponseReference(historyOperation, "history error"), usageErrorResponseReference, "history error response");
   const historySchemaNames = ["HistoryScope", "HistoryRequest", "HistoryResponse", "RetentionResult", "PurgeResult", "HistoryRecordCount", "HistoryMetric", "HistoryAggregate", "AnalyticsExportRequest", "AnalyticsExportDatasetPreview", "UsageExportRecord", "AvailabilityExportRecord", "AnalyticsExportRecords", "AnalyticsExportResult", "ActivityExportRecord", "ActivityCorrelation"];
+  const handoffOperation = contract.paths[handoffPath]?.post;
+  assertObject(handoffOperation, `POST ${handoffPath}`);
+  assertExactKeys(contract.paths[handoffPath], ["post"], `path ${handoffPath}`);
+  assertExactKeys(handoffOperation, ["operationId", "requestBody", "responses"], `POST ${handoffPath}`);
+  assertEqual(handoffOperation.operationId, "manageHandoff", "handoff operationId");
+  const handoffRequestReference = requestReference(handoffOperation.requestBody, "handoff request body");
+  const handoffResponseReference = responseReference(handoffOperation, "handoff response", ["200", "default"]);
+  assertEqual(errorResponseReference(handoffOperation, "handoff error"), usageErrorResponseReference, "handoff error response");
+  const handoffSchemaNames = ["HandoffFields", "HandoffFieldEvidence", "HandoffValidationEvidence", "HandoffCheckpointFields", "HandoffRepository", schemaNameFromReference(handoffRequestReference, "handoff request"), schemaNameFromReference(handoffResponseReference, "handoff response")];
   const configurationSchemaNames = ["ConfigurationDocument", "ConfigurationPackSummary", "ConfigurationChange", "ConfigurationAssignment", "ConfigurationProjectionPlan", "ConfigurationProjectionResult", "ConfigurationPromotionPreview", schemaNameFromReference(configurationPackRequestReference, "configuration pack request"), schemaNameFromReference(configurationPackResponseReference, "configuration pack response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
@@ -410,6 +421,7 @@ function validateContract(contract, productVersion) {
     "UsageCandidate",
     schemaNameFromReference(projectEditRequestReference, "project edit request"),
     ...historySchemaNames,
+    ...handoffSchemaNames,
     ...configurationSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
@@ -530,6 +542,11 @@ function validateContract(contract, productVersion) {
     configurationSchemas: configurationSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     historyPath,
     historySchemas: historySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    handoffPath,
+    handoffOperationId: handoffOperation.operationId,
+    handoffRequestType: schemaNameFromReference(handoffRequestReference, "handoff request"),
+    handoffResponseType: schemaNameFromReference(handoffResponseReference, "handoff response"),
+    handoffSchemas: handoffSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     apiVersion,
     activityOperationId: activityOperation.operationId,
     activityPath,
@@ -720,6 +737,10 @@ function renderGo(productVersion, sourceHash, contractShape) {
     bootstrapRequestType,
     bootstrapResponseFields,
     bootstrapResponseType,
+    handoffOperationId,
+    handoffPath,
+    handoffRequestType,
+    handoffResponseType,
     metadataFields,
     metadataPath,
     metadataOperationId,
@@ -798,6 +819,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const types = [
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
@@ -854,6 +876,7 @@ const (
 \tActivityPath         = "${activityPath}"
 \tAnalyticsPath        = "${analyticsPath}"
 \tHistoryPath          = "${contractShape.historyPath}"
+\tHandoffPath          = "${contractShape.handoffPath}"
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
@@ -1301,6 +1324,10 @@ ${fieldLines}
 
 function renderTypeScript(productVersion, sourceHash, contractShape) {
   const {
+    handoffOperationId,
+    handoffPath,
+    handoffRequestType,
+    handoffResponseType,
     configurationPacksPath,
     configurationPackGetOperationId,
     configurationPackManageOperationId,
@@ -1457,8 +1484,11 @@ export const API_VERSION = "${apiVersion}" as const;
 export const CONTRACT_VERSION = "${productVersion}" as const;
 export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
+export const HandoffPath = "${handoffPath}" as const;
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${contractShape.handoffSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.configurationSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1614,6 +1644,16 @@ export interface ApiPaths {
       };
     };
   };
+  "${handoffPath}": {
+    post: {
+      operationId: "${handoffOperationId}";
+      requestBody: ${handoffRequestType};
+      responses: {
+        200: { content: { "application/json": ${handoffResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${analyticsPath}": {
     get: {
       operationId: "${analyticsOperationId}";
@@ -1749,6 +1789,7 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<${configurationPackResponseType}>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
+  ${handoffOperationId}(request: ${handoffRequestType}, init?: RequestInit): Promise<${handoffResponseType}>;
   ${analyticsOperationId}(scope?: string, init?: RequestInit): Promise<${analyticsResponseType}>;
   ${activityOperationId}(
     profileAlias?: string,
@@ -1829,6 +1870,23 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as HistoryResponse;
+    },
+    async ${handoffOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${handoffPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${handoffResponseType};
     },
     async ${analyticsOperationId}(scope = "", init = {}) {
       const headers = new Headers(init.headers);

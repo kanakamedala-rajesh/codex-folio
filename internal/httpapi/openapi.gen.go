@@ -18,8 +18,9 @@ const (
 	ActivityPath           = "/api/v1/activity"
 	AnalyticsPath          = "/api/v1/analytics"
 	HistoryPath            = "/api/v1/analytics/history"
+	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "b0ae89c4c2ddc6af5313670144c23b556df8cf51a7da7f48a36b60077d757a74"
+	ContractSourceSHA256   = "e213a249ef9d359e9ca025b891178850ecfcf2212e846b1969d0d3ae9641cdea"
 	BootstrapPath          = "/api/v1/bootstrap"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
@@ -289,6 +290,89 @@ type ActivityCorrelation struct {
 	ManagedLaunchId *string `json:"managed_launch_id,omitempty"`
 	EvidenceType    *string `json:"evidence_type,omitempty"`
 	Confidence      *string `json:"confidence,omitempty"`
+}
+
+type HandoffFields struct {
+	Goal            string `json:"goal"`
+	CompletedWork   string `json:"completed_work"`
+	PendingWork     string `json:"pending_work"`
+	KnownValidation string `json:"known_validation"`
+	Risks           string `json:"risks"`
+	NextAction      string `json:"next_action"`
+}
+
+type HandoffFieldEvidence struct {
+	Value        string `json:"value"`
+	Provenance   string `json:"provenance"`
+	Completeness string `json:"completeness"`
+}
+
+type HandoffValidationEvidence struct {
+	Command    string  `json:"command"`
+	Timestamp  *string `json:"timestamp,omitempty"`
+	ExitStatus *int64  `json:"exit_status,omitempty"`
+	Source     string  `json:"source"`
+	Freshness  string  `json:"freshness"`
+}
+
+type HandoffCheckpointFields struct {
+	Goal                   HandoffFieldEvidence        `json:"goal"`
+	CompletedWork          HandoffFieldEvidence        `json:"completed_work"`
+	PendingWork            HandoffFieldEvidence        `json:"pending_work"`
+	KnownValidation        []HandoffValidationEvidence `json:"known_validation"`
+	ValidationProvenance   string                      `json:"validation_provenance"`
+	ValidationCompleteness string                      `json:"validation_completeness"`
+	Risks                  HandoffFieldEvidence        `json:"risks"`
+	NextAction             HandoffFieldEvidence        `json:"next_action"`
+}
+
+type HandoffRepository struct {
+	Branch       string   `json:"branch"`
+	Head         string   `json:"head"`
+	Staged       []string `json:"staged"`
+	Modified     []string `json:"modified"`
+	Untracked    []string `json:"untracked"`
+	FilesChanged int64    `json:"files_changed"`
+	Insertions   int64    `json:"insertions"`
+	Deletions    int64    `json:"deletions"`
+	BinaryFiles  int64    `json:"binary_files"`
+	Provenance   string   `json:"provenance"`
+	Completeness string   `json:"completeness"`
+}
+
+type HandoffRequest struct {
+	Action       string         `json:"action"`
+	ProjectId    *string        `json:"project_id,omitempty"`
+	TargetAlias  string         `json:"target_alias"`
+	CheckpointId *string        `json:"checkpoint_id,omitempty"`
+	Revision     *string        `json:"revision,omitempty"`
+	Fields       *HandoffFields `json:"fields,omitempty"`
+	RedactPaths  *[]string      `json:"redact_paths,omitempty"`
+	RedactText   *[]string      `json:"redact_text,omitempty"`
+}
+
+type HandoffResponse struct {
+	CheckpointId    string                  `json:"checkpoint_id"`
+	Status          string                  `json:"status"`
+	Revision        string                  `json:"revision"`
+	Source          string                  `json:"source"`
+	ProjectId       string                  `json:"project_id"`
+	ProjectAlias    string                  `json:"project_alias"`
+	ProjectBasename string                  `json:"project_basename"`
+	Fields          HandoffCheckpointFields `json:"fields"`
+	Repository      HandoffRepository       `json:"repository"`
+	Retention       string                  `json:"retention"`
+	CreatedAt       string                  `json:"created_at"`
+	ExpiresAt       string                  `json:"expires_at"`
+	SizeBytes       int64                   `json:"size_bytes"`
+	SourceProfileId string                  `json:"source_profile_id"`
+	SourceAlias     string                  `json:"source_alias"`
+	SourceState     string                  `json:"source_state"`
+	TargetProfileId string                  `json:"target_profile_id"`
+	TargetAlias     string                  `json:"target_alias"`
+	TargetEligible  bool                    `json:"target_eligible"`
+	TargetCaution   string                  `json:"target_caution"`
+	TerminalCommand string                  `json:"terminal_command"`
 }
 
 type ActivityRecord struct {

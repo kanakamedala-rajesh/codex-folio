@@ -55,6 +55,24 @@ test("the generated analytics readers preserve expired-session status", async ()
   }
 });
 
+test("the generated browser client exposes the safe handoff contract", async () => {
+  const { HandoffPath, createCodexFolioApiClient } = await import("../web/src/generated/openapi.ts");
+  let captured;
+  const client = createCodexFolioApiClient("", async (path, init) => {
+    captured = { path, init };
+    return new Response(JSON.stringify({ checkpoint_id: "checkpoint-1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const result = await client.manageHandoff({ action: "show", target_alias: "Personal", checkpoint_id: "checkpoint-1" });
+  assert.equal(HandoffPath, "/api/v1/handoff");
+  assert.equal(result.checkpoint_id, "checkpoint-1");
+  assert.equal(captured.path, HandoffPath);
+  assert.equal(captured.init.method, "POST");
+});
+
 test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const fixtureDirectory = mkdtempSync(join(tmpdir(), "codex-folio-openapi-"));
   t.after(() => rmSync(fixtureDirectory, { force: true, recursive: true }));

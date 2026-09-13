@@ -133,10 +133,10 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 	t.Setenv("CODEX_FOLIO_TEST_CONTROL", control)
 	t.Setenv("CODEX_FOLIO_TEST_LAUNCH_LOG", logPath)
 	executable := filepath.Join(directory, "codex")
-	content := "#!/bin/sh\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile [ \"$(cat \"$CODEX_FOLIO_TEST_CONTROL\")\" != \"launch-exit-23\" ]; do sleep 0.01; done\nexit 23\n"
+	content := "#!/bin/sh\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile :; do mode=$(cat \"$CODEX_FOLIO_TEST_CONTROL\"); [ \"$mode\" = \"launch-exit-23\" ] && exit 23; [ \"$mode\" = \"handoff-exit-0\" ] && exit 0; sleep 0.01; done\n"
 	if runtime.GOOS == "windows" {
 		executable += ".cmd"
-		content = "@echo off\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif not \"%launch_mode%\"==\"launch-exit-23\" (\r\n  >nul ping 127.0.0.1 -n 2\r\n  goto wait\r\n)\r\nexit /b 23\r\n"
+		content = "@echo off\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif \"%launch_mode%\"==\"launch-exit-23\" exit /b 23\r\nif \"%launch_mode%\"==\"handoff-exit-0\" exit /b 0\r\n>nul ping 127.0.0.1 -n 2\r\ngoto wait\r\n"
 	}
 	if err := os.WriteFile(executable, []byte(content), 0700); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	repository := filepath.Join(filepath.Dir(paths.Root), "atlas")
-	if err := os.MkdirAll(filepath.Join(repository, ".git"), 0700); err != nil {
+	if err := os.MkdirAll(repository, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runCheckpointGit(t, repository, "init")
+	if err := os.WriteFile(filepath.Join(repository, "handoff-notes.txt"), []byte("browser repository-first context\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: state, Paths: platform.NewProjectPaths()})
@@ -303,6 +307,11 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkpoints, err := newCheckpointService(state, projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launches.continuations = checkpoints
 	referencedHome := filepath.Join(filepath.Dir(paths.Root), "dashboard-referenced-home")
 	if err := os.MkdirAll(referencedHome, 0700); err != nil {
 		t.Fatal(err)
@@ -311,7 +320,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), CommandToken: "browser-fixture-command"})
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +341,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	stopLaunches := make(chan struct{})
 	defer close(stopLaunches)
 	launchErrors := make(chan error, 1)
+	regularLaunchEvidence := make(chan string, 1)
 	warmLaunchOverhead := make(chan time.Duration, 1)
+	browserUncertainLease := ""
 	go func() {
 		last := ""
 		for {
@@ -346,7 +357,57 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				continue
 			}
 			last = string(mode)
-			if last != "launch-run-23" && last != "launch-fail" {
+			if last == "handoff-source-uncertain" {
+				uncertain, prepareErr := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Personal", Executable: fakeCodex, WorkingDirectory: repository, ProjectID: project.ID})
+				if prepareErr != nil {
+					launchErrors <- prepareErr
+					return
+				}
+				browserUncertainLease = uncertain.LeaseID
+				continue
+			}
+			if last == "handoff-source-exit" {
+				if browserUncertainLease != "" {
+					if abandonErr := state.MarkManagedLaunchAbandoned(context.Background(), browserUncertainLease); abandonErr != nil {
+						launchErrors <- abandonErr
+						return
+					}
+				}
+				if exitErr := state.MarkManagedLaunchExited(context.Background(), plan.LeaseID, 0); exitErr != nil {
+					launchErrors <- exitErr
+					return
+				}
+				continue
+			}
+			if last == "handoff-restore-running" {
+				restored, prepareErr := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: fakeCodex, WorkingDirectory: repository, ProjectID: project.ID})
+				if prepareErr != nil {
+					launchErrors <- prepareErr
+					return
+				}
+				if startErr := state.MarkManagedLaunchStarted(context.Background(), restored.LeaseID, os.Getpid()); startErr != nil {
+					launchErrors <- startErr
+					return
+				}
+				continue
+			}
+			if last != "launch-run-23" && last != "launch-fail" && !strings.HasPrefix(last, "handoff-run-0:") {
+				continue
+			}
+			if strings.HasPrefix(last, "handoff-run-0:") {
+				parts := strings.Split(last, ":")
+				if len(parts) != 3 {
+					launchErrors <- fmt.Errorf("invalid handoff browser control %q", last)
+					return
+				}
+				code := runHandoffWithDependencies(
+					[]string{"Personal", "--checkpoint", parts[1], "--revision", parts[2], "--codex-bin", fakeCodex}, strings.NewReader(""), io.Discard, io.Discard,
+					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, newForegroundProcess, nil, nil,
+					func() profile.Authenticator { return dashboardProfileAuthenticator{control: control} }, platform.OwnerOptions{},
+				)
+				if code != 0 {
+					launchErrors <- fmt.Errorf("unexpected browser fixture handoff result %d", code)
+				}
 				continue
 			}
 			executable := fakeCodex
@@ -380,6 +441,14 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			if last == "launch-run-23" && code != 23 || last == "launch-fail" && code != exitFailure {
 				launchErrors <- fmt.Errorf("unexpected browser fixture launch result %d", code)
 				return
+			}
+			if last == "launch-run-23" {
+				content, readErr := os.ReadFile(launchLog)
+				if readErr != nil {
+					launchErrors <- readErr
+					return
+				}
+				regularLaunchEvidence <- string(content)
 			}
 		}
 	}()
@@ -483,13 +552,18 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	default:
 	}
 	if suite == "deep" {
-		content, err := os.ReadFile(launchLog)
+		content := <-regularLaunchEvidence
+		lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n")), "\n")
+		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
+			t.Fatalf("native fake Codex launch = %q, want working directory %q and transported arguments", content, repository)
+		}
+		handoffContent, err := os.ReadFile(launchLog)
 		if err != nil {
 			t.Fatal(err)
 		}
-		lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(content), "\r\n", "\n")), "\n")
-		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
-			t.Fatalf("native fake Codex launch = %q, want working directory %q and transported arguments", content, repository)
+		handoffLines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(handoffContent), "\r\n", "\n")), "\n")
+		if len(handoffLines) != 2 || filepath.Clean(handoffLines[0]) != filepath.Clean(repository) || !strings.Contains(handoffLines[1], `"source":"repository-first"`) || strings.Contains(handoffLines[1], "browser-redact-sentinel") {
+			t.Fatalf("native fake Codex handoff = %q, want sanitized repository-first context in %q", handoffContent, repository)
 		}
 	}
 	if suite == "benchmark" {
@@ -536,8 +610,18 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser selection was not persisted for CLI")
 	}
 	record, err := state.GetManagedLaunch(context.Background(), plan.LeaseID)
-	if err != nil || record.ProfileAlias != "Work" || record.State != launch.StateRunning {
-		t.Fatal("selection changed running launch")
+	if suite == "deep" {
+		if err != nil || record.ProfileAlias != "Work" || record.State != launch.StateExited {
+			t.Fatal("Safe Continuation did not preserve the original Work launch's definitive exit")
+		}
+		workActivity, listErr := state.ListActivity(context.Background(), activity.Filters{ProfileAlias: "Work", ProjectID: project.ID})
+		if listErr != nil || !slices.ContainsFunc(workActivity, func(item activity.TimelineRecord) bool {
+			return item.ProfileAlias == "Work" && item.Lifecycle == string(launch.StateRunning)
+		}) {
+			t.Fatal("browser selection changed the restored running Work launch")
+		}
+	} else if err != nil || record.ProfileAlias != "Work" || record.State != launch.StateRunning {
+		t.Fatal("browser selection changed the running Work launch")
 	}
 	return nil
 }
