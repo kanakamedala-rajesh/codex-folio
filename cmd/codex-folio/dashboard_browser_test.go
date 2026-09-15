@@ -12,11 +12,13 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -28,6 +30,30 @@ import (
 type dashboardClock struct{ control string }
 
 type dashboardProfileAuthenticator struct{ control string }
+
+type dashboardCheckpointHistory struct{ calls *atomic.Int64 }
+
+type dashboardProcessInspector struct{ bootSessionID string }
+
+func (inspector dashboardProcessInspector) BootSessionID() (string, error) {
+	return inspector.bootSessionID, nil
+}
+
+func (dashboardProcessInspector) IsRunning(int) (bool, error) { return false, nil }
+
+func (history dashboardCheckpointHistory) Candidates(_ context.Context, _ continuation.HistorySource, threadID string) (continuation.CheckpointFields, error) {
+	history.calls.Add(1)
+	if threadID != "11111111-1111-4111-8111-111111111111" {
+		return continuation.CheckpointFields{}, continuation.ErrHistoryUnavailable
+	}
+	return continuation.CheckpointFields{
+		Goal:          continuation.Evidence[string]{Value: "Finish transcript-private-sentinel release"},
+		CompletedWork: continuation.Evidence[string]{Value: "Transcript candidate collected"},
+		PendingWork:   continuation.Evidence[string]{Value: "Approve a sanitized handoff"},
+		Risks:         continuation.Evidence[string]{Value: "transcript-private-sentinel must be removed"},
+		NextAction:    continuation.Evidence[string]{Value: "Review the transient candidates"},
+	}, nil
+}
 
 func (authenticator dashboardProfileAuthenticator) Authenticate(_ context.Context, request profile.AuthenticationRequest) error {
 	mode, _ := os.ReadFile(authenticator.control)
@@ -311,7 +337,33 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retainedAt := clock.Now().Add(-48 * time.Hour)
+	expiredAt := clock.Now().Add(-time.Hour)
+	for _, checkpoint := range []continuation.Checkpoint{
+		{
+			ID: "checkpoint-browser-retained", Status: continuation.StatusDraft,
+			Project: continuation.Project{ID: project.ID, Alias: project.Alias, Basename: project.Basename}, Source: continuation.SourceRepositoryFirst,
+			Retention: "30", CreatedAt: retainedAt, Revision: "retained-browser-revision",
+		},
+		{
+			ID: "checkpoint-browser-expired", Status: continuation.StatusExpired,
+			Project: continuation.Project{ID: project.ID, Alias: project.Alias, Basename: project.Basename}, Source: continuation.SourceRepositoryFirst,
+			Retention: "1", CreatedAt: retainedAt, ExpiresAt: &expiredAt, Revision: "expired-browser-revision",
+		},
+	} {
+		metadata, marshalErr := json.Marshal(checkpoint)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if saveErr := state.SaveCheckpoint(context.Background(), continuation.CheckpointRecord{
+			ID: checkpoint.ID, ProjectIdentityID: project.ID, Status: checkpoint.Status,
+			Metadata: string(metadata), CreatedAt: checkpoint.CreatedAt, ExpiresAt: checkpoint.ExpiresAt,
+		}); saveErr != nil {
+			t.Fatal(saveErr)
+		}
+	}
 	launches.continuations = checkpoints
+	var historyCalls atomic.Int64
 	referencedHome := filepath.Join(filepath.Dir(paths.Root), "dashboard-referenced-home")
 	if err := os.MkdirAll(referencedHome, 0700); err != nil {
 		t.Fatal(err)
@@ -320,7 +372,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CommandToken: "browser-fixture-command"})
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CommandToken: "browser-fixture-command"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,6 +443,62 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				}
 				continue
 			}
+			if strings.HasPrefix(last, "handoff-recovery-same:") {
+				parts := strings.Split(last, ":")
+				if len(parts) != 3 {
+					launchErrors <- fmt.Errorf("invalid recovery browser control %q", last)
+					return
+				}
+				sourceLaunch, sourceErr := state.GetManagedLaunch(context.Background(), plan.LeaseID)
+				if sourceErr != nil {
+					launchErrors <- sourceErr
+					return
+				}
+				original, loadErr := state.LoadCheckpoint(context.Background(), parts[1])
+				if loadErr != nil {
+					launchErrors <- loadErr
+					return
+				}
+				var recovery continuation.Checkpoint
+				if unmarshalErr := json.Unmarshal([]byte(original.Metadata), &recovery); unmarshalErr != nil {
+					launchErrors <- unmarshalErr
+					return
+				}
+				recovery.ID = parts[1] + "-recovery"
+				metadata, marshalErr := json.Marshal(recovery)
+				if marshalErr != nil {
+					launchErrors <- marshalErr
+					return
+				}
+				if saveErr := state.SaveCheckpoint(context.Background(), continuation.CheckpointRecord{
+					ID: recovery.ID, ProjectIdentityID: original.ProjectIdentityID, Status: continuation.StatusApproved,
+					Metadata: string(metadata), CreatedAt: original.CreatedAt, ExpiresAt: original.ExpiresAt,
+				}); saveErr != nil {
+					launchErrors <- saveErr
+					return
+				}
+				_, prepareErr := state.PrepareLaunch(context.Background(), launch.PrepareRequest{
+					Alias: "Personal", Executable: fakeCodex, WorkingDirectory: repository,
+					ProjectID: project.ID, CheckpointID: recovery.ID, CheckpointRevision: parts[2],
+					SourceProfileID: sourceLaunch.ProfileID, BootSessionID: "boot-a",
+				})
+				if prepareErr != nil {
+					launchErrors <- prepareErr
+					return
+				}
+				if reconcileErr := state.ReconcileManagedLaunches(context.Background(), dashboardProcessInspector{bootSessionID: "boot-a"}); reconcileErr != nil {
+					launchErrors <- reconcileErr
+					return
+				}
+				continue
+			}
+			if last == "handoff-recovery-changed" {
+				if reconcileErr := state.ReconcileManagedLaunches(context.Background(), dashboardProcessInspector{bootSessionID: "boot-b"}); reconcileErr != nil {
+					launchErrors <- reconcileErr
+					return
+				}
+				continue
+			}
 			if last != "launch-run-23" && last != "launch-fail" && !strings.HasPrefix(last, "handoff-run-0:") {
 				continue
 			}
@@ -400,13 +508,16 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 					launchErrors <- fmt.Errorf("invalid handoff browser control %q", last)
 					return
 				}
+				var handoffStderr bytes.Buffer
 				code := runHandoffWithDependencies(
-					[]string{"Personal", "--checkpoint", parts[1], "--revision", parts[2], "--codex-bin", fakeCodex}, strings.NewReader(""), io.Discard, io.Discard,
+					[]string{"Personal", "--checkpoint", parts[1], "--revision", parts[2], "--codex-bin", fakeCodex}, strings.NewReader(""), io.Discard, &handoffStderr,
 					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, newForegroundProcess, nil, nil,
 					func() profile.Authenticator { return dashboardProfileAuthenticator{control: control} }, platform.OwnerOptions{},
 				)
 				if code != 0 {
-					launchErrors <- fmt.Errorf("unexpected browser fixture handoff result %d", code)
+					checkpoint, checkpointErr := state.LoadCheckpoint(context.Background(), parts[1])
+					source, sourceErr := state.LatestSourceLaunch(context.Background(), project.ID)
+					launchErrors <- fmt.Errorf("unexpected browser fixture handoff result %d: %s; checkpoint=%#v (%v); source=%#v (%v)", code, handoffStderr.String(), checkpoint, checkpointErr, source, sourceErr)
 				}
 				continue
 			}
@@ -535,9 +646,6 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			}
 		}
 	}
-	if runnerErr != nil {
-		t.Fatal("Overview browser journey failed:", runnerErr)
-	}
 	if content, err := os.ReadFile(referencedMarker); err != nil || string(content) != "externally owned" {
 		t.Fatalf("referenced Identity Home marker changed: %q, %v", content, err)
 	}
@@ -546,12 +654,18 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser launch fixture failed:", launchErr)
 	default:
 	}
+	if runnerErr != nil {
+		t.Fatal("Overview browser journey failed:", runnerErr)
+	}
 	select {
 	case seedErr := <-analyticsSeedErrors:
 		t.Fatal("browser analytics fixture failed:", seedErr)
 	default:
 	}
 	if suite == "deep" {
+		if historyCalls.Load() != 3 {
+			t.Fatalf("transcript history calls = %d, want one unavailable and two successful authorized reviews", historyCalls.Load())
+		}
 		content := <-regularLaunchEvidence
 		lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n")), "\n")
 		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
@@ -562,8 +676,8 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			t.Fatal(err)
 		}
 		handoffLines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(handoffContent), "\r\n", "\n")), "\n")
-		if len(handoffLines) != 2 || filepath.Clean(handoffLines[0]) != filepath.Clean(repository) || !strings.Contains(handoffLines[1], `"source":"repository-first"`) || strings.Contains(handoffLines[1], "browser-redact-sentinel") {
-			t.Fatalf("native fake Codex handoff = %q, want sanitized repository-first context in %q", handoffContent, repository)
+		if len(handoffLines) != 2 || filepath.Clean(handoffLines[0]) != filepath.Clean(repository) || !strings.Contains(handoffLines[1], `"source":"transcript-assisted"`) || strings.Contains(handoffLines[1], "transcript-private-sentinel") {
+			t.Fatalf("native fake Codex handoff = %q, want sanitized transcript-assisted context in %q", handoffContent, repository)
 		}
 	}
 	if suite == "benchmark" {

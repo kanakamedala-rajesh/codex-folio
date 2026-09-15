@@ -364,7 +364,8 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
+	historyAssistant := browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()}
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CheckpointHistory: historyAssistant, CommandToken: commandToken})
 	if err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()

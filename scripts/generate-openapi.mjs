@@ -383,7 +383,7 @@ function validateContract(contract, productVersion) {
   const handoffRequestReference = requestReference(handoffOperation.requestBody, "handoff request body");
   const handoffResponseReference = responseReference(handoffOperation, "handoff response", ["200", "default"]);
   assertEqual(errorResponseReference(handoffOperation, "handoff error"), usageErrorResponseReference, "handoff error response");
-  const handoffSchemaNames = ["HandoffFields", "HandoffFieldEvidence", "HandoffValidationEvidence", "HandoffCheckpointFields", "HandoffRepository", schemaNameFromReference(handoffRequestReference, "handoff request"), schemaNameFromReference(handoffResponseReference, "handoff response")];
+  const handoffSchemaNames = ["HandoffFields", "HandoffFieldEvidence", "HandoffValidationEvidence", "HandoffCheckpointFields", "HandoffRepository", "HandoffCheckpointSummary", "HandoffRetentionPolicy", "HandoffOperationPreview", "HandoffDownload", "HandoffResponse", "CheckpointManagementResponse", schemaNameFromReference(handoffRequestReference, "handoff request"), schemaNameFromReference(handoffResponseReference, "handoff response")];
   const configurationSchemaNames = ["ConfigurationDocument", "ConfigurationPackSummary", "ConfigurationChange", "ConfigurationAssignment", "ConfigurationProjectionPlan", "ConfigurationProjectionResult", "ConfigurationPromotionPreview", schemaNameFromReference(configurationPackRequestReference, "configuration pack request"), schemaNameFromReference(configurationPackResponseReference, "configuration pack response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),

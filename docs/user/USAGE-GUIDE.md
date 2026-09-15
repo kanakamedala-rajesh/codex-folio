@@ -149,8 +149,18 @@ In the dashboard:
   checkpoint for review. Edit the six handoff fields, inspect repository and
   validation evidence, redact selected paths or exact text, save the sanitized
   revision, and approve only after the source process is definitively exited.
+  Optional transcript assistance remains off until you consent for that one
+  handoff and provide a thread ID. Its candidates are transient: edit and
+  redact them, review the sanitized preview, then use the separate approval
+  action. Canceling restores the repository-first draft.
   Run the resulting terminal command to start a fresh foreground Codex process;
   canceling before that point starts nothing.
+- **Settings → Safe Continuation data** lists retained, completed, recoverable,
+  expired, and uncertain-start checkpoint states using safe project labels.
+  Repository-first retention defaults to 30 days and transcript-assisted
+  retention to 7 days; each accepts one or more days or `unlimited`. Export is
+  previewed before an encrypted `.cfolio` browser download. Plaintext JSON needs
+  a separate acknowledgement. Purge previews and confirms one exact revision.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
@@ -159,7 +169,10 @@ start; a nonzero exit is not quota evidence by itself.
 The handoff view treats running and uncertain source-process state as blockers.
 Target capacity and eligibility are guidance until the terminal command repeats
 source, repository, target-home, authentication, usage, revision, and expiry
-checks immediately before launch. Transcript assistance remains off by default.
+checks immediately before launch. A service restart never turns an uncertain
+start into authorization: recovery becomes available only after storage,
+repository, source-exit, target, revision, and expiry checks pass. CodexFolio
+does not kill Codex during recovery or purge.
 
 For Shared Configuration Packs, assign only an approved version, preview every
 projection, then explicitly apply that exact preview. Profile-local conflicts

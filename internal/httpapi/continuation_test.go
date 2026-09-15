@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -72,6 +74,167 @@ func TestBrowserHandoffCapturesRepositoryFirstDraftAndRejectsStaleApproval(t *te
 	}
 }
 
+func TestBrowserHandoffReadsHistoryOnlyAfterPerHandoffConsentAndPersistsOnlyApprovedPreview(t *testing.T) {
+	base := continuation.Checkpoint{
+		ID: "checkpoint-1", Status: continuation.StatusDraft, Revision: "repository-revision",
+		Project: continuation.Project{ID: "project-1", Alias: "Atlas", Basename: "atlas"}, Source: continuation.SourceRepositoryFirst,
+		Fields: continuation.CheckpointFields{Goal: continuation.Evidence[string]{Value: "repository goal"}},
+	}
+	preview := base
+	preview.Source, preview.Revision = continuation.SourceTranscriptAssisted, "preview-revision"
+	preview.Fields.Goal = continuation.Evidence[string]{Value: "history goal", Provenance: continuation.ProvenanceModelDerived}
+	service := &checkpointServiceStub{checkpoint: base, assistedPreview: preview}
+	history := &browserHistoryStub{fields: continuation.CheckpointFields{Goal: continuation.Evidence[string]{Value: "history goal from /source-home/projects/atlas", Provenance: continuation.ProvenanceModelDerived}}}
+	registry, err := profile.NewRegistry(&registryRepository{profiles: []profile.IdentityProfile{
+		{ID: "source-profile", Alias: "Personal", Status: profile.StatusReady, IdentityHomeID: "home-1"},
+		{ID: "target-profile", Alias: "Work", Status: profile.StatusReady, IdentityHomeID: "home-2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, _, _ := startTestServer(t, Options{Checkpoints: service, CheckpointHistory: history, Profiles: registry, CommandToken: "command-token"})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	_ = exchange.Body.Close()
+
+	withoutConsent, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"assist","checkpoint_id":"checkpoint-1","revision":"repository-revision","thread_id":"11111111-1111-4111-8111-111111111111","target_alias":"Work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutConsent.StatusCode != http.StatusBadRequest || history.calls != 0 {
+		t.Fatalf("assist without consent = %d, history calls %d", withoutConsent.StatusCode, history.calls)
+	}
+	_ = withoutConsent.Body.Close()
+	service.prepareHistoryErr = continuation.ErrHandoffNotReady
+	blocked, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"assist","checkpoint_id":"checkpoint-1","revision":"repository-revision","thread_id":"11111111-1111-4111-8111-111111111111","history_consent":true,"target_alias":"Work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.StatusCode != http.StatusConflict || history.calls != 0 || service.prepareHistoryCalls != 1 {
+		t.Fatalf("blocked history preparation = %d, history calls %d, preparation calls %d", blocked.StatusCode, history.calls, service.prepareHistoryCalls)
+	}
+	_ = blocked.Body.Close()
+	service.prepareHistoryErr = nil
+
+	assisted, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"assist","checkpoint_id":"checkpoint-1","revision":"repository-revision","thread_id":"11111111-1111-4111-8111-111111111111","history_consent":true,"target_alias":"Work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, assisted)
+	if assisted.StatusCode != http.StatusOK || !strings.Contains(body, `"source":"transcript-assisted"`) || !strings.Contains(body, `"revision":"preview-revision"`) || !strings.Contains(body, `history goal from [HOME]/projects/atlas`) || strings.Contains(body, "/source-home") || service.previewEdit.Fields.Goal.Value != "history goal from [HOME]/projects/atlas" || history.calls != 1 || service.saveCalls != 0 {
+		t.Fatalf("assisted preview = %d/%s, history calls %d, saves %d", assisted.StatusCode, body, history.calls, service.saveCalls)
+	}
+
+	approved, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"approve-assisted","checkpoint_id":"checkpoint-1","revision":"repository-revision","preview_revision":"preview-revision","target_alias":"Work","fields":{"goal":"sanitized goal","completed_work":"","pending_work":"","known_validation":"","risks":"","next_action":""},"redact_text":["secret"]}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readBody(t, approved)
+	if approved.StatusCode != http.StatusOK || service.assistedID != "checkpoint-1" || service.previewRevision != "preview-revision" || service.assistedEdit.Fields.Goal.Value != "sanitized goal" {
+		t.Fatalf("approved assisted = %d, service %#v", approved.StatusCode, service)
+	}
+}
+
+func TestBrowserCheckpointManagementListsRetainsPurgesAndExportsWithoutPaths(t *testing.T) {
+	checkpoint := continuation.Checkpoint{
+		ID: "checkpoint-1", Status: continuation.StatusApproved, Revision: "revision-1", Source: continuation.SourceTranscriptAssisted,
+		Project: continuation.Project{ID: "project-1", Alias: "Atlas", Basename: "atlas"},
+		Fields:  continuation.CheckpointFields{Goal: continuation.Evidence[string]{Value: "sanitized goal"}},
+	}
+	service := &checkpointServiceStub{checkpoint: checkpoint, checkpoints: []continuation.Checkpoint{checkpoint}, retentionPolicy: continuation.RetentionPolicy{RepositoryFirst: "30", TranscriptAssisted: "7"}}
+	server, _, _ := startTestServer(t, Options{Checkpoints: service, CommandToken: "command-token"})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	_ = exchange.Body.Close()
+	post := func(body string) CheckpointManagementResponse {
+		t.Helper()
+		response, requestErr := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(body), bootstrap.CSRFToken)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("management status/body = %d/%s", response.StatusCode, readBody(t, response))
+		}
+		var envelope HandoffResult
+		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if envelope.Kind != "management" || envelope.Management == nil || envelope.Handoff != nil {
+			t.Fatalf("management envelope = %#v", envelope)
+		}
+		return *envelope.Management
+	}
+
+	listed := post(`{"action":"list"}`)
+	if listed.Checkpoints == nil || len(*listed.Checkpoints) != 1 || (*listed.Checkpoints)[0].State != "recoverable" || strings.Contains(mustJSON(t, listed), "IdentityHome") {
+		t.Fatalf("checkpoint list = %#v", listed.Checkpoints)
+	}
+	retention := post(`{"action":"retention"}`)
+	if retention.RetentionPolicy == nil || retention.RetentionPolicy.RepositoryFirst != "30" || retention.RetentionPolicy.TranscriptAssisted != "7" {
+		t.Fatalf("retention = %#v", retention.RetentionPolicy)
+	}
+	purgePreview := post(`{"action":"purge-preview","checkpoint_id":"checkpoint-1","revision":"revision-1"}`)
+	if purgePreview.OperationPreview == nil || purgePreview.OperationPreview.Confirmation == "" {
+		t.Fatalf("purge preview = %#v", purgePreview.OperationPreview)
+	}
+	post(`{"action":"purge","checkpoint_id":"checkpoint-1","revision":"revision-1","confirmation":"` + purgePreview.OperationPreview.Confirmation + `"}`)
+	if service.purgedRevision != "checkpoint-1/revision-1" {
+		t.Fatalf("purged revision = %q", service.purgedRevision)
+	}
+	exportPreview := post(`{"action":"export-preview","checkpoint_id":"checkpoint-1","revision":"revision-1"}`)
+	if exportPreview.OperationPreview == nil || exportPreview.OperationPreview.Filename != "checkpoint-checkpoint-1.cfolio" || !slices.Contains(exportPreview.OperationPreview.IncludedFields, "project_alias") || !slices.Contains(exportPreview.OperationPreview.ExcludedFields, "identity_homes") || slices.Contains(exportPreview.OperationPreview.IncludedFields, "project alias") || slices.Contains(exportPreview.OperationPreview.ExcludedFields, "Identity Homes") {
+		t.Fatalf("export preview = %#v", exportPreview.OperationPreview)
+	}
+	invalidExport, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"export-encrypted","checkpoint_id":"checkpoint-1","revision":"revision-1","confirmation":"`+exportPreview.OperationPreview.Confirmation+`"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidBody := readBody(t, invalidExport)
+	if invalidExport.StatusCode != http.StatusBadRequest || !strings.Contains(invalidBody, `"code":"CF_CONTINUATION_CHECKPOINT_INVALID"`) {
+		t.Fatalf("invalid export status/body = %d/%s", invalidExport.StatusCode, invalidBody)
+	}
+	download := post(`{"action":"export-encrypted","checkpoint_id":"checkpoint-1","revision":"revision-1","confirmation":"` + exportPreview.OperationPreview.Confirmation + `","passphrase":"correct horse battery staple"}`)
+	if download.Download == nil || download.Download.MediaType != "application/vnd.codex-folio.checkpoint+json" {
+		t.Fatalf("download = %#v", download.Download)
+	}
+	artifact, err := base64.StdEncoding.DecodeString(download.Download.ContentBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := continuation.OpenCheckpointExport(artifact, "correct horse battery staple")
+	if err != nil || opened.Checkpoint.Fields.Goal.Value != "sanitized goal" {
+		t.Fatalf("OpenCheckpointExport() = %#v, %v", opened, err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func TestCommandCheckpointCaptureAndShowUseAuthorizedService(t *testing.T) {
 	service := &checkpointServiceStub{checkpoint: continuation.Checkpoint{ID: "checkpoint-1", Status: continuation.StatusDraft}}
 	server, _, _ := startTestServer(t, Options{Checkpoints: service, CommandToken: "checkpoint-token"})
@@ -127,8 +290,17 @@ type checkpointServiceStub struct {
 	previewID              string
 	assistedID             string
 	previewRevision        string
+	assistedPreview        continuation.Checkpoint
+	previewEdit            continuation.EditRequest
+	assistedEdit           continuation.EditRequest
+	saveCalls              int
+	checkpoints            []continuation.Checkpoint
+	retentionPolicy        continuation.RetentionPolicy
+	purgedRevision         string
 	captureProjectID       string
 	source                 continuation.SourceLaunch
+	prepareHistoryErr      error
+	prepareHistoryCalls    int
 	rejectRevisionMismatch bool
 }
 
@@ -145,7 +317,19 @@ func (stub *checkpointServiceStub) Source(context.Context, string) (continuation
 }
 
 func (stub *checkpointServiceStub) Retention(_ context.Context, source, setting string) (continuation.RetentionPolicy, error) {
+	if stub.retentionPolicy.RepositoryFirst != "" || stub.retentionPolicy.TranscriptAssisted != "" {
+		return stub.retentionPolicy, nil
+	}
 	return continuation.RetentionPolicy{RepositoryFirst: setting, TranscriptAssisted: "7"}, nil
+}
+
+func (stub *checkpointServiceStub) List(context.Context) ([]continuation.Checkpoint, error) {
+	return append([]continuation.Checkpoint(nil), stub.checkpoints...), nil
+}
+
+func (stub *checkpointServiceStub) Purge(_ context.Context, id, revision string) error {
+	stub.purgedRevision = id + "/" + revision
+	return nil
 }
 
 func (stub *checkpointServiceStub) Capture(_ context.Context, request continuation.CaptureRequest) (continuation.Checkpoint, error) {
@@ -177,15 +361,36 @@ func (stub *checkpointServiceStub) Export(_ context.Context, id string) (continu
 }
 
 func (stub *checkpointServiceStub) PrepareHistory(context.Context, string, string) (continuation.HistorySource, error) {
+	stub.prepareHistoryCalls++
+	if stub.prepareHistoryErr != nil {
+		return continuation.HistorySource{}, stub.prepareHistoryErr
+	}
 	return continuation.HistorySource{SourceProfileID: "source-profile", IdentityHome: "/source-home"}, nil
 }
 
-func (stub *checkpointServiceStub) PreviewAssisted(_ context.Context, id, _ string, _ continuation.EditRequest) (continuation.Checkpoint, error) {
-	stub.previewID = id
+func (stub *checkpointServiceStub) PreviewAssisted(_ context.Context, id, _ string, edit continuation.EditRequest) (continuation.Checkpoint, error) {
+	stub.previewID, stub.previewEdit = id, edit
+	if stub.assistedPreview.ID != "" {
+		preview := stub.assistedPreview
+		preview.Fields = edit.Fields
+		return preview, nil
+	}
 	return stub.checkpoint, nil
 }
 
-func (stub *checkpointServiceStub) ApproveAssisted(_ context.Context, id, _, previewRevision string, _ continuation.EditRequest) (continuation.Checkpoint, error) {
-	stub.assistedID, stub.previewRevision = id, previewRevision
-	return stub.checkpoint, nil
+func (stub *checkpointServiceStub) ApproveAssisted(_ context.Context, id, _, previewRevision string, edit continuation.EditRequest) (continuation.Checkpoint, error) {
+	stub.assistedID, stub.previewRevision, stub.assistedEdit = id, previewRevision, edit
+	approved := stub.assistedPreview
+	approved.Status = continuation.StatusApproved
+	return approved, nil
+}
+
+type browserHistoryStub struct {
+	fields continuation.CheckpointFields
+	calls  int
+}
+
+func (stub *browserHistoryStub) Candidates(context.Context, continuation.HistorySource, string) (continuation.CheckpointFields, error) {
+	stub.calls++
+	return stub.fields, nil
 }

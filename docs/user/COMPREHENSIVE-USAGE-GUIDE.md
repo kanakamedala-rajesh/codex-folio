@@ -237,7 +237,9 @@ Implemented dashboard flows include:
   evidence age and provenance, eligible alternatives, refresh, and a shared
   Project Identity launch view with terminal handoff and lifecycle status;
   repository-first Safe Continuation capture, evidence review, redaction,
-  revision-bound approval, cancellation, and fresh-target lifecycle tracking;
+  optional per-handoff transcript candidate review, revision-bound sanitized
+  approval, cancellation, retained-state management, and fresh-target lifecycle
+  tracking;
 - **Profiles:** safe inventory, Managed/Referenced onboarding, Pending resume,
   local metadata edits, selection, installed-Codex discovery, and
   reauthentication, local removal, managed quarantine recovery/purge, and the
@@ -320,6 +322,18 @@ and exit status when known. Select repository paths or enter exact text to
 redact, then save the sanitized draft. Any edit creates a new revision, so a
 stale approval is rejected.
 
+Transcript assistance is a separate, off-by-default path inside the handoff
+view. Consent applies only to the entered Codex thread ID and is not remembered.
+Until **Review transcript candidates** is selected, no thread history is read.
+The service resolves the source Identity Home and installed Codex internally,
+extracts only bounded candidates for the six handoff fields, and returns those
+for transient editing. The browser never receives the Identity Home, command
+credential, arbitrary files, raw archive, raw transcript, commands, or tool
+output. Select **Review sanitized preview** after editing/redaction, then use
+the distinct **Approve sanitized preview** action. Only that approved sanitized
+revision is persisted or transferred. Canceling or an unavailable history
+source restores the unchanged repository-first draft.
+
 Approval is available only when the managed source is definitively exited and
 the target is currently eligible. Running or uncertain source state blocks it.
 After approval, copy the displayed `codex-folio handoff` command into a terminal.
@@ -328,8 +342,7 @@ foreground process starts. The terminal path repeats the current repository,
 source-exit, target Identity Home, authentication, usage, checkpoint revision,
 and expiry checks before launch. Capacity may be stale or unavailable and is
 shown as cautionary evidence rather than invented certainty. Canceling the
-browser review creates no launch. Transcript assistance remains off unless you
-explicitly use the separate CLI-assisted workflow.
+browser review creates no launch.
 
 Launching an explicit alias does not mutate Selected Profile. Starting another
 profile does not stop or switch an existing Codex process. Avoid concurrent
@@ -540,6 +553,24 @@ The result includes a checkpoint ID. Inspect, sanitize, approve, or export it:
 Encrypted exports use `.cfolio`; explicit plaintext exports use `.json`.
 Plaintext export requires its explicit option and confirmation. Review every
 field and redaction before sharing a checkpoint across identities or workspaces.
+
+The dashboard exposes the same retained data under **Settings → Safe
+Continuation data**. Repository-first checkpoints default to 30 days and
+transcript-assisted checkpoints to 7 days; configure either from one day to
+`unlimited`. Completion remains retained until expiry or an exact purge. The
+inventory distinguishes retained drafts, recoverable approvals, completed
+handoffs, expired records, and uncertain starts. After a service restart, an
+uncertain start is non-authorizing. Recovery is offered only when durable
+storage, repository identity, definitive source exit, target eligibility,
+revision, and expiry checks pass; CodexFolio never kills Codex.
+
+Checkpoint export first displays included and always-excluded fields. The
+default browser download is an independently passphrase-encrypted `.cfolio`
+artifact. Plaintext JSON requires its own visible warning and acknowledgement.
+Canceling creates no download. The browser controls the destination and handles
+an existing filename, so the service neither discloses a destination path nor
+silently overwrites a file. Purge likewise requires a preview, an exact current
+revision, and typed confirmation; a launching or changed checkpoint is rejected.
 
 Prepare a fresh foreground continuation under another eligible profile:
 

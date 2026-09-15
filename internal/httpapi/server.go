@@ -93,6 +93,7 @@ type Options struct {
 	History               *usage.HistoryService
 	Exports               *activity.ExportService
 	Checkpoints           CommandCheckpointService
+	CheckpointHistory     BrowserCheckpointHistory
 	CommandToken          string
 }
 
@@ -124,6 +125,7 @@ type Server struct {
 	historyService        *usage.HistoryService
 	exportService         *activity.ExportService
 	checkpoints           CommandCheckpointService
+	checkpointHistory     BrowserCheckpointHistory
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -202,6 +204,7 @@ func NewServer(options Options) (*Server, error) {
 		historyService:        options.History,
 		exportService:         options.Exports,
 		checkpoints:           options.Checkpoints,
+		checkpointHistory:     options.CheckpointHistory,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),

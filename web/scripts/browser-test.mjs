@@ -1,8 +1,8 @@
-/* global document, window, innerWidth, getComputedStyle */
+/* global document, window, innerWidth, getComputedStyle, fetch */
 import { URL } from "node:url";
 import { performance } from "node:perf_hooks";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
@@ -25,6 +25,7 @@ const context = await browser.newContext({
   ...(phase === "benchmark" ? { locale: "en-US", timezoneId: "UTC" } : {}),
 });
 const page = await context.newPage();
+const cdp = await context.newCDPSession(page);
 page.setDefaultTimeout(10000);
 const errors = [],
   remote = [];
@@ -316,69 +317,128 @@ try {
       await page.waitForTimeout(100);
       await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
       await page.getByText(/Termination is uncertain/).waitFor();
-      await page.getByLabel("Goal", { exact: true }).fill("Finish browser-redact-sentinel export");
-      await page.getByLabel("Completed work", { exact: true }).fill("Captured repository metadata");
-      await page
-        .getByLabel("Pending work", { exact: true })
-        .fill("Validate fresh target lifecycle");
-      await page
-        .getByLabel("Known validation", { exact: true })
-        .fill("Focused browser handoff check passed");
-      await page
-        .getByLabel("Risks", { exact: true })
-        .fill("Native platforms require hosted evidence");
-      await page.getByLabel("Next action", { exact: true }).fill("Run approved checkpoint");
-      await page.getByText("Repository evidence and redaction", { exact: true }).click();
-      await page
-        .getByLabel("Redact exact text (one value per line)")
-        .fill("browser-redact-sentinel");
-      await page.getByText("handoff-notes.txt", { exact: true }).click();
-      const firstSave = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/api/v1/handoff") &&
-          response.request().postDataJSON().action === "edit",
-      );
-      await page.getByRole("button", { name: "Save sanitized draft", exact: true }).click();
-      const firstSaveResponse = await firstSave;
-      assert.equal(firstSaveResponse.status(), 200, await firstSaveResponse.text());
-      const firstRevision = await firstSaveResponse.json();
-      assert.doesNotMatch(await page.locator("main").innerText(), /browser-redact-sentinel/);
-      assert.match(await page.locator("main").innerText(), /\[REDACTED\]/);
-      assert.deepEqual(errors, [], "handoff save must not cause a browser runtime error");
-      await page.locator("#handoff-next_action").fill("Start fresh target now");
-      const secondSave = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/api/v1/handoff") &&
-          response.request().postDataJSON().action === "edit",
-      );
-      await page.getByRole("button", { name: "Save sanitized draft", exact: true }).click();
-      const secondSaveResponse = await secondSave;
-      const approvedCandidate = await secondSaveResponse.json();
-      const csrf = secondSaveResponse.request().headers()["x-codexfolio-csrf"];
-      const stale = await page.request.post(new URL("/api/v1/handoff", link).href, {
-        data: {
-          action: "approve",
-          target_alias: "Personal",
-          checkpoint_id: firstRevision.checkpoint_id,
-          revision: firstRevision.revision,
-        },
-        headers: { Origin: new URL(link).origin, "X-CodexFolio-CSRF": csrf },
+      await page.getByText("Transcript assistance", { exact: true }).click();
+      const reviewCandidates = page.getByRole("button", {
+        name: "Review transcript candidates",
+        exact: true,
       });
-      assert.equal(stale.status(), 409, await stale.text());
+      assert.equal(await reviewCandidates.isDisabled(), true);
+      assert.equal(await page.getByLabel("Codex thread ID", { exact: true }).isDisabled(), true);
+      check("transcript history remains off until per-handoff consent");
+
+      await page.getByRole("checkbox", { name: /Allow transcript assistance/ }).check();
+      await page
+        .getByLabel("Codex thread ID", { exact: true })
+        .fill("11111111-1111-4111-8111-111111111111");
+      await reviewCandidates.click();
+      await page.getByText(/Transcript assistance is unavailable/).waitFor();
+      assert.equal(await page.locator("#handoff-goal").inputValue(), "");
+      assert.match(await page.locator("main").innerText(), /Repository-first checkpoint/);
 
       writeFileSync(control, "handoff-source-exit");
       await page.waitForTimeout(100);
       await page.getByRole("button", { name: "Check readiness again", exact: true }).click();
       await page.getByText(/Source process: Definitively exited/).waitFor();
+      await page
+        .getByLabel("Codex thread ID", { exact: true })
+        .fill("22222222-2222-4222-8222-222222222222");
+      await reviewCandidates.click();
+      await page.getByText(/Transcript assistance is unavailable/).waitFor();
+      assert.equal(await page.locator("#handoff-goal").inputValue(), "");
+      await page
+        .getByLabel("Codex thread ID", { exact: true })
+        .fill("11111111-1111-4111-8111-111111111111");
+      await reviewCandidates.click();
+      await page.getByText(/Candidates are transient/).waitFor();
+      assert.match(await page.locator("#handoff-goal").inputValue(), /transcript-private-sentinel/);
+      await page.locator("#handoff-goal").fill("Finish sanitized assisted release");
+      await page.getByText("Repository evidence and redaction", { exact: true }).click();
+      await page
+        .getByLabel("Redact exact text (one value per line)")
+        .fill("transcript-private-sentinel");
+      await page.getByRole("button", { name: "Review sanitized preview", exact: true }).click();
+      await page.getByText(/Sanitized preview ready/).waitFor();
+      assert.doesNotMatch(
+        await page.locator("#handoff-risks").inputValue(),
+        /transcript-private-sentinel/,
+      );
+      assert.match(await page.locator("#handoff-risks").inputValue(), /\[REDACTED\]/);
+      await page.getByRole("button", { name: "Cancel transcript assistance", exact: true }).click();
+      assert.equal(await page.locator("#handoff-goal").inputValue(), "");
+      assert.match(await page.locator("main").innerText(), /Repository-first checkpoint/);
+
+      await page.getByRole("checkbox", { name: /Allow transcript assistance/ }).check();
+      await page
+        .getByLabel("Codex thread ID", { exact: true })
+        .fill("11111111-1111-4111-8111-111111111111");
+      await reviewCandidates.click();
+      await page.locator("#handoff-goal").fill("Finish sanitized assisted release");
+      await page
+        .locator("#handoff-completed_work")
+        .fill("Repository and bounded transcript reviewed");
+      await page.locator("#handoff-pending_work").fill("Validate fresh target lifecycle");
+      await page.locator("#handoff-known_validation").fill("Focused browser handoff check passed");
+      await page.locator("#handoff-risks").fill("transcript-private-sentinel must be removed");
+      await page.locator("#handoff-next_action").fill("Run approved checkpoint");
+      await page
+        .getByLabel("Redact exact text (one value per line)")
+        .fill("transcript-private-sentinel");
+      const sanitizedPreview = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "preview-assisted",
+      );
+      await page.getByRole("button", { name: "Review sanitized preview", exact: true }).click();
+      const sanitizedPreviewResponse = await sanitizedPreview;
+      const approvedCandidate = (await sanitizedPreviewResponse.json()).handoff;
+      assert.ok(approvedCandidate);
+      const csrf = sanitizedPreviewResponse.request().headers()["x-codexfolio-csrf"];
+      const stale = await page.request.post(new URL("/api/v1/handoff", link).href, {
+        data: {
+          action: "approve-assisted",
+          target_alias: "Personal",
+          checkpoint_id: approvedCandidate.checkpoint_id,
+          revision: "stale-repository-revision",
+          preview_revision: approvedCandidate.revision,
+          fields: {
+            goal: "Finish sanitized assisted release",
+            completed_work: "Repository and bounded transcript reviewed",
+            pending_work: "Validate fresh target lifecycle",
+            known_validation: "Focused browser handoff check passed",
+            risks: "[REDACTED] must be removed",
+            next_action: "Run approved checkpoint",
+          },
+        },
+        headers: { Origin: new URL(link).origin, "X-CodexFolio-CSRF": csrf },
+      });
+      assert.equal(stale.status(), 409, await stale.text());
+      await page.setViewportSize({ width: 640, height: 500 });
+      await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+      await page.getByRole("button", { name: "Approve sanitized preview", exact: true }).focus();
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        ),
+        true,
+      );
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Approve sanitized preview", exact: true })
+          .isVisible(),
+        true,
+      );
+      await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+      await page.setViewportSize({ width: 1440, height: 1000 });
       const approval = page.waitForResponse(
         (response) =>
           response.url().endsWith("/api/v1/handoff") &&
-          response.request().postDataJSON().action === "approve",
+          response.request().postDataJSON().action === "approve-assisted",
       );
-      await page.getByRole("button", { name: "Approve this revision", exact: true }).click();
+      await page.getByRole("button", { name: "Approve sanitized preview", exact: true }).click();
       const approvalResponse = await approval;
-      const approved = await approvalResponse.json();
-      assert.equal(approved.revision, approvedCandidate.revision);
+      const approved = (await approvalResponse.json()).handoff;
+      assert.ok(approved);
+      assert.equal(approved.source, "transcript-assisted");
       assert.match(
         await page.locator("main").innerText(),
         /Approved · Terminal launch not started/,
@@ -406,6 +466,40 @@ try {
         forcedColors: "none",
       });
       await page.setViewportSize({ width: 1440, height: 1000 });
+      const checkpointState = async (expected, checkpointId = approved.checkpoint_id) => {
+        await page.waitForFunction(
+          async ({ origin, csrfToken, checkpointId, expectedState }) => {
+            const response = await fetch(`${origin}/api/v1/handoff`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-CodexFolio-CSRF": csrfToken },
+              body: JSON.stringify({ action: "list" }),
+            });
+            if (!response.ok) return false;
+            const result = await response.json();
+            return result.management?.checkpoints?.some(
+              (checkpoint) =>
+                checkpoint.checkpoint_id === checkpointId && checkpoint.state === expectedState,
+            );
+          },
+          {
+            origin: new URL(link).origin,
+            csrfToken: csrf,
+            checkpointId,
+            expectedState: expected,
+          },
+        );
+      };
+      writeFileSync(
+        control,
+        `handoff-recovery-same:${approved.checkpoint_id}:${approved.revision}`,
+      );
+      const recoveryCheckpoint = `${approved.checkpoint_id}-recovery`;
+      await checkpointState("start uncertain", recoveryCheckpoint);
+      writeFileSync(control, "handoff-recovery-changed");
+      await checkpointState("recoverable", recoveryCheckpoint);
+      check(
+        "same-boot uncertain start stays non-authorizing; changed boot restores recoverable state",
+      );
       writeFileSync(control, `handoff-run-0:${approved.checkpoint_id}:${approved.revision}`);
       await page.getByText("Started · Running", { exact: true }).waitFor();
       writeFileSync(control, "handoff-exit-0");
@@ -467,6 +561,93 @@ try {
       );
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
+      await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
+      assert.match(await page.locator("main").innerText(), /Completed/);
+      assert.match(await page.locator("main").innerText(), /Retained/);
+      assert.match(await page.locator("main").innerText(), /Expired/);
+      await page.getByLabel("Repository-first retention", { exact: true }).fill("31");
+      await page.getByLabel("Transcript-assisted retention", { exact: true }).fill("unlimited");
+      await page.getByRole("button", { name: "Save retention", exact: true }).click();
+      await page.getByText("Retention policy saved.", { exact: true }).waitFor();
+      await page.setViewportSize({ width: 640, height: 500 });
+      await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+      await page.getByRole("button", { name: "Save retention", exact: true }).focus();
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        ),
+        true,
+      );
+      assert.equal(
+        await page.getByRole("button", { name: "Save retention", exact: true }).isVisible(),
+        true,
+      );
+      await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+      await page.setViewportSize({ width: 390, height: 844 });
+
+      await page.getByLabel("Encrypted .cfolio", { exact: true }).check();
+      await page.getByRole("button", { name: "Preview export", exact: true }).first().click();
+      await page.getByText(/Always excluded/).waitFor();
+      const exportPreviewText = await page.locator("main").innerText();
+      assert.match(exportPreviewText, /Raw transcripts/);
+      assert.match(exportPreviewText, /Identity Homes/);
+      assert.doesNotMatch(exportPreviewText, /raw_transcripts|identity_homes/);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await capture("checkpoint-export-wide", 1440, 1000);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByLabel("Export passphrase", { exact: true }).fill("browser-export-passphrase");
+      const encryptedDownload = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Download export", exact: true }).click();
+      const encrypted = await encryptedDownload;
+      assert.match(encrypted.suggestedFilename(), /\.cfolio$/);
+      const encryptedPath = await encrypted.path();
+      assert.ok(encryptedPath);
+      const encryptedContents = readFileSync(encryptedPath, "utf8");
+      assert.match(encryptedContents, /codex-folio\.cfolio\.v1/);
+      assert.doesNotMatch(encryptedContents, /transcript-private-sentinel|browser-fixture-command/);
+
+      await page.getByLabel("Plaintext JSON", { exact: true }).check();
+      await page.getByRole("button", { name: "Preview export", exact: true }).first().click();
+      const plaintextDownloadButton = page.getByRole("button", {
+        name: "Download export",
+        exact: true,
+      });
+      assert.equal(await plaintextDownloadButton.isDisabled(), true);
+      await page.getByRole("checkbox", { name: /I understand plaintext is not encrypted/ }).check();
+      const plaintextDownload = page.waitForEvent("download");
+      await plaintextDownloadButton.click();
+      const plaintext = await plaintextDownload;
+      assert.match(plaintext.suggestedFilename(), /\.json$/);
+      const plaintextPath = await plaintext.path();
+      assert.ok(plaintextPath);
+      const plaintextContents = readFileSync(plaintextPath, "utf8");
+      assert.match(plaintextContents, /Finish sanitized assisted release/);
+      assert.doesNotMatch(
+        plaintextContents,
+        /transcript-private-sentinel|browser-fixture-command|CODEX_HOME/,
+      );
+
+      const rowsBeforePurge = await page.locator("article").count();
+      await page.getByRole("button", { name: "Preview purge", exact: true }).first().click();
+      assert.equal(
+        await page.getByRole("button", { name: "Purge exact revision", exact: true }).isDisabled(),
+        true,
+      );
+      await page.getByRole("button", { name: "Cancel purge", exact: true }).click();
+      assert.equal(await page.locator("article").count(), rowsBeforePurge);
+      await page.getByRole("button", { name: "Preview purge", exact: true }).first().click();
+      await page.getByLabel("Type PURGE to confirm", { exact: true }).fill("PURGE");
+      await page.getByRole("button", { name: "Purge exact revision", exact: true }).click();
+      await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
+      assert.equal(await page.locator("article").count(), rowsBeforePurge - 1);
+      await scanAccessibility("checkpoint-management");
+      await capture("checkpoint-management-narrow", 390, 844);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await capture("checkpoint-management-wide", 1440, 1000);
+      check(
+        "checkpoint retention, encrypted and acknowledged plaintext export, cancel and exact purge",
+      );
+      await page.setViewportSize({ width: 390, height: 844 });
       await capture("settings-light", 390, 844);
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
       await page.emulateMedia({

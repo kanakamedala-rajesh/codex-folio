@@ -31,12 +31,17 @@ function editable(response: HandoffResponse): HandoffFields {
 
 export function Handoff({ initial, heading, manage, readActivity, close }: Props) {
   const [response, setResponse] = useState(initial);
+  const [repositoryDraft, setRepositoryDraft] = useState(initial);
   const [fields, setFields] = useState<HandoffFields>(() => editable(initial));
   const [redactedPaths, setRedactedPaths] = useState<string[]>([]);
   const [redactedText, setRedactedText] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>(c.captured);
   const [lifecycle, setLifecycle] = useState<ActivityRecord>();
+  const [historyConsent, setHistoryConsent] = useState(false);
+  const [threadId, setThreadId] = useState("");
+  const [assistanceStage, setAssistanceStage] = useState<"off" | "candidates" | "sanitized">("off");
+  const [previewRevision, setPreviewRevision] = useState("");
   const serverFields = useMemo(() => editable(response), [response]);
   const dirty =
     JSON.stringify(fields) !== JSON.stringify(serverFields) ||
@@ -89,6 +94,7 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
     setBusy(true);
     try {
       const next = await manage(request);
+      if (next.source === "repository-first") setRepositoryDraft(next);
       setResponse(next);
       setFields(editable(next));
       setRedactedPaths([]);
@@ -134,6 +140,85 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
       },
       c.checked,
     );
+  const assist = async () => {
+    setBusy(true);
+    try {
+      const next = await manage({
+        action: "assist",
+        target_alias: repositoryDraft.target_alias,
+        checkpoint_id: repositoryDraft.checkpoint_id,
+        revision: repositoryDraft.revision,
+        thread_id: threadId.trim(),
+        history_consent: true,
+      });
+      setResponse(next);
+      setFields(editable(next));
+      setAssistanceStage("candidates");
+      setPreviewRevision("");
+      setMessage(c.candidatesReady);
+    } catch {
+      setResponse(repositoryDraft);
+      setFields(editable(repositoryDraft));
+      setAssistanceStage("off");
+      setMessage(c.assistanceUnavailable);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const previewAssisted = async () => {
+    setBusy(true);
+    try {
+      const next = await manage({
+        action: "preview-assisted",
+        target_alias: repositoryDraft.target_alias,
+        checkpoint_id: repositoryDraft.checkpoint_id,
+        revision: repositoryDraft.revision,
+        fields,
+        redact_paths: redactedPaths,
+        redact_text: redactedText
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      });
+      setResponse(next);
+      setFields(editable(next));
+      setPreviewRevision(next.revision);
+      setAssistanceStage("sanitized");
+      setMessage(c.sanitizedReady);
+    } catch {
+      setMessage(c.operationFailed);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const approveAssisted = () =>
+    act(
+      {
+        action: "approve-assisted",
+        target_alias: repositoryDraft.target_alias,
+        checkpoint_id: repositoryDraft.checkpoint_id,
+        revision: repositoryDraft.revision,
+        preview_revision: previewRevision,
+        fields,
+        redact_paths: redactedPaths,
+        redact_text: redactedText
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      },
+      c.approved,
+    );
+  const cancelAssistance = () => {
+    setResponse(repositoryDraft);
+    setFields(editable(repositoryDraft));
+    setRedactedPaths([]);
+    setRedactedText("");
+    setHistoryConsent(false);
+    setThreadId("");
+    setAssistanceStage("off");
+    setPreviewRevision("");
+    setMessage(c.assistanceCancelled);
+  };
 
   const status = lifecycle
     ? lifecycle.lifecycle === "running"
@@ -199,7 +284,7 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
               id={`handoff-${name}`}
               rows={3}
               value={fields[name]}
-              disabled={busy || response.status === "approved"}
+              disabled={busy || response.status === "approved" || assistanceStage === "sanitized"}
               onChange={(event) => update(name, event.target.value)}
               className="min-h-24 w-full rounded border border-rule bg-panel px-3 py-2 text-ink disabled:text-muted"
             />
@@ -207,7 +292,8 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
         ))}
       </div>
       <p className="my-4 max-w-[75ch] text-muted">
-        {c.repositoryFirst} · {c.revision} {response.revision.slice(0, 10)} · {c.expires}{" "}
+        {response.source === "transcript-assisted" ? c.transcriptAssisted : c.repositoryFirst} ·{" "}
+        {c.revision} {response.revision.slice(0, 10)} · {c.expires}{" "}
         {response.expires_at
           ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
               new Date(response.expires_at),
@@ -236,7 +322,7 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
             · {response.fields.validation_provenance} · {response.fields.validation_completeness}
           </dd>
         </dl>
-        {files.length > 0 && response.status !== "approved" && (
+        {files.length > 0 && response.status !== "approved" && assistanceStage !== "sanitized" && (
           <fieldset className="mt-4 grid gap-2">
             <legend className="mb-2 font-semibold">{c.redactFiles}</legend>
             {files.map((file) => (
@@ -257,7 +343,7 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
             ))}
           </fieldset>
         )}
-        {response.status !== "approved" && (
+        {response.status !== "approved" && assistanceStage !== "sanitized" && (
           <label className="mt-4 grid gap-2">
             <span>{c.redactText}</span>
             <textarea
@@ -271,7 +357,65 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
       </details>
       <details className="border-b border-rule py-3">
         <summary className="min-h-11 cursor-pointer py-3 font-semibold">{c.assistance}</summary>
-        <p className="mb-0 max-w-[75ch] text-muted">{c.assistanceDetail}</p>
+        <p className="mb-4 max-w-[75ch] text-muted">{c.assistanceDetail}</p>
+        {response.status !== "approved" && assistanceStage === "off" && (
+          <div className="grid max-w-2xl gap-4">
+            <label className="flex min-h-11 items-start gap-3">
+              <input
+                className="mt-1 size-5 shrink-0"
+                type="checkbox"
+                checked={historyConsent}
+                onChange={(event) => setHistoryConsent(event.target.checked)}
+              />
+              <span>
+                <strong className="block">{c.assistanceConsent}</strong>
+                <span className="text-muted">{c.assistanceConsentDetail}</span>
+              </span>
+            </label>
+            <label className="grid gap-2" htmlFor="handoff-thread-id">
+              <span>{c.threadId}</span>
+              <input
+                id="handoff-thread-id"
+                className="min-h-11 rounded border border-rule bg-panel px-3 text-ink disabled:text-muted"
+                value={threadId}
+                placeholder={c.threadIdPlaceholder}
+                disabled={!historyConsent || busy}
+                onChange={(event) => setThreadId(event.target.value)}
+              />
+            </label>
+            <button
+              className={`${buttonClass} justify-self-start`}
+              disabled={busy || !historyConsent || threadId.trim() === ""}
+              onClick={() => void assist()}
+            >
+              {c.reviewCandidates}
+            </button>
+          </div>
+        )}
+        {assistanceStage !== "off" && response.status !== "approved" && (
+          <div className="mt-4 flex flex-wrap gap-3">
+            {assistanceStage === "candidates" ? (
+              <button
+                className={buttonClass}
+                disabled={busy}
+                onClick={() => void previewAssisted()}
+              >
+                {c.reviewSanitized}
+              </button>
+            ) : (
+              <button
+                className={buttonClass}
+                disabled={busy || !previewRevision || !sourceReady || !response.target_eligible}
+                onClick={() => void approveAssisted()}
+              >
+                {c.approveSanitized}
+              </button>
+            )}
+            <button className={buttonClass} disabled={busy} onClick={cancelAssistance}>
+              {c.cancelAssistance}
+            </button>
+          </div>
+        )}
       </details>
       {response.terminal_command && (
         <section className="my-6 border-y border-rule py-5">
@@ -281,12 +425,12 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
         </section>
       )}
       <div className="my-5 flex flex-wrap gap-3 max-sm:grid max-sm:grid-cols-2">
-        {response.status !== "approved" && (
+        {response.status !== "approved" && assistanceStage === "off" && (
           <button className={buttonClass} disabled={busy || !dirty} onClick={() => void save()}>
             {c.save}
           </button>
         )}
-        {response.status !== "approved" && (
+        {response.status !== "approved" && assistanceStage === "off" && (
           <button
             className={buttonClass}
             disabled={busy || dirty || !sourceReady || !response.target_eligible}

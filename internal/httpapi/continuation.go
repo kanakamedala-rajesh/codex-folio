@@ -209,6 +209,8 @@ func checkpointError(err error) (int, string) {
 		return http.StatusConflict, apperrors.ContinuationRepositoryInspectionFailed
 	case errors.Is(err, continuation.ErrCheckpointInvalid):
 		return http.StatusBadRequest, apperrors.ContinuationCheckpointInvalid
+	case errors.Is(err, continuation.ErrCheckpointExportInvalid):
+		return http.StatusBadRequest, apperrors.ContinuationCheckpointInvalid
 	default:
 		return http.StatusInternalServerError, apperrors.StoreWriteFailed
 	}

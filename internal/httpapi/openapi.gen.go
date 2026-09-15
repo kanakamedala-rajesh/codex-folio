@@ -20,7 +20,7 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "e213a249ef9d359e9ca025b891178850ecfcf2212e846b1969d0d3ae9641cdea"
+	ContractSourceSHA256   = "e8e9b907f4be8e00878d7ad33fc9b89e56e1baac46c89d08e449d39b833c7abf"
 	BootstrapPath          = "/api/v1/bootstrap"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
@@ -340,15 +340,37 @@ type HandoffRepository struct {
 	Completeness string   `json:"completeness"`
 }
 
-type HandoffRequest struct {
-	Action       string         `json:"action"`
-	ProjectId    *string        `json:"project_id,omitempty"`
-	TargetAlias  string         `json:"target_alias"`
-	CheckpointId *string        `json:"checkpoint_id,omitempty"`
-	Revision     *string        `json:"revision,omitempty"`
-	Fields       *HandoffFields `json:"fields,omitempty"`
-	RedactPaths  *[]string      `json:"redact_paths,omitempty"`
-	RedactText   *[]string      `json:"redact_text,omitempty"`
+type HandoffCheckpointSummary struct {
+	CheckpointId    string `json:"checkpoint_id"`
+	Status          string `json:"status"`
+	State           string `json:"state"`
+	Source          string `json:"source"`
+	ProjectAlias    string `json:"project_alias"`
+	ProjectBasename string `json:"project_basename"`
+	Revision        string `json:"revision"`
+	CreatedAt       string `json:"created_at"`
+	ExpiresAt       string `json:"expires_at"`
+	Exportable      bool   `json:"exportable"`
+	Purgeable       bool   `json:"purgeable"`
+}
+
+type HandoffRetentionPolicy struct {
+	RepositoryFirst    string `json:"repository_first"`
+	TranscriptAssisted string `json:"transcript_assisted"`
+}
+
+type HandoffOperationPreview struct {
+	Kind           string   `json:"kind"`
+	Confirmation   string   `json:"confirmation"`
+	Filename       string   `json:"filename"`
+	IncludedFields []string `json:"included_fields"`
+	ExcludedFields []string `json:"excluded_fields"`
+}
+
+type HandoffDownload struct {
+	Filename      string `json:"filename"`
+	MediaType     string `json:"media_type"`
+	ContentBase64 string `json:"content_base64"`
 }
 
 type HandoffResponse struct {
@@ -373,6 +395,39 @@ type HandoffResponse struct {
 	TargetEligible  bool                    `json:"target_eligible"`
 	TargetCaution   string                  `json:"target_caution"`
 	TerminalCommand string                  `json:"terminal_command"`
+}
+
+type CheckpointManagementResponse struct {
+	Checkpoints      *[]HandoffCheckpointSummary `json:"checkpoints,omitempty"`
+	RetentionPolicy  *HandoffRetentionPolicy     `json:"retention_policy,omitempty"`
+	OperationPreview *HandoffOperationPreview    `json:"operation_preview,omitempty"`
+	Download         *HandoffDownload            `json:"download,omitempty"`
+	Applied          *bool                       `json:"applied,omitempty"`
+}
+
+type HandoffRequest struct {
+	Action                   string         `json:"action"`
+	ProjectId                *string        `json:"project_id,omitempty"`
+	TargetAlias              *string        `json:"target_alias,omitempty"`
+	CheckpointId             *string        `json:"checkpoint_id,omitempty"`
+	Revision                 *string        `json:"revision,omitempty"`
+	PreviewRevision          *string        `json:"preview_revision,omitempty"`
+	ThreadId                 *string        `json:"thread_id,omitempty"`
+	HistoryConsent           *bool          `json:"history_consent,omitempty"`
+	Fields                   *HandoffFields `json:"fields,omitempty"`
+	Source                   *string        `json:"source,omitempty"`
+	Setting                  *string        `json:"setting,omitempty"`
+	Confirmation             *string        `json:"confirmation,omitempty"`
+	Passphrase               *string        `json:"passphrase,omitempty"`
+	PlaintextAcknowledgement *bool          `json:"plaintext_acknowledgement,omitempty"`
+	RedactPaths              *[]string      `json:"redact_paths,omitempty"`
+	RedactText               *[]string      `json:"redact_text,omitempty"`
+}
+
+type HandoffResult struct {
+	Kind       string                        `json:"kind"`
+	Handoff    *HandoffResponse              `json:"handoff,omitempty"`
+	Management *CheckpointManagementResponse `json:"management,omitempty"`
 }
 
 type ActivityRecord struct {

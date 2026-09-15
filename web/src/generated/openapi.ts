@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "e213a249ef9d359e9ca025b891178850ecfcf2212e846b1969d0d3ae9641cdea" as const;
+  "e8e9b907f4be8e00878d7ad33fc9b89e56e1baac46c89d08e449d39b833c7abf" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 
 export interface HistoryScope {
@@ -245,15 +245,37 @@ export interface HandoffRepository {
   completeness: string;
 }
 
-export interface HandoffRequest {
-  action: string;
-  project_id?: string;
-  target_alias: string;
-  checkpoint_id?: string;
-  revision?: string;
-  fields?: HandoffFields;
-  redact_paths?: string[];
-  redact_text?: string[];
+export interface HandoffCheckpointSummary {
+  checkpoint_id: string;
+  status: string;
+  state: string;
+  source: string;
+  project_alias: string;
+  project_basename: string;
+  revision: string;
+  created_at: string;
+  expires_at: string;
+  exportable: boolean;
+  purgeable: boolean;
+}
+
+export interface HandoffRetentionPolicy {
+  repository_first: string;
+  transcript_assisted: string;
+}
+
+export interface HandoffOperationPreview {
+  kind: string;
+  confirmation: string;
+  filename: string;
+  included_fields: string[];
+  excluded_fields: string[];
+}
+
+export interface HandoffDownload {
+  filename: string;
+  media_type: string;
+  content_base64: string;
 }
 
 export interface HandoffResponse {
@@ -278,6 +300,39 @@ export interface HandoffResponse {
   target_eligible: boolean;
   target_caution: string;
   terminal_command: string;
+}
+
+export interface CheckpointManagementResponse {
+  checkpoints?: HandoffCheckpointSummary[];
+  retention_policy?: HandoffRetentionPolicy;
+  operation_preview?: HandoffOperationPreview;
+  download?: HandoffDownload;
+  applied?: boolean;
+}
+
+export interface HandoffRequest {
+  action: string;
+  project_id?: string;
+  target_alias?: string;
+  checkpoint_id?: string;
+  revision?: string;
+  preview_revision?: string;
+  thread_id?: string;
+  history_consent?: boolean;
+  fields?: HandoffFields;
+  source?: string;
+  setting?: string;
+  confirmation?: string;
+  passphrase?: string;
+  plaintext_acknowledgement?: boolean;
+  redact_paths?: string[];
+  redact_text?: string[];
+}
+
+export interface HandoffResult {
+  kind: string;
+  handoff?: HandoffResponse;
+  management?: CheckpointManagementResponse;
 }
 
 export interface ConfigurationDocument {
@@ -631,7 +686,7 @@ export interface ApiPaths {
       operationId: "manageHandoff";
       requestBody: HandoffRequest;
       responses: {
-        200: { content: { "application/json": HandoffResponse } };
+        200: { content: { "application/json": HandoffResult } };
         default: { content: { "application/json": UsageErrorResponse } };
       };
     };
@@ -771,7 +826,7 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<ConfigurationPackResponse>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
-  manageHandoff(request: HandoffRequest, init?: RequestInit): Promise<HandoffResponse>;
+  manageHandoff(request: HandoffRequest, init?: RequestInit): Promise<HandoffResult>;
   getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
     profileAlias?: string,
@@ -868,7 +923,7 @@ export function createCodexFolioApiClient(
         const failure = (await response.json()) as UsageErrorResponse;
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
-      return (await response.json()) as HandoffResponse;
+      return (await response.json()) as HandoffResult;
     },
     async getAnalytics(scope = "", init = {}) {
       const headers = new Headers(init.headers);

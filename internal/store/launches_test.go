@@ -429,6 +429,16 @@ func TestReconcilePendingHandoffRecoversOnlyAfterBootSessionChanges(t *testing.T
 	if err != nil || record.State != launch.StateAbandoned {
 		t.Fatalf("recovered launch = %#v, %v", record, err)
 	}
+	retry, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath, Arguments: []string{checkpoint.Metadata},
+		ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-b",
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch(recovered checkpoint) error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), retry.LeaseID, 4002); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted(recovered checkpoint) error = %v", err)
+	}
 }
 
 func TestReconcileManagedLaunchesMarksUnknownExitAsAbandoned(t *testing.T) {

@@ -60,7 +60,7 @@ test("the generated browser client exposes the safe handoff contract", async () 
   let captured;
   const client = createCodexFolioApiClient("", async (path, init) => {
     captured = { path, init };
-    return new Response(JSON.stringify({ checkpoint_id: "checkpoint-1" }), {
+    return new Response(JSON.stringify({ kind: "handoff", handoff: { checkpoint_id: "checkpoint-1" } }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -68,7 +68,8 @@ test("the generated browser client exposes the safe handoff contract", async () 
 
   const result = await client.manageHandoff({ action: "show", target_alias: "Personal", checkpoint_id: "checkpoint-1" });
   assert.equal(HandoffPath, "/api/v1/handoff");
-  assert.equal(result.checkpoint_id, "checkpoint-1");
+  assert.equal(result.kind, "handoff");
+  assert.equal(result.handoff.checkpoint_id, "checkpoint-1");
   assert.equal(captured.path, HandoffPath);
   assert.equal(captured.init.method, "POST");
 });

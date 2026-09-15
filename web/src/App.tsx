@@ -7,6 +7,7 @@ import {
   type ConfigurationPackRequest,
   type ConfigurationPackResponse,
   type ConfigurationPackSummary,
+  type CheckpointManagementResponse,
   type HandoffRequest,
   type HandoffResponse,
   type ProfileAuthenticationRequest,
@@ -24,6 +25,7 @@ import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
 import { Analytics } from "./Analytics";
 import { Handoff } from "./Handoff";
+import { CheckpointManagement } from "./CheckpointManagement";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -476,13 +478,13 @@ export function App() {
   const csrf = useRef("");
   const startup = useRef<Promise<void> | null>(null);
   const operation = useRef(false);
-  const failure = (error: unknown) => {
+  const failure = useCallback((error: unknown) => {
     if (error instanceof UsageRefreshError && (error.status === 401 || error.status === 403)) {
       setStatus("expired");
       setData(null);
     } else if (error instanceof TypeError) setStatus("unavailable");
     else setMessage(c.refreshFailed);
-  };
+  }, []);
   const readAnalyticsHistory = async (profileId: string, projectId: string, from: string) =>
     api.manageAnalyticsHistory(
       {
@@ -624,7 +626,7 @@ export function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [launch]);
+  }, [launch, failure]);
   async function choose(value: string) {
     if (operation.current || !data) return;
     setGuidance("");
@@ -793,10 +795,35 @@ export function App() {
       failure(error);
     }
   }
+  const manageHandoffResult = useCallback(
+    async (request: HandoffRequest) => {
+      try {
+        return await api.manageHandoff(request, {
+          headers: { "X-CodexFolio-CSRF": csrf.current },
+        });
+      } catch (error) {
+        failure(error);
+        throw error;
+      }
+    },
+    [failure],
+  );
   const manageHandoff = useCallback(
-    (request: HandoffRequest) =>
-      api.manageHandoff(request, { headers: { "X-CodexFolio-CSRF": csrf.current } }),
-    [],
+    async (request: HandoffRequest): Promise<HandoffResponse> => {
+      const result = await manageHandoffResult(request);
+      if (result.kind !== "handoff" || !result.handoff) throw new Error("missing handoff result");
+      return result.handoff;
+    },
+    [manageHandoffResult],
+  );
+  const manageCheckpoints = useCallback(
+    async (request: HandoffRequest): Promise<CheckpointManagementResponse> => {
+      const result = await manageHandoffResult(request);
+      if (result.kind !== "management" || !result.management)
+        throw new Error("missing checkpoint management result");
+      return result.management;
+    },
+    [manageHandoffResult],
   );
   const readHandoffActivity = useCallback(
     (profileAlias: string, projectId: string) =>
@@ -1116,7 +1143,7 @@ export function App() {
                         {c.manageAnalyticsData}
                       </button>
                     </section>
-                    <p className="mb-4 max-w-[75ch] text-muted">{c.later}</p>
+                    <CheckpointManagement manage={manageCheckpoints} />
                   </section>
                 ) : route !== "Overview" ? (
                   <p className="mb-4 max-w-[75ch]">{c.later}</p>

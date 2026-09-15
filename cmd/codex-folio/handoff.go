@@ -30,6 +30,22 @@ type historyCandidateReader interface {
 	Read(context.Context, continuation.HistoryReadRequest) (continuation.CheckpointFields, error)
 }
 
+type browserCheckpointHistory struct {
+	resolver launch.ExecutableResolver
+	reader   historyCandidateReader
+}
+
+func (assistant browserCheckpointHistory) Candidates(ctx context.Context, source continuation.HistorySource, threadID string) (continuation.CheckpointFields, error) {
+	if assistant.resolver == nil || assistant.reader == nil {
+		return continuation.CheckpointFields{}, continuation.ErrHistoryUnavailable
+	}
+	discovery, err := launch.Discover(assistant.resolver, "")
+	if err != nil {
+		return continuation.CheckpointFields{}, continuation.ErrHistoryUnavailable
+	}
+	return assistant.reader.Read(ctx, continuation.HistoryReadRequest{Executable: discovery.Executable, IdentityHome: source.IdentityHome, ThreadID: threadID})
+}
+
 func runHandoff(args []string, stdout, stderr io.Writer, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
 	return runHandoffWithDependencies(args, os.Stdin, stdout, stderr, resolvePaths, resolver, openServiceStoreWithVaultMode, newForegroundProcess, newServiceDiagnosticSink(), editCheckpointFile, func() profile.Authenticator {
 		return codexadapter.NewAuthenticator()
@@ -150,7 +166,7 @@ func reviewAssistedCheckpoint(input *bufio.Reader, stdout, stderr io.Writer, cli
 	if err != nil {
 		return continuation.Checkpoint{}, false, continuation.ErrHistoryUnavailable
 	}
-	fields := mergeHistoryCandidates(captured.Fields, candidates)
+	fields := continuation.MergeHistoryCandidates(captured.Fields, candidates)
 	fields, err = editAssistedCheckpointFields(input, stdout, stderr, fields)
 	if err != nil {
 		return continuation.Checkpoint{}, false, err
@@ -214,19 +230,6 @@ func editAssistedCheckpointFields(input *bufio.Reader, stdout, stderr io.Writer,
 		}
 	}
 	return fields, nil
-}
-
-func mergeHistoryCandidates(base, candidates continuation.CheckpointFields) continuation.CheckpointFields {
-	pairs := [][2]*continuation.Evidence[string]{
-		{&base.Goal, &candidates.Goal}, {&base.CompletedWork, &candidates.CompletedWork},
-		{&base.PendingWork, &candidates.PendingWork}, {&base.Risks, &candidates.Risks}, {&base.NextAction, &candidates.NextAction},
-	}
-	for _, pair := range pairs {
-		if strings.TrimSpace(pair[1].Value) != "" {
-			*pair[0] = *pair[1]
-		}
-	}
-	return base
 }
 
 func parseHandoffArguments(args []string) (string, httpapi.CommandCheckpointRequest, handoffOptions, error) {

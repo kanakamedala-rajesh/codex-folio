@@ -90,6 +90,9 @@ export const copy = {
   analyticsRetentionDetail:
     "13 calendar months by default · Configurable from 30 days to unlimited · Scoped purge is reviewed separately.",
   manageAnalyticsData: "Manage analytics data",
+  checkpointData: "Safe Continuation data",
+  checkpointDataDetail:
+    "Review retained checkpoints, set source-specific retention, export an approved checkpoint, or purge one checkpoint at a time.",
   themeUnavailable: "Appearance changed for this tab; browser storage is unavailable.",
   secondsAgo: "seconds ago",
   minutesAgo: "minutes ago",
@@ -161,6 +164,7 @@ export const handoffCopy = {
   risks: "Risks",
   next: "Next action",
   repositoryFirst: "Repository-first checkpoint",
+  transcriptAssisted: "Transcript-assisted checkpoint",
   revision: "Revision",
   expires: "Expires",
   never: "Never",
@@ -173,9 +177,24 @@ export const handoffCopy = {
   notRecorded: "Not recorded",
   redactFiles: "Redact repository paths in the next revision",
   redactText: "Redact exact text (one value per line)",
-  assistance: "Transcript assistance: Off",
+  assistance: "Transcript assistance",
   assistanceDetail:
-    "Repository-first capture reads no transcript. Separate consented assistance belongs to a later workflow.",
+    "Off by default. For this handoff only, you may allow a bounded read of one Codex thread. Raw transcript, commands, credentials, arbitrary files, and Identity Homes never enter the dashboard.",
+  assistanceConsent: "Allow transcript assistance for this handoff",
+  assistanceConsentDetail:
+    "Consent applies only to the thread ID below and is not remembered. No history is read until you request candidates.",
+  threadId: "Codex thread ID",
+  threadIdPlaceholder: "00000000-0000-0000-0000-000000000000",
+  reviewCandidates: "Review transcript candidates",
+  assistanceUnavailable:
+    "Transcript assistance is unavailable. The repository-first draft remains unchanged.",
+  candidatesReady:
+    "Candidates are transient. Edit or redact them, then review the sanitized preview before approval.",
+  reviewSanitized: "Review sanitized preview",
+  sanitizedReady: "Sanitized preview ready. Approval below persists only this displayed revision.",
+  approveSanitized: "Approve sanitized preview",
+  cancelAssistance: "Cancel transcript assistance",
+  assistanceCancelled: "Transcript assistance cancelled · Repository-first draft restored",
   save: "Save sanitized draft",
   approve: "Approve this revision",
   checkAgain: "Check readiness again",
@@ -188,6 +207,84 @@ export const handoffCopy = {
   boundary:
     "Starts a fresh foreground Codex session in the same working directory. No thread is resumed or copied, and no arbitrary browser command is accepted.",
 } as const;
+
+export const checkpointCopy = {
+  title: "Safe Continuation data",
+  detail:
+    "Checkpoint content stays encrypted at rest. Browser rows expose only safe project labels, state, source, revision, and retention dates.",
+  loading: "Loading checkpoint inventory…",
+  loaded: "Checkpoint inventory loaded.",
+  empty: "No retained checkpoints.",
+  repositoryRetention: "Repository-first retention",
+  assistedRetention: "Transcript-assisted retention",
+  retentionHint: "Use 1 or more whole days, or unlimited.",
+  saveRetention: "Save retention",
+  retentionSaved: "Retention policy saved.",
+  retentionFailed: "Retention or checkpoint action was rejected.",
+  status: "State",
+  source: "Source",
+  created: "Created",
+  expires: "Expires",
+  revision: "Revision",
+  export: "Export",
+  encrypted: "Encrypted .cfolio",
+  plaintext: "Plaintext JSON",
+  passphrase: "Export passphrase",
+  plaintextWarning:
+    "I understand plaintext is not encrypted and may be readable by other software or people with access to the downloaded file.",
+  previewExport: "Preview export",
+  downloadExport: "Download export",
+  cancelExport: "Cancel export",
+  included: "Included",
+  excluded: "Always excluded",
+  exportReady: "Export preview ready. No file has been created.",
+  downloadReady: "Download prepared. Your browser controls the destination and overwrite behavior.",
+  purge: "Purge checkpoint",
+  previewPurge: "Preview purge",
+  purgeWarning:
+    "This removes this exact checkpoint revision after confirmation. It never stops Codex.",
+  purgeConfirmation: "Type PURGE to confirm",
+  applyPurge: "Purge exact revision",
+  cancelPurge: "Cancel purge",
+  purgeReady: "Purge preview ready. Nothing has been removed.",
+  purged: "Checkpoint purged.",
+  never: "Never",
+  unavailable: "Unavailable",
+  refresh: "Refresh inventory",
+} as const;
+
+export const checkpointStateCopy: Record<string, string> = {
+  retained: "Retained",
+  recoverable: "Recoverable",
+  completed: "Completed",
+  expired: "Expired",
+  "start uncertain": "Start uncertain",
+};
+
+export const checkpointSourceCopy: Record<string, string> = {
+  "repository-first": "Repository-first",
+  "transcript-assisted": "Transcript-assisted",
+};
+
+export const checkpointExportFieldCopy: Record<string, string> = {
+  format_version: "Format version",
+  exported_at: "Exported at",
+  checkpoint: "Checkpoint",
+  project_alias: "Project alias",
+  project_basename: "Project basename",
+  approved_fields: "Six approved fields",
+  repository_metadata: "Repository metadata",
+  revision: "Revision",
+  expiry: "Expiry",
+  credentials: "Credentials",
+  identity_homes: "Identity Homes",
+  canonical_repository_paths: "Canonical repository paths",
+  raw_transcripts: "Raw transcripts",
+  raw_diffs: "Raw diffs",
+  commands_and_tool_output: "Commands and tool output",
+  analytics: "Analytics",
+  configuration: "Configuration",
+};
 
 export const analyticsCopy = {
   title: "Analytics",

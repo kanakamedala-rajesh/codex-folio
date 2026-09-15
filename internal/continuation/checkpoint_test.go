@@ -69,6 +69,36 @@ func TestSanitizeTextRedactsWindowsHomeCaseInsensitively(t *testing.T) {
 	}
 }
 
+func TestRedactHistoryIdentityHomePreservesEvidenceMetadata(t *testing.T) {
+	fields := CheckpointFields{
+		Goal:          Evidence[string]{Value: "inspect /external/identity/projects/atlas", Provenance: ProvenanceModelDerived, Completeness: CompletenessPartial},
+		CompletedWork: Evidence[string]{Value: "loaded /external/identity", Provenance: ProvenanceUserConfirmed, Completeness: CompletenessComplete},
+		PendingWork:   Evidence[string]{Value: "check /external/identity/cache"},
+		Risks:         Evidence[string]{Value: "leak /external/identity"},
+		NextAction:    Evidence[string]{Value: "leave /external/identity intact"},
+		Validation: Evidence[[]ValidationEvidence]{Value: []ValidationEvidence{{
+			Command: "test /external/identity/project", Source: "log /external/identity",
+		}}, Provenance: ProvenanceLocalObserved, Completeness: CompletenessPartial},
+	}
+
+	got := RedactHistoryIdentityHome(fields, "/external/identity")
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "/external/identity") {
+		t.Fatalf("redacted candidates contain Identity Home: %s", encoded)
+	}
+	for _, value := range []string{got.Goal.Value, got.CompletedWork.Value, got.PendingWork.Value, got.Risks.Value, got.NextAction.Value, got.Validation.Value[0].Command, got.Validation.Value[0].Source} {
+		if !strings.Contains(value, "[HOME]") {
+			t.Fatalf("candidate was not redacted: %q", value)
+		}
+	}
+	if got.Goal.Provenance != ProvenanceModelDerived || got.Goal.Completeness != CompletenessPartial || got.Validation.Provenance != ProvenanceLocalObserved {
+		t.Fatalf("evidence metadata changed: %#v", got)
+	}
+}
+
 func TestSanitizePathsRejectsControlCharacters(t *testing.T) {
 	for _, path := range []string{"line\nbreak.txt", "tab\tname.txt", "escape\x1bname.txt"} {
 		if _, err := sanitizePaths([]string{path}, nil); !errors.Is(err, ErrCheckpointInvalid) {
@@ -144,6 +174,51 @@ func TestCheckpointRetentionControlsOriginExpiryAndExpiredLifecycle(t *testing.T
 	legacy, err := service.Show(context.Background(), checkpoint.ID)
 	if err != nil || legacy.Status != StatusExpired || repository.saveCalls != before+1 || strings.Contains(repository.saved.Metadata, "private") {
 		t.Fatalf("Show(legacy expired) = %#v, saved %#v, %v", legacy, repository.saved, err)
+	}
+}
+
+func TestCheckpointInventoryExpiresEntriesAndPurgeRequiresCurrentRevision(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	active := Checkpoint{ID: "active", Status: StatusApproved, Project: Project{ID: "project-1", Alias: "Atlas"}, Source: SourceRepositoryFirst, CreatedAt: now.Add(-time.Hour)}
+	expiry := now.Add(-time.Minute)
+	expired := Checkpoint{ID: "expired", Status: StatusCompleted, Project: Project{ID: "project-1", Alias: "Atlas"}, Source: SourceTranscriptAssisted, CreatedAt: now.Add(-48 * time.Hour), ExpiresAt: &expiry}
+	var err error
+	active, activeMetadata, err := prepareCheckpoint(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, expiredMetadata, err := prepareCheckpoint(expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &checkpointRepositoryStub{listed: []CheckpointRecord{
+		{ID: active.ID, ProjectIdentityID: active.Project.ID, Status: active.Status, Metadata: activeMetadata, CreatedAt: active.CreatedAt},
+		{ID: expired.ID, ProjectIdentityID: expired.Project.ID, Status: expired.Status, Metadata: expiredMetadata, CreatedAt: expired.CreatedAt, ExpiresAt: expired.ExpiresAt},
+	}}
+	service, err := NewService(ServiceOptions{Repository: repository, Projects: &projectStub{}, Inspector: &inspectorStub{}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkpoints, err := service.List(context.Background())
+	if err != nil || len(checkpoints) != 2 || checkpoints[0].ID != active.ID || checkpoints[1].Status != StatusExpired {
+		t.Fatalf("List() = %#v, %v", checkpoints, err)
+	}
+	if repository.saved.Status != StatusExpired || repository.saved.Goal != nil || strings.Contains(repository.saved.Metadata, "Atlas") {
+		t.Fatalf("expired inventory entry was not scrubbed: %#v", repository.saved)
+	}
+	repository.loaded = repository.listed[0]
+	if err := service.Purge(context.Background(), active.ID, "stale"); !errors.Is(err, ErrCheckpointRevisionChanged) {
+		t.Fatalf("Purge(stale) error = %v, want ErrCheckpointRevisionChanged", err)
+	}
+	if repository.purgedID != "" {
+		t.Fatalf("stale purge deleted %q", repository.purgedID)
+	}
+	if err := service.Purge(context.Background(), active.ID, active.Revision); err != nil {
+		t.Fatalf("Purge() error = %v", err)
+	}
+	if repository.purgedID != active.ID || repository.purgedRevision != active.Revision {
+		t.Fatalf("purge = %q/%q", repository.purgedID, repository.purgedRevision)
 	}
 }
 
@@ -592,12 +667,15 @@ func (stub *inspectorStub) Inspect(_ context.Context, path string) (RepositoryIn
 }
 
 type checkpointRepositoryStub struct {
-	saved       CheckpointRecord
-	loaded      CheckpointRecord
-	source      SourceLaunch
-	historyHome string
-	saveCalls   int
-	retention   RetentionPolicy
+	saved          CheckpointRecord
+	loaded         CheckpointRecord
+	listed         []CheckpointRecord
+	purgedID       string
+	purgedRevision string
+	source         SourceLaunch
+	historyHome    string
+	saveCalls      int
+	retention      RetentionPolicy
 }
 
 func (stub *checkpointRepositoryStub) SaveCheckpoint(_ context.Context, record CheckpointRecord) error {
@@ -606,8 +684,22 @@ func (stub *checkpointRepositoryStub) SaveCheckpoint(_ context.Context, record C
 	return nil
 }
 
-func (stub *checkpointRepositoryStub) LoadCheckpoint(context.Context, string) (CheckpointRecord, error) {
+func (stub *checkpointRepositoryStub) LoadCheckpoint(_ context.Context, id string) (CheckpointRecord, error) {
+	for _, record := range stub.listed {
+		if record.ID == id {
+			return record, nil
+		}
+	}
 	return stub.loaded, nil
+}
+
+func (stub *checkpointRepositoryStub) ListCheckpoints(context.Context) ([]CheckpointRecord, error) {
+	return append([]CheckpointRecord(nil), stub.listed...), nil
+}
+
+func (stub *checkpointRepositoryStub) PurgeCheckpoint(_ context.Context, id, revision string) error {
+	stub.purgedID, stub.purgedRevision = id, revision
+	return nil
 }
 
 func (stub *checkpointRepositoryStub) LatestSourceLaunch(context.Context, string) (SourceLaunch, error) {
