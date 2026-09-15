@@ -93,6 +93,7 @@ type Options struct {
 	History               *usage.HistoryService
 	Exports               *activity.ExportService
 	Checkpoints           CommandCheckpointService
+	CheckpointHistory     BrowserCheckpointHistory
 	CommandToken          string
 }
 
@@ -124,6 +125,7 @@ type Server struct {
 	historyService        *usage.HistoryService
 	exportService         *activity.ExportService
 	checkpoints           CommandCheckpointService
+	checkpointHistory     BrowserCheckpointHistory
 	commandToken          [sha256.Size]byte
 
 	bootstrapToken     []byte
@@ -202,6 +204,7 @@ func NewServer(options Options) (*Server, error) {
 		historyService:        options.History,
 		exportService:         options.Exports,
 		checkpoints:           options.Checkpoints,
+		checkpointHistory:     options.CheckpointHistory,
 		commandToken:          commandToken,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
@@ -390,6 +393,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 
 	switch request.URL.Path {
+	case CommandDashboardPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandDashboard(response, request)
 	case CommandCheckpointPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -501,6 +509,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.writeMetadata(response, request)
+	case HandoffPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserHandoff(response, request)
 	case SelectionPath:
 		if !server.authorize(response, request) {
 			return
@@ -541,11 +558,46 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		if !server.authorize(response, request) {
 			return
 		}
-		if !isReadMethod(request.Method) {
-			server.writeMethodError(response, http.MethodGet)
+		if request.Method == http.MethodGet {
+			server.getProjects(response, request)
 			return
 		}
-		server.getProjects(response, request)
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		if request.Method != http.MethodPut {
+			server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+			return
+		}
+		server.editProject(response, request)
+	case ProfilesPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserProfiles(response, request)
+	case ConfigurationPacksPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserConfigurationPacks(response, request)
+	case ProfileLifecyclePath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserProfileLifecycle(response, request)
 	case ActivityPath:
 		if !server.authorize(response, request) {
 			return

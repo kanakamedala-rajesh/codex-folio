@@ -1,5 +1,123 @@
 {
   "$defs": {
+    "HandoffFields": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "goal": {"type": "string"}, "completed_work": {"type": "string"},
+        "pending_work": {"type": "string"}, "known_validation": {"type": "string"},
+        "risks": {"type": "string"}, "next_action": {"type": "string"}
+      },
+      "required": ["goal", "completed_work", "pending_work", "known_validation", "risks", "next_action"]
+    },
+    "HandoffFieldEvidence": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"value": {"type": "string"}, "provenance": {"type": "string"}, "completeness": {"type": "string"}},
+      "required": ["value", "provenance", "completeness"]
+    },
+    "HandoffValidationEvidence": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "command": {"type": "string"}, "timestamp": {"type": "string"}, "exit_status": {"type": "integer"},
+        "source": {"type": "string"}, "freshness": {"type": "string"}
+      },
+      "required": ["command", "source", "freshness"]
+    },
+    "HandoffCheckpointFields": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "goal": {"$ref": "#/$defs/HandoffFieldEvidence"}, "completed_work": {"$ref": "#/$defs/HandoffFieldEvidence"},
+        "pending_work": {"$ref": "#/$defs/HandoffFieldEvidence"},
+        "known_validation": {"type": "array", "items": {"$ref": "#/$defs/HandoffValidationEvidence"}},
+        "validation_provenance": {"type": "string"}, "validation_completeness": {"type": "string"},
+        "risks": {"$ref": "#/$defs/HandoffFieldEvidence"}, "next_action": {"$ref": "#/$defs/HandoffFieldEvidence"}
+      },
+      "required": ["goal", "completed_work", "pending_work", "known_validation", "validation_provenance", "validation_completeness", "risks", "next_action"]
+    },
+    "HandoffRepository": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "branch": {"type": "string"}, "head": {"type": "string"},
+        "staged": {"type": "array", "items": {"type": "string"}}, "modified": {"type": "array", "items": {"type": "string"}},
+        "untracked": {"type": "array", "items": {"type": "string"}},
+        "files_changed": {"type": "integer"}, "insertions": {"type": "integer"}, "deletions": {"type": "integer"},
+        "binary_files": {"type": "integer"}, "provenance": {"type": "string"}, "completeness": {"type": "string"}
+      },
+      "required": ["branch", "head", "staged", "modified", "untracked", "files_changed", "insertions", "deletions", "binary_files", "provenance", "completeness"]
+    },
+    "HandoffCheckpointSummary": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "checkpoint_id": {"type": "string"}, "status": {"type": "string"}, "state": {"type": "string"},
+        "source": {"type": "string"}, "project_alias": {"type": "string"}, "project_basename": {"type": "string"},
+        "revision": {"type": "string"}, "created_at": {"type": "string"}, "expires_at": {"type": "string"},
+        "exportable": {"type": "boolean"}, "purgeable": {"type": "boolean"}
+      },
+      "required": ["checkpoint_id", "status", "state", "source", "project_alias", "project_basename", "revision", "created_at", "expires_at", "exportable", "purgeable"]
+    },
+    "HandoffRetentionPolicy": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"repository_first": {"type": "string"}, "transcript_assisted": {"type": "string"}},
+      "required": ["repository_first", "transcript_assisted"]
+    },
+    "HandoffOperationPreview": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string"}, "confirmation": {"type": "string"}, "filename": {"type": "string"},
+        "included_fields": {"type": "array", "items": {"type": "string"}},
+        "excluded_fields": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["kind", "confirmation", "filename", "included_fields", "excluded_fields"]
+    },
+    "HandoffDownload": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"filename": {"type": "string"}, "media_type": {"type": "string"}, "content_base64": {"type": "string"}},
+      "required": ["filename", "media_type", "content_base64"]
+    },
+    "HandoffRequest": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "action": {"type": "string", "enum": ["capture", "show", "edit", "approve", "assist", "preview-assisted", "approve-assisted", "list", "retention", "purge-preview", "purge", "export-preview", "export-encrypted", "export-plaintext"]},
+        "project_id": {"type": "string"}, "target_alias": {"type": "string"}, "checkpoint_id": {"type": "string"},
+        "revision": {"type": "string"}, "preview_revision": {"type": "string"}, "thread_id": {"type": "string"},
+        "history_consent": {"type": "boolean"}, "fields": {"$ref": "#/$defs/HandoffFields"}, "source": {"type": "string"},
+        "setting": {"type": "string"}, "confirmation": {"type": "string"}, "passphrase": {"type": "string"},
+        "plaintext_acknowledgement": {"type": "boolean"},
+        "redact_paths": {"type": "array", "items": {"type": "string"}}, "redact_text": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["action"]
+    },
+    "HandoffResponse": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "checkpoint_id": {"type": "string"}, "status": {"type": "string"}, "revision": {"type": "string"},
+        "source": {"type": "string"}, "project_id": {"type": "string"}, "project_alias": {"type": "string"},
+        "project_basename": {"type": "string"}, "fields": {"$ref": "#/$defs/HandoffCheckpointFields"},
+        "repository": {"$ref": "#/$defs/HandoffRepository"}, "retention": {"type": "string"},
+        "created_at": {"type": "string"}, "expires_at": {"type": "string"}, "size_bytes": {"type": "integer"},
+        "source_profile_id": {"type": "string"}, "source_alias": {"type": "string"}, "source_state": {"type": "string"},
+        "target_profile_id": {"type": "string"}, "target_alias": {"type": "string"}, "target_eligible": {"type": "boolean"},
+        "target_caution": {"type": "string"}, "terminal_command": {"type": "string"}
+      },
+      "required": ["checkpoint_id", "status", "revision", "source", "project_id", "project_alias", "project_basename", "fields", "repository", "retention", "created_at", "expires_at", "size_bytes", "source_profile_id", "source_alias", "source_state", "target_profile_id", "target_alias", "target_eligible", "target_caution", "terminal_command"]
+    },
+    "CheckpointManagementResponse": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "checkpoints": {"type": "array", "items": {"$ref": "#/$defs/HandoffCheckpointSummary"}},
+        "retention_policy": {"$ref": "#/$defs/HandoffRetentionPolicy"}, "operation_preview": {"$ref": "#/$defs/HandoffOperationPreview"},
+        "download": {"$ref": "#/$defs/HandoffDownload"}, "applied": {"type": "boolean"}
+      },
+      "required": []
+    },
+    "HandoffResult": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["handoff", "management"]},
+        "handoff": {"$ref": "#/$defs/HandoffResponse"},
+        "management": {"$ref": "#/$defs/CheckpointManagementResponse"}
+      },
+      "required": ["kind"]
+    },
     "HistoryScope": {
       "type": "object", "additionalProperties": false,
       "properties": {
@@ -237,6 +355,282 @@
       ],
       "type": "object"
     },
+    "ProfileSetupStages": {
+      "additionalProperties": false,
+      "properties": {
+        "discovery": { "type": "boolean" },
+        "home": { "type": "boolean" },
+        "authentication": { "type": "boolean" },
+        "validation": { "type": "boolean" },
+        "selection": { "type": "boolean" }
+      },
+      "required": [
+        "discovery",
+        "home",
+        "authentication",
+        "validation",
+        "selection"
+      ],
+      "type": "object"
+    },
+    "ConfigurationDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["config", "agents", "plugins"], "type": "string" },
+        "content": { "type": "string" }
+      },
+      "required": ["kind", "content"],
+      "type": "object"
+    },
+    "ConfigurationPackSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "state": { "enum": ["draft", "approved", "superseded"], "type": "string" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "version", "state", "digest", "files", "created_at"],
+      "type": "object"
+    },
+    "ConfigurationChange": {
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "enum": ["added", "modified", "removed"], "type": "string" }
+      },
+      "required": ["path", "kind"],
+      "type": "object"
+    },
+    "ConfigurationAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": { "type": "string" },
+        "alias": { "type": "string" },
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      },
+      "required": ["profile_id", "alias", "pack_id", "version", "digest"],
+      "type": "object"
+    },
+    "ConfigurationProjectionPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "assignment": { "$ref": "#/$defs/ConfigurationAssignment" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" },
+        "conflicts": { "items": { "$ref": "#/$defs/ConfigurationChange" }, "type": "array" }
+      },
+      "required": ["assignment", "digest", "files", "conflicts"],
+      "type": "object"
+    },
+    "ConfigurationProjectionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" },
+        "files": { "items": { "type": "string" }, "type": "array" }
+      },
+      "required": ["pack_id", "version", "digest", "files"],
+      "type": "object"
+    },
+    "ConfigurationPromotionPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_alias": { "type": "string" },
+        "pack_id": { "type": "string" },
+        "from_version": { "type": "string" },
+        "to_version": { "type": "string" },
+        "changes": { "items": { "$ref": "#/$defs/ConfigurationChange" }, "type": "array" },
+        "digest": { "type": "string" }
+      },
+      "required": ["profile_alias", "pack_id", "from_version", "to_version", "changes", "digest"],
+      "type": "object"
+    },
+    "ConfigurationPackRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["create", "approve", "assign", "preview", "apply", "promotion-preview", "promote"], "type": "string" },
+        "pack_id": { "type": "string" },
+        "version": { "type": "string" },
+        "alias": { "type": "string" },
+        "documents": { "items": { "$ref": "#/$defs/ConfigurationDocument" }, "type": "array" },
+        "reviewed": { "type": "boolean" },
+        "expected_digest": { "type": "string" }
+      },
+      "required": ["action"],
+      "type": "object"
+    },
+    "ConfigurationPackResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "packs": { "items": { "$ref": "#/$defs/ConfigurationPackSummary" }, "type": "array" },
+        "pack": { "$ref": "#/$defs/ConfigurationPackSummary" },
+        "assignment": { "$ref": "#/$defs/ConfigurationAssignment" },
+        "plan": { "$ref": "#/$defs/ConfigurationProjectionPlan" },
+        "projection": { "$ref": "#/$defs/ConfigurationProjectionResult" },
+        "promotion_preview": { "$ref": "#/$defs/ConfigurationPromotionPreview" }
+      },
+      "required": ["packs"],
+      "type": "object"
+    },
+    "ProfileSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": { "type": "string" },
+        "alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "login_identity": { "type": "string" },
+        "workspace": { "type": "string" },
+        "status": {
+          "enum": ["pending", "ready", "needs_reauthentication", "unavailable"],
+          "type": "string"
+        },
+        "identity_home_mode": {
+          "enum": ["managed", "referenced"],
+          "type": "string"
+        },
+        "authentication_method": {
+          "enum": ["", "browser", "device-code", "reused"],
+          "type": "string"
+        },
+        "selected": { "type": "boolean" },
+        "configuration_pack": { "type": "string" },
+        "last_successful_refresh": { "type": "string" }
+      },
+      "required": [
+        "profile_id",
+        "alias",
+        "display_name",
+        "login_identity",
+        "workspace",
+        "status",
+        "identity_home_mode",
+        "authentication_method",
+        "selected",
+        "configuration_pack",
+        "last_successful_refresh"
+      ],
+      "type": "object"
+    },
+    "ProfilesResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProfileSummary" }
+        },
+        "updated": { "$ref": "#/$defs/ProfileSummary" }
+      },
+      "required": ["profiles"],
+      "type": "object"
+    },
+    "ProfileLifecycleRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "$ref": "#/$defs/ProfileSummary" },
+        "action": {
+          "enum": ["quarantined", "deregistered", "restored", "purged"],
+          "type": "string"
+        },
+        "state": { "enum": ["", "prepared", "quarantined"], "type": "string" },
+        "quarantined_at": { "type": "string" },
+        "purge_after": { "type": "string" },
+        "remote_identity_affected": { "type": "boolean" }
+      },
+      "required": [
+        "profile",
+        "action",
+        "state",
+        "quarantined_at",
+        "purge_after",
+        "remote_identity_affected"
+      ],
+      "type": "object"
+    },
+    "ProfileLifecycleListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "quarantined": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProfileLifecycleRecord" }
+        }
+      },
+      "required": ["quarantined"],
+      "type": "object"
+    },
+    "ProfileLifecycleRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["preview", "remove", "restore", "purge"], "type": "string" },
+        "alias": { "type": "string" },
+        "replacement": { "type": "string" },
+        "confirmation": { "type": "string" }
+      },
+      "required": ["action", "alias"],
+      "type": "object"
+    },
+    "ProfileEditRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": { "type": "string" },
+        "new_alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "login_identity": { "type": "string" },
+        "workspace": { "type": "string" }
+      },
+      "required": ["alias"],
+      "type": "object"
+    },
+    "ProfileAuthenticationRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": ["add", "prepare", "reauthenticate"],
+          "type": "string"
+        },
+        "alias": { "type": "string" },
+        "display_name": { "type": "string" },
+        "codex_override": { "type": "string" },
+        "identity_home_mode": {
+          "enum": ["managed", "referenced"],
+          "type": "string"
+        },
+        "referenced_home_path": { "type": "string" },
+        "auth_method": { "enum": ["browser", "device-code"], "type": "string" }
+      },
+      "required": ["action", "alias", "identity_home_mode", "auth_method"],
+      "type": "object"
+    },
+    "ProfileAuthenticationResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "$ref": "#/$defs/ProfileSummary" },
+        "stages": { "$ref": "#/$defs/ProfileSetupStages" },
+        "codex_found": { "type": "boolean" },
+        "codex_version": { "type": "string" },
+        "outcome": {
+          "enum": ["pending", "ready", "terminal_required"],
+          "type": "string"
+        },
+        "terminal_command": { "type": "string" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "profile",
+        "stages",
+        "codex_found",
+        "codex_version",
+        "outcome",
+        "terminal_command",
+        "warnings"
+      ],
+      "type": "object"
+    },
     "ProjectIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -247,6 +641,15 @@
         "updated_at": {"type": "string"}
       },
       "required": ["project_id", "alias", "basename", "created_at", "updated_at"],
+      "type": "object"
+    },
+    "ProjectEditRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string"},
+        "alias": {"type": "string"}
+      },
+      "required": ["project_id", "alias"],
       "type": "object"
     },
     "ProjectsResponse": {
@@ -419,9 +822,10 @@
         "profiles": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}},
         "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
         "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
-        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
+        "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}},
+        "recent": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}}
       },
-      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity"],
+      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity", "recent"],
       "type": "object"
     }
   },
@@ -479,6 +883,10 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityResponse"}}},
             "description": "Returns the safe filtered Managed Launch and Observed Session timeline."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
           }
         }
       }
@@ -510,6 +918,22 @@
         }
       }
     },
+    "/api/v1/handoff": {
+      "post": {
+        "operationId": "manageHandoff",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HandoffRequest"}}}, "required": true},
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/HandoffResult"}}},
+            "description": "Captures, reviews, edits, or approves one repository-first continuation checkpoint."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
     "/api/v1/meta": {
       "get": {
         "operationId": "getMetadata",
@@ -534,6 +958,192 @@
           "200": {
             "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
             "description": "Returns safe app-local Project Identity projections without canonical paths."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "put": {
+        "operationId": "editProject",
+        "requestBody": {
+          "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectEditRequest"}}},
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/ProjectsResponse"}}},
+            "description": "Edits a safe app-local Project Alias without exposing or changing its canonical path."
+          },
+          "default": {
+            "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
+    "/api/v1/configuration-packs": {
+      "get": {
+        "operationId": "getConfigurationPacks",
+        "responses": {
+          "200": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackResponse" } } },
+            "description": "Returns immutable configuration pack version metadata without document content or Identity Home details."
+          },
+          "default": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/UsageErrorResponse" } } },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "manageConfigurationPack",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackRequest" } } },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/ConfigurationPackResponse" } } },
+            "description": "Creates and approves bounded declarative drafts, assigns approved versions, previews and explicitly applies projections, or previews and explicitly promotes local overrides."
+          },
+          "default": {
+            "content": { "application/json": { "schema": { "$ref": "#/$defs/UsageErrorResponse" } } },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "getProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfilesResponse" }
+              }
+            },
+            "description": "Returns browser-safe Identity Profile inventory without Identity Home internals or credentials."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "put": {
+        "operationId": "editProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileEditRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfilesResponse" }
+              }
+            },
+            "description": "Edits safe local Identity Profile metadata."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "authenticateProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileAuthenticationRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileAuthenticationResponse" }
+              }
+            },
+            "description": "Prepares or completes Codex-owned authentication without returning raw authentication output."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      }
+    },
+    "/api/v1/profile-lifecycle": {
+      "get": {
+        "operationId": "listProfileQuarantine",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileLifecycleListResponse" }
+              }
+            },
+            "description": "Returns browser-safe managed-home quarantine records with recovery expiry."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
+          }
+        }
+      },
+      "post": {
+        "operationId": "manageProfileLifecycle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/$defs/ProfileLifecycleRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/ProfileLifecycleRecord" }
+              }
+            },
+            "description": "Previews or applies one server-confirmed local Identity Profile lifecycle action."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/$defs/UsageErrorResponse" }
+              }
+            },
+            "description": "Returns a stable redacted error code."
           }
         }
       }

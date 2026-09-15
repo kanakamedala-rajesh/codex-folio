@@ -114,15 +114,61 @@ func TestConfigurationPackStoreKeepsImmutableVersionsAndProfileLocalOverrides(t 
 	}
 }
 
+func TestConfigurationPackStoreListsVersionMetadataWithoutLosingImmutableHistory(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	ctx := context.Background()
+	for _, item := range []struct {
+		id, version string
+	}{
+		{id: "shared", version: "1"},
+		{id: "shared", version: "2"},
+		{id: "team", version: "1"},
+	} {
+		pack, err := configpack.NewDraft(item.id, item.version, map[string]string{"config.toml": "model = \"gpt-5\"\n"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stateStore.CreateConfigurationPack(ctx, pack); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := stateStore.ApproveConfigurationPack(ctx, "shared", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	packs, err := stateStore.ListConfigurationPacks(ctx)
+	if err != nil {
+		t.Fatalf("ListConfigurationPacks() error = %v", err)
+	}
+	if len(packs) != 3 {
+		t.Fatalf("ListConfigurationPacks() = %#v, want all three immutable versions", packs)
+	}
+	if packs[0].ID != "shared" || packs[0].Version != "1" || packs[0].State != configpack.StateApproved || packs[1].Version != "2" || packs[2].ID != "team" {
+		t.Fatalf("ListConfigurationPacks() = %#v, want stable id/version order and state", packs)
+	}
+}
+
 type blockingProjector struct {
 	entered chan struct{}
 	release chan struct{}
+}
+
+func (projector blockingProjector) Preview(_ context.Context, _ string, files map[string]string) (configpack.ProjectionPlan, error) {
+	return configpack.ProjectionPlan{Digest: configpack.DigestFiles(files), Files: []string{"config/base.toml"}, Conflicts: []configpack.Change{}}, nil
 }
 
 func (projector blockingProjector) Project(_ context.Context, _ string, files map[string]string) (configpack.ProjectionResult, error) {
 	close(projector.entered)
 	<-projector.release
 	return configpack.ProjectionResult{Digest: configpack.DigestFiles(files)}, nil
+}
+
+func (projector blockingProjector) ProjectReviewed(ctx context.Context, home string, files map[string]string, _ []configpack.Change) (configpack.ProjectionResult, error) {
+	return projector.Project(ctx, home, files)
 }
 
 func TestConfigurationProjectionExcludesConcurrentLaunchPreparation(t *testing.T) {

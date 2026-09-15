@@ -202,7 +202,11 @@ func TestRetentionSourceScopeAndProvenanceStayDistinct(t *testing.T) {
 		}
 	}
 	scope.From, scope.To = "2025-07-01T00:00:00Z", "2025-07-02T00:00:00Z"
-	if _, err := state.PurgeAnalytics(ctx, scope, scope.Confirmation()); err != nil {
+	preview, err = state.PurgeAnalytics(ctx, scope, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PurgeAnalytics(ctx, scope, preview.Confirmation); err != nil {
 		t.Fatal(err)
 	}
 	if after, err := state.ListUsageAggregates(ctx, scope); err != nil || len(after) != 0 {

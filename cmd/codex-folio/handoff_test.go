@@ -529,7 +529,16 @@ func TestParseHandoffRequiresInteractiveCaptureWithoutCodexArguments(t *testing.
 	if err != nil || target != "Personal" || capture.Path != "/repo" || capture.Goal != "continue" || options.codexBin != "/opt/codex" || options.historyThreadID != threadID || options.stateRoot == nil || *options.stateRoot != "/state" {
 		t.Fatalf("parsed handoff = %q/%#v/%#v, %v", target, capture, options, err)
 	}
+	target, capture, options, err = parseHandoffArguments([]string{"Work", "--checkpoint", "checkpoint-1", "--revision", "revision-2", "--state-root=/state"})
+	if err != nil || target != "Work" || capture.Action != "" || options.checkpointID != "checkpoint-1" || options.revision != "revision-2" {
+		t.Fatalf("parsed approved handoff = %q/%#v/%#v, %v", target, capture, options, err)
+	}
 	for _, args := range [][]string{{}, {"Personal", "--non-interactive"}, {"Personal", "--json"}, {"Personal", "--codex-bin="}, {"Personal", "--history="}, {"Personal", "--history", "not-a-thread"}, {"Personal", "--history", threadID, "--history", threadID}, {"Personal", "--", "resume", "thread"}} {
+		if _, _, _, err := parseHandoffArguments(args); err == nil {
+			t.Fatalf("parseHandoffArguments(%q) error = nil", args)
+		}
+	}
+	for _, args := range [][]string{{"Work", "--checkpoint", "checkpoint-1"}, {"Work", "--revision", "revision-2"}, {"Work", "/repo", "--checkpoint", "checkpoint-1", "--revision", "revision-2"}, {"Work", "--checkpoint", "checkpoint-1", "--revision", "revision-2", "--goal", "changed"}} {
 		if _, _, _, err := parseHandoffArguments(args); err == nil {
 			t.Fatalf("parseHandoffArguments(%q) error = nil", args)
 		}

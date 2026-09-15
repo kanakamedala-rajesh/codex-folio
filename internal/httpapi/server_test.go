@@ -264,6 +264,15 @@ func (repository *registryRepository) EditProfile(_ context.Context, alias strin
 		if edits.Alias != nil {
 			repository.profiles[index].Alias = *edits.Alias
 		}
+		if edits.DisplayName != nil {
+			repository.profiles[index].DisplayName = *edits.DisplayName
+		}
+		if edits.Email != nil {
+			repository.profiles[index].Email = *edits.Email
+		}
+		if edits.Workspace != nil {
+			repository.profiles[index].Workspace = *edits.Workspace
+		}
 		return repository.profiles[index], nil
 	}
 	return profile.IdentityProfile{}, profile.ErrNotFound
@@ -645,4 +654,38 @@ func readBodyBytes(t *testing.T, response *http.Response) []byte {
 
 func serverPort(server *Server) string {
 	return strings.TrimPrefix(server.Address(), "127.0.0.1:")
+}
+
+func TestCommandDashboardReentryRequiresCommandAuthorization(t *testing.T) {
+	server, _, _ := startTestServer(t, Options{CommandToken: "dashboard-test-command"})
+	client := testClient(t)
+	old := mustBootstrapToken(t, server.BootstrapURL())
+	response, err := doRequest(client, http.MethodPost, server.Origin()+"/api/v1/command/dashboard", server.Address(), server.Origin(), nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertErrorResponse(t, response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid, "dashboard-test-command")
+	command := NewCommandClient(server.Origin(), "dashboard-test-command", nil)
+	link, err := command.Dashboard(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := mustBootstrapToken(t, link)
+	if token == old {
+		t.Fatal("reentry reused the prior bootstrap")
+	}
+	body, _ := json.Marshal(BootstrapRequest{BootstrapToken: token})
+	response, err = doRequest(client, http.MethodPost, server.Origin()+BootstrapPath, server.Address(), server.Origin(), body, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("reentry exchange: %d", response.StatusCode)
+	}
+	response.Body.Close()
+	response, err = doRequest(client, http.MethodPost, server.Origin()+BootstrapPath, server.Address(), server.Origin(), body, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertErrorResponse(t, response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid, token)
 }

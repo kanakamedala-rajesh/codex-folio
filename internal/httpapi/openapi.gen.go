@@ -14,19 +14,92 @@ import (
 )
 
 const (
-	APIVersion           = "v1"
-	ActivityPath         = "/api/v1/activity"
-	AnalyticsPath        = "/api/v1/analytics"
-	HistoryPath          = "/api/v1/analytics/history"
-	ContractVersion      = "0.0.1-alpha"
-	ContractSourceSHA256 = "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580"
-	BootstrapPath        = "/api/v1/bootstrap"
-	MetadataPath         = "/api/v1/meta"
-	ProjectsPath         = "/api/v1/projects"
-	SelectionPath        = "/api/v1/selection"
-	UsageLatestPath      = "/api/v1/usage/latest"
-	UsageRefreshPath     = "/api/v1/usage/refresh"
+	APIVersion             = "v1"
+	ActivityPath           = "/api/v1/activity"
+	AnalyticsPath          = "/api/v1/analytics"
+	HistoryPath            = "/api/v1/analytics/history"
+	HandoffPath            = "/api/v1/handoff"
+	ContractVersion        = "0.0.1-alpha"
+	ContractSourceSHA256   = "e8e9b907f4be8e00878d7ad33fc9b89e56e1baac46c89d08e449d39b833c7abf"
+	BootstrapPath          = "/api/v1/bootstrap"
+	ConfigurationPacksPath = "/api/v1/configuration-packs"
+	MetadataPath           = "/api/v1/meta"
+	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
+	ProfilesPath           = "/api/v1/profiles"
+	ProjectsPath           = "/api/v1/projects"
+	SelectionPath          = "/api/v1/selection"
+	UsageLatestPath        = "/api/v1/usage/latest"
+	UsageRefreshPath       = "/api/v1/usage/refresh"
 )
+
+type ConfigurationDocument struct {
+	Kind    string `json:"kind"`
+	Content string `json:"content"`
+}
+
+type ConfigurationPackSummary struct {
+	Id        string   `json:"id"`
+	Version   string   `json:"version"`
+	State     string   `json:"state"`
+	Digest    string   `json:"digest"`
+	Files     []string `json:"files"`
+	CreatedAt string   `json:"created_at"`
+}
+
+type ConfigurationChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type ConfigurationAssignment struct {
+	ProfileId string `json:"profile_id"`
+	Alias     string `json:"alias"`
+	PackId    string `json:"pack_id"`
+	Version   string `json:"version"`
+	Digest    string `json:"digest"`
+}
+
+type ConfigurationProjectionPlan struct {
+	Assignment ConfigurationAssignment `json:"assignment"`
+	Digest     string                  `json:"digest"`
+	Files      []string                `json:"files"`
+	Conflicts  []ConfigurationChange   `json:"conflicts"`
+}
+
+type ConfigurationProjectionResult struct {
+	PackId  string   `json:"pack_id"`
+	Version string   `json:"version"`
+	Digest  string   `json:"digest"`
+	Files   []string `json:"files"`
+}
+
+type ConfigurationPromotionPreview struct {
+	ProfileAlias string                `json:"profile_alias"`
+	PackId       string                `json:"pack_id"`
+	FromVersion  string                `json:"from_version"`
+	ToVersion    string                `json:"to_version"`
+	Changes      []ConfigurationChange `json:"changes"`
+	Digest       string                `json:"digest"`
+}
+
+type ConfigurationPackRequest struct {
+	Action         string                   `json:"action"`
+	PackId         *string                  `json:"pack_id,omitempty"`
+	Version        *string                  `json:"version,omitempty"`
+	Alias          *string                  `json:"alias,omitempty"`
+	Documents      *[]ConfigurationDocument `json:"documents,omitempty"`
+	Reviewed       *bool                    `json:"reviewed,omitempty"`
+	ExpectedDigest *string                  `json:"expected_digest,omitempty"`
+}
+
+type ConfigurationPackResponse struct {
+	Packs            []ConfigurationPackSummary     `json:"packs"`
+	Pack             *ConfigurationPackSummary      `json:"pack,omitempty"`
+	Assignment       *ConfigurationAssignment       `json:"assignment,omitempty"`
+	Plan             *ConfigurationProjectionPlan   `json:"plan,omitempty"`
+	Projection       *ConfigurationProjectionResult `json:"projection,omitempty"`
+	PromotionPreview *ConfigurationPromotionPreview `json:"promotion_preview,omitempty"`
+}
 
 type HistoryScope struct {
 	ProfileId string   `json:"profile_id"`
@@ -219,6 +292,144 @@ type ActivityCorrelation struct {
 	Confidence      *string `json:"confidence,omitempty"`
 }
 
+type HandoffFields struct {
+	Goal            string `json:"goal"`
+	CompletedWork   string `json:"completed_work"`
+	PendingWork     string `json:"pending_work"`
+	KnownValidation string `json:"known_validation"`
+	Risks           string `json:"risks"`
+	NextAction      string `json:"next_action"`
+}
+
+type HandoffFieldEvidence struct {
+	Value        string `json:"value"`
+	Provenance   string `json:"provenance"`
+	Completeness string `json:"completeness"`
+}
+
+type HandoffValidationEvidence struct {
+	Command    string  `json:"command"`
+	Timestamp  *string `json:"timestamp,omitempty"`
+	ExitStatus *int64  `json:"exit_status,omitempty"`
+	Source     string  `json:"source"`
+	Freshness  string  `json:"freshness"`
+}
+
+type HandoffCheckpointFields struct {
+	Goal                   HandoffFieldEvidence        `json:"goal"`
+	CompletedWork          HandoffFieldEvidence        `json:"completed_work"`
+	PendingWork            HandoffFieldEvidence        `json:"pending_work"`
+	KnownValidation        []HandoffValidationEvidence `json:"known_validation"`
+	ValidationProvenance   string                      `json:"validation_provenance"`
+	ValidationCompleteness string                      `json:"validation_completeness"`
+	Risks                  HandoffFieldEvidence        `json:"risks"`
+	NextAction             HandoffFieldEvidence        `json:"next_action"`
+}
+
+type HandoffRepository struct {
+	Branch       string   `json:"branch"`
+	Head         string   `json:"head"`
+	Staged       []string `json:"staged"`
+	Modified     []string `json:"modified"`
+	Untracked    []string `json:"untracked"`
+	FilesChanged int64    `json:"files_changed"`
+	Insertions   int64    `json:"insertions"`
+	Deletions    int64    `json:"deletions"`
+	BinaryFiles  int64    `json:"binary_files"`
+	Provenance   string   `json:"provenance"`
+	Completeness string   `json:"completeness"`
+}
+
+type HandoffCheckpointSummary struct {
+	CheckpointId    string `json:"checkpoint_id"`
+	Status          string `json:"status"`
+	State           string `json:"state"`
+	Source          string `json:"source"`
+	ProjectAlias    string `json:"project_alias"`
+	ProjectBasename string `json:"project_basename"`
+	Revision        string `json:"revision"`
+	CreatedAt       string `json:"created_at"`
+	ExpiresAt       string `json:"expires_at"`
+	Exportable      bool   `json:"exportable"`
+	Purgeable       bool   `json:"purgeable"`
+}
+
+type HandoffRetentionPolicy struct {
+	RepositoryFirst    string `json:"repository_first"`
+	TranscriptAssisted string `json:"transcript_assisted"`
+}
+
+type HandoffOperationPreview struct {
+	Kind           string   `json:"kind"`
+	Confirmation   string   `json:"confirmation"`
+	Filename       string   `json:"filename"`
+	IncludedFields []string `json:"included_fields"`
+	ExcludedFields []string `json:"excluded_fields"`
+}
+
+type HandoffDownload struct {
+	Filename      string `json:"filename"`
+	MediaType     string `json:"media_type"`
+	ContentBase64 string `json:"content_base64"`
+}
+
+type HandoffResponse struct {
+	CheckpointId    string                  `json:"checkpoint_id"`
+	Status          string                  `json:"status"`
+	Revision        string                  `json:"revision"`
+	Source          string                  `json:"source"`
+	ProjectId       string                  `json:"project_id"`
+	ProjectAlias    string                  `json:"project_alias"`
+	ProjectBasename string                  `json:"project_basename"`
+	Fields          HandoffCheckpointFields `json:"fields"`
+	Repository      HandoffRepository       `json:"repository"`
+	Retention       string                  `json:"retention"`
+	CreatedAt       string                  `json:"created_at"`
+	ExpiresAt       string                  `json:"expires_at"`
+	SizeBytes       int64                   `json:"size_bytes"`
+	SourceProfileId string                  `json:"source_profile_id"`
+	SourceAlias     string                  `json:"source_alias"`
+	SourceState     string                  `json:"source_state"`
+	TargetProfileId string                  `json:"target_profile_id"`
+	TargetAlias     string                  `json:"target_alias"`
+	TargetEligible  bool                    `json:"target_eligible"`
+	TargetCaution   string                  `json:"target_caution"`
+	TerminalCommand string                  `json:"terminal_command"`
+}
+
+type CheckpointManagementResponse struct {
+	Checkpoints      *[]HandoffCheckpointSummary `json:"checkpoints,omitempty"`
+	RetentionPolicy  *HandoffRetentionPolicy     `json:"retention_policy,omitempty"`
+	OperationPreview *HandoffOperationPreview    `json:"operation_preview,omitempty"`
+	Download         *HandoffDownload            `json:"download,omitempty"`
+	Applied          *bool                       `json:"applied,omitempty"`
+}
+
+type HandoffRequest struct {
+	Action                   string         `json:"action"`
+	ProjectId                *string        `json:"project_id,omitempty"`
+	TargetAlias              *string        `json:"target_alias,omitempty"`
+	CheckpointId             *string        `json:"checkpoint_id,omitempty"`
+	Revision                 *string        `json:"revision,omitempty"`
+	PreviewRevision          *string        `json:"preview_revision,omitempty"`
+	ThreadId                 *string        `json:"thread_id,omitempty"`
+	HistoryConsent           *bool          `json:"history_consent,omitempty"`
+	Fields                   *HandoffFields `json:"fields,omitempty"`
+	Source                   *string        `json:"source,omitempty"`
+	Setting                  *string        `json:"setting,omitempty"`
+	Confirmation             *string        `json:"confirmation,omitempty"`
+	Passphrase               *string        `json:"passphrase,omitempty"`
+	PlaintextAcknowledgement *bool          `json:"plaintext_acknowledgement,omitempty"`
+	RedactPaths              *[]string      `json:"redact_paths,omitempty"`
+	RedactText               *[]string      `json:"redact_text,omitempty"`
+}
+
+type HandoffResult struct {
+	Kind       string                        `json:"kind"`
+	Handoff    *HandoffResponse              `json:"handoff,omitempty"`
+	Management *CheckpointManagementResponse `json:"management,omitempty"`
+}
+
 type ActivityRecord struct {
 	RecordType                 string  `json:"record_type"`
 	Id                         string  `json:"id"`
@@ -257,6 +468,7 @@ type AnalyticsResponse struct {
 	Aggregates           []UsageAggregate        `json:"aggregates"`
 	Ambiguities          []UsageMetricAmbiguity  `json:"ambiguities"`
 	Activity             []ActivityRecord        `json:"activity"`
+	Recent               []UsageSnapshotResponse `json:"recent"`
 }
 
 type BootstrapRequest struct {
@@ -273,12 +485,92 @@ type MetadataResponse struct {
 	Product         string `json:"product"`
 }
 
+type ProfileSetupStages struct {
+	Discovery      bool `json:"discovery"`
+	Home           bool `json:"home"`
+	Authentication bool `json:"authentication"`
+	Validation     bool `json:"validation"`
+	Selection      bool `json:"selection"`
+}
+
+type ProfileSummary struct {
+	ProfileId             string `json:"profile_id"`
+	Alias                 string `json:"alias"`
+	DisplayName           string `json:"display_name"`
+	LoginIdentity         string `json:"login_identity"`
+	Workspace             string `json:"workspace"`
+	Status                string `json:"status"`
+	IdentityHomeMode      string `json:"identity_home_mode"`
+	AuthenticationMethod  string `json:"authentication_method"`
+	Selected              bool   `json:"selected"`
+	ConfigurationPack     string `json:"configuration_pack"`
+	LastSuccessfulRefresh string `json:"last_successful_refresh"`
+}
+
+type ProfilesResponse struct {
+	Profiles []ProfileSummary `json:"profiles"`
+	Updated  *ProfileSummary  `json:"updated,omitempty"`
+}
+
+type ProfileEditRequest struct {
+	Alias         string  `json:"alias"`
+	NewAlias      *string `json:"new_alias,omitempty"`
+	DisplayName   *string `json:"display_name,omitempty"`
+	LoginIdentity *string `json:"login_identity,omitempty"`
+	Workspace     *string `json:"workspace,omitempty"`
+}
+
+type ProfileAuthenticationRequest struct {
+	Action             string  `json:"action"`
+	Alias              string  `json:"alias"`
+	DisplayName        *string `json:"display_name,omitempty"`
+	CodexOverride      *string `json:"codex_override,omitempty"`
+	IdentityHomeMode   string  `json:"identity_home_mode"`
+	ReferencedHomePath *string `json:"referenced_home_path,omitempty"`
+	AuthMethod         string  `json:"auth_method"`
+}
+
+type ProfileAuthenticationResponse struct {
+	Profile         ProfileSummary     `json:"profile"`
+	Stages          ProfileSetupStages `json:"stages"`
+	CodexFound      bool               `json:"codex_found"`
+	CodexVersion    string             `json:"codex_version"`
+	Outcome         string             `json:"outcome"`
+	TerminalCommand string             `json:"terminal_command"`
+	Warnings        []string           `json:"warnings"`
+}
+
+type ProfileLifecycleRecord struct {
+	Profile                ProfileSummary `json:"profile"`
+	Action                 string         `json:"action"`
+	State                  string         `json:"state"`
+	QuarantinedAt          string         `json:"quarantined_at"`
+	PurgeAfter             string         `json:"purge_after"`
+	RemoteIdentityAffected bool           `json:"remote_identity_affected"`
+}
+
+type ProfileLifecycleListResponse struct {
+	Quarantined []ProfileLifecycleRecord `json:"quarantined"`
+}
+
+type ProfileLifecycleRequest struct {
+	Action       string  `json:"action"`
+	Alias        string  `json:"alias"`
+	Replacement  *string `json:"replacement,omitempty"`
+	Confirmation *string `json:"confirmation,omitempty"`
+}
+
 type ProjectIdentity struct {
 	ProjectId string `json:"project_id"`
 	Alias     string `json:"alias"`
 	Basename  string `json:"basename"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+type ProjectEditRequest struct {
+	ProjectId string `json:"project_id"`
+	Alias     string `json:"alias"`
 }
 
 type ProjectsResponse struct {
@@ -400,6 +692,65 @@ func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryR
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+HistoryPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) GetConfigurationPacks(ctx context.Context) (ConfigurationPackResponse, *http.Response, error) {
+	var result ConfigurationPackResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ConfigurationPacksPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ManageConfigurationPack(ctx context.Context, input ConfigurationPackRequest) (ConfigurationPackResponse, *http.Response, error) {
+	var result ConfigurationPackResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ConfigurationPacksPath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}
@@ -582,6 +933,188 @@ func (client *Client) GetProjects(ctx context.Context) (ProjectsResponse, *http.
 		return result, response, err
 	}
 	return result, response, nil
+}
+
+func (client *Client) EditProject(ctx context.Context, input ProjectEditRequest) (ProjectsResponse, *http.Response, error) {
+	var result ProjectsResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+ProjectsPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) GetProfiles(ctx context.Context) (ProfilesResponse, *http.Response, error) {
+	var result ProfilesResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfilesPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) EditProfile(ctx context.Context, input ProfileEditRequest) (ProfilesResponse, *http.Response, error) {
+	var result ProfilesResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+ProfilesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) AuthenticateProfile(ctx context.Context, input ProfileAuthenticationRequest) (ProfileAuthenticationResponse, *http.Response, error) {
+	var result ProfileAuthenticationResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfilesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ListProfileQuarantine(ctx context.Context) (ProfileLifecycleListResponse, *http.Response, error) {
+	var result ProfileLifecycleListResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ProfileLifecyclePath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ManageProfileLifecycle(ctx context.Context, input ProfileLifecycleRequest) (ProfileLifecycleRecord, *http.Response, error) {
+	var result ProfileLifecycleRecord
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ProfileLifecyclePath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) GetSelection(ctx context.Context) (SelectionResponse, *http.Response, error) {

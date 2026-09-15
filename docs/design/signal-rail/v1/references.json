@@ -1,0 +1,150 @@
+{
+  "version": "SR-v1",
+  "status": "Accepted by user on 2026-09-11",
+  "screens": [
+    {
+      "id": "overview",
+      "title": "You can continue working",
+      "destination": "overview"
+    },
+    {
+      "id": "profiles",
+      "title": "Profiles",
+      "destination": "profiles"
+    },
+    {
+      "id": "onboarding",
+      "title": "Finish setting up Research",
+      "destination": "profiles"
+    },
+    {
+      "id": "sessions",
+      "title": "Sessions",
+      "destination": "sessions"
+    },
+    {
+      "id": "session-detail",
+      "title": "Managed Launch \u00b7 Personal Pro",
+      "destination": "sessions"
+    },
+    {
+      "id": "capacity",
+      "title": "Analytics",
+      "destination": "analytics"
+    },
+    {
+      "id": "compare",
+      "title": "Compare capacity",
+      "destination": "analytics"
+    },
+    {
+      "id": "alerts",
+      "title": "Alerts",
+      "destination": "alerts"
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "destination": "settings"
+    },
+    {
+      "id": "handoff",
+      "title": "Prepare Handoff",
+      "destination": "overview"
+    },
+    {
+      "id": "handoff-ready",
+      "title": "Review Safe Continuation",
+      "destination": "overview"
+    },
+    {
+      "id": "empty",
+      "title": "Add your first Identity Profile",
+      "destination": "overview"
+    },
+    {
+      "id": "stale",
+      "title": "Refresh before choosing",
+      "destination": "overview"
+    },
+    {
+      "id": "reauth",
+      "title": "Reauthenticate Research",
+      "destination": "profiles"
+    },
+    {
+      "id": "offline",
+      "title": "Provider is unreachable",
+      "destination": "overview"
+    },
+    {
+      "id": "recovery",
+      "title": "Local data needs recovery",
+      "destination": "settings"
+    },
+    {
+      "id": "unavailable",
+      "title": "Capacity is unavailable",
+      "destination": "overview"
+    },
+    {
+      "id": "partial",
+      "title": "Some capacity is unavailable",
+      "destination": "overview"
+    },
+    {
+      "id": "contradictory",
+      "title": "Capacity evidence conflicts",
+      "destination": "overview"
+    },
+    {
+      "id": "expired",
+      "title": "Relaunch CodexFolio",
+      "destination": "overview"
+    },
+    {
+      "id": "locked",
+      "title": "Unlock for this user session",
+      "destination": "settings"
+    },
+    {
+      "id": "running",
+      "title": "Your running launch is unchanged",
+      "destination": "overview"
+    },
+    {
+      "id": "refresh",
+      "title": "Refreshing capacity",
+      "destination": "overview"
+    },
+    {
+      "id": "launch",
+      "title": "Launch prepared in your terminal",
+      "destination": "overview"
+    },
+    {
+      "id": "removal",
+      "title": "Review local removal",
+      "destination": "profiles"
+    },
+    {
+      "id": "export",
+      "title": "Preview before anything leaves",
+      "destination": "analytics"
+    }
+  ],
+  "viewports": {
+    "wide": {
+      "width": 1440,
+      "height": 1000
+    },
+    "narrow": {
+      "width": 390,
+      "height": 844
+    },
+    "medium": {
+      "width": 900,
+      "height": 1000
+    }
+  }
+}

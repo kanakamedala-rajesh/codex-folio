@@ -147,3 +147,7 @@ func (service *recordingUsageService) View(_ context.Context, scope string) (usa
 	service.scope = scope
 	return service.view, service.activity, service.err
 }
+
+func (service *recordingUsageService) Recent(context.Context, usage.ProfileTarget) ([]usage.Snapshot, error) {
+	return []usage.Snapshot{}, nil
+}

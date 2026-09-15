@@ -171,6 +171,36 @@ type EditRequest struct {
 	RedactPaths, RedactText []string
 }
 
+// MergeHistoryCandidates overlays only populated, bounded history candidates
+// onto a repository-first draft. Callers still must preview, edit, redact, and
+// explicitly approve the resulting assisted revision.
+func MergeHistoryCandidates(base, candidates CheckpointFields) CheckpointFields {
+	pairs := [][2]*Evidence[string]{
+		{&base.Goal, &candidates.Goal}, {&base.CompletedWork, &candidates.CompletedWork},
+		{&base.PendingWork, &candidates.PendingWork}, {&base.Risks, &candidates.Risks}, {&base.NextAction, &candidates.NextAction},
+	}
+	for _, pair := range pairs {
+		if strings.TrimSpace(pair[1].Value) != "" {
+			*pair[0] = *pair[1]
+		}
+	}
+	return base
+}
+
+// RedactHistoryIdentityHome removes the internally resolved Identity Home from
+// bounded history candidates while preserving their evidence metadata.
+func RedactHistoryIdentityHome(fields CheckpointFields, identityHome string) CheckpointFields {
+	values := []*Evidence[string]{&fields.Goal, &fields.CompletedWork, &fields.PendingWork, &fields.Risks, &fields.NextAction}
+	for _, field := range values {
+		field.Value = sanitizeText(field.Value, identityHome, nil)
+	}
+	for index := range fields.Validation.Value {
+		fields.Validation.Value[index].Command = sanitizeText(fields.Validation.Value[index].Command, identityHome, nil)
+		fields.Validation.Value[index].Source = sanitizeText(fields.Validation.Value[index].Source, identityHome, nil)
+	}
+	return fields
+}
+
 type CheckpointRecord struct {
 	ID, ProjectIdentityID, Status, Metadata                         string
 	ExpectedStatus, ExpectedRevision                                string
@@ -182,6 +212,8 @@ type CheckpointRecord struct {
 type Repository interface {
 	SaveCheckpoint(context.Context, CheckpointRecord) error
 	LoadCheckpoint(context.Context, string) (CheckpointRecord, error)
+	ListCheckpoints(context.Context) ([]CheckpointRecord, error)
+	PurgeCheckpoint(context.Context, string, string) error
 	LatestSourceLaunch(context.Context, string) (SourceLaunch, error)
 	SourceIdentityHome(context.Context, string) (string, error)
 	CheckpointRetention(context.Context) (RetentionPolicy, error)
@@ -302,6 +334,29 @@ func (service *Service) Capture(ctx context.Context, request CaptureRequest) (Ch
 	return checkpoint, nil
 }
 
+// CaptureProject is the browser-safe capture seam: callers provide an
+// app-local Project Identity and never receive or submit its canonical path.
+func (service *Service) CaptureProject(ctx context.Context, projectID string, request CaptureRequest) (Checkpoint, error) {
+	if strings.TrimSpace(projectID) == "" || invalidText(projectID) || strings.TrimSpace(request.Path) != "" || strings.TrimSpace(request.Alias) != "" {
+		return Checkpoint{}, ErrCheckpointInvalid
+	}
+	path, err := service.projects.CanonicalLocation(ctx, projectID)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	request.Path = path
+	return service.Capture(ctx, request)
+}
+
+// Source reports the conservative source-process state used by Safe
+// Continuation. Missing exit evidence remains uncertain.
+func (service *Service) Source(ctx context.Context, projectID string) (SourceLaunch, error) {
+	if strings.TrimSpace(projectID) == "" || invalidText(projectID) {
+		return SourceLaunch{}, ErrCheckpointInvalid
+	}
+	return service.repository.LatestSourceLaunch(ctx, projectID)
+}
+
 func (service *Service) Retention(ctx context.Context, source, setting string) (RetentionPolicy, error) {
 	if source == "" && setting == "" {
 		policy, err := service.repository.CheckpointRetention(ctx)
@@ -327,6 +382,47 @@ func (service *Service) Show(ctx context.Context, id string) (Checkpoint, error)
 	service.mutationMu.Lock()
 	defer service.mutationMu.Unlock()
 	return service.show(ctx, id)
+}
+
+// List returns retained checkpoints newest first while applying the same
+// expiry and sensitive-field scrubbing used by Show.
+func (service *Service) List(ctx context.Context) ([]Checkpoint, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	records, err := service.repository.ListCheckpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Checkpoint, 0, len(records))
+	for _, record := range records {
+		checkpoint, showErr := service.show(ctx, record.ID)
+		if showErr != nil {
+			return nil, showErr
+		}
+		result = append(result, checkpoint)
+	}
+	return result, nil
+}
+
+// Purge deletes one exact retained checkpoint revision. A checkpoint whose
+// launch outcome is still uncertain remains protected for recovery.
+func (service *Service) Purge(ctx context.Context, id, revision string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(revision) == "" || invalidText(id) || invalidText(revision) {
+		return ErrCheckpointInvalid
+	}
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	checkpoint, err := service.show(ctx, id)
+	if err != nil {
+		return err
+	}
+	if checkpoint.Revision != revision {
+		return ErrCheckpointRevisionChanged
+	}
+	if checkpoint.Status == StatusLaunching {
+		return ErrHandoffNotReady
+	}
+	return service.repository.PurgeCheckpoint(ctx, id, revision)
 }
 
 func (service *Service) show(ctx context.Context, id string) (Checkpoint, error) {
@@ -591,6 +687,9 @@ func (service *Service) PrepareHandoff(ctx context.Context, id, revision, target
 	workingDirectory, err := service.projects.CanonicalLocation(ctx, record.ProjectIdentityID)
 	if err != nil {
 		return PreparedHandoff{}, err
+	}
+	if _, err := service.inspector.Inspect(ctx, workingDirectory); err != nil {
+		return PreparedHandoff{}, errors.Join(ErrRepositoryInspection, err)
 	}
 	return PreparedHandoff{
 		CheckpointID: id, Revision: revision, ProjectID: record.ProjectIdentityID, SourceProfileID: source.ProfileID,
