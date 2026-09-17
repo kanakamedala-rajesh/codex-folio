@@ -346,12 +346,41 @@
         "product": {
           "description": "The product name that owns this local API.",
           "type": "string"
+        },
+        "service_state": {
+          "description": "The safe operational state of the user-scoped service.",
+          "enum": ["locked", "ready", "recovery_required"],
+          "type": "string"
+        },
+        "vault_state": {
+          "description": "Whether sensitive state is available for this service session.",
+          "enum": ["locked", "unlocked"],
+          "type": "string"
+        },
+        "database_state": {
+          "description": "Whether the database has been checked and is ready, without exposing stored content.",
+          "enum": ["not_checked", "ready", "recovery_required"],
+          "type": "string"
+        },
+        "error_code": {
+          "description": "A stable redacted code for the current recovery condition, or an empty string.",
+          "type": "string"
+        },
+        "guidance_commands": {
+          "description": "Fixed local terminal commands that can safely guide unlock or recovery.",
+          "items": {"type": "string"},
+          "type": "array"
         }
       },
       "required": [
         "api_version",
         "contract_version",
-        "product"
+        "product",
+        "service_state",
+        "vault_state",
+        "database_state",
+        "error_code",
+        "guidance_commands"
       ],
       "type": "object"
     },

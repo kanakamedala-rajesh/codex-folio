@@ -13,13 +13,14 @@ import (
 
 func TestDiagnosticAggregatesPersistOnlyRedactedBoundedBuckets(t *testing.T) {
 	databasePath := t.TempDir() + "/codex-folio.sqlite3"
-	foundation, err := Open(databasePath)
+	clock := fixedStoreClock{now: time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)}
+	foundation, err := OpenWithOptions(Options{Path: databasePath, Clock: clock})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 	defer func() { _ = foundation.Close() }()
 
-	at := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	at := clock.now
 	event, err := diagnostics.NewEvent(at, diagnostics.SeverityError, diagnostics.ComponentStore, apperrors.StoreIntegrityFailed, diagnostics.Context{
 		Operation:     diagnostics.OperationIntegrityCheck,
 		State:         diagnostics.StateFailed,
@@ -68,7 +69,8 @@ func TestDiagnosticAggregatesPersistOnlyRedactedBoundedBuckets(t *testing.T) {
 }
 
 func TestDiagnosticAggregatesHaveAStableMaximumRowCount(t *testing.T) {
-	foundation, err := Open(t.TempDir() + "/codex-folio.sqlite3")
+	clock := fixedStoreClock{now: time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)}
+	foundation, err := OpenWithOptions(Options{Path: t.TempDir() + "/codex-folio.sqlite3", Clock: clock})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -112,7 +114,7 @@ func TestDiagnosticAggregatesHaveAStableMaximumRowCount(t *testing.T) {
 		apperrors.VaultKeyGenerationMismatch,
 		apperrors.VaultEncryptionFailed,
 	}
-	at := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	at := clock.now
 	components := []string{diagnostics.ComponentCLI, diagnostics.ComponentHTTPAPI, diagnostics.ComponentPlatform, diagnostics.ComponentStore, diagnostics.ComponentVault, diagnostics.ComponentDiagnostics}
 	severities := []diagnostics.Severity{diagnostics.SeverityInfo, diagnostics.SeverityWarning, diagnostics.SeverityError}
 	for _, component := range components {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/buildinfo"
@@ -22,9 +23,14 @@ func TestGeneratedClientRoundTripsMetadataFixture(t *testing.T) {
 		t.Fatalf("read metadata fixture: %v", err)
 	}
 	want := MetadataResponse{
-		APIVersion:      APIVersion,
-		ContractVersion: buildinfo.Version,
-		Product:         buildinfo.ProductName,
+		APIVersion:       APIVersion,
+		ContractVersion:  buildinfo.Version,
+		Product:          buildinfo.ProductName,
+		ServiceState:     ServiceStateReady,
+		VaultState:       VaultStateUnlocked,
+		DatabaseState:    DatabaseStateReady,
+		ErrorCode:        "",
+		GuidanceCommands: []string{},
 	}
 	encoded, err := json.Marshal(want)
 	if err != nil {
@@ -57,7 +63,7 @@ func TestGeneratedClientRoundTripsMetadataFixture(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("GetMetadata() status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("GetMetadata() = %#v, want %#v", got, want)
 	}
 }
@@ -192,19 +198,14 @@ func (client *recordingHTTPDoer) Do(request *http.Request) (*http.Response, erro
 func assertJSONEqual(t *testing.T, left, right []byte) {
 	t.Helper()
 
-	var leftValue, rightValue map[string]string
+	var leftValue, rightValue map[string]any
 	if err := json.Unmarshal(left, &leftValue); err != nil {
 		t.Fatalf("decode generated JSON: %v", err)
 	}
 	if err := json.Unmarshal(right, &rightValue); err != nil {
 		t.Fatalf("decode fixture JSON: %v", err)
 	}
-	if len(leftValue) != len(rightValue) {
-		t.Fatalf("JSON field count = %d, want %d", len(leftValue), len(rightValue))
-	}
-	for key, want := range rightValue {
-		if leftValue[key] != want {
-			t.Errorf("JSON field %q = %q, want %q", key, leftValue[key], want)
-		}
+	if !reflect.DeepEqual(leftValue, rightValue) {
+		t.Fatalf("JSON = %#v, want %#v", leftValue, rightValue)
 	}
 }

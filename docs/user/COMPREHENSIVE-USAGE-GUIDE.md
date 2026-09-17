@@ -83,18 +83,27 @@ not infer it after `CF_VAULT_UNAVAILABLE`. The passphrase vault starts locked
 again after a new service session. CodexFolio does not silently fall back to
 plaintext storage.
 
-**Known WSL/headless limitation:** the current CLI does not print a passphrase
-prompt and does not disable terminal echo while reading it. The entered value is
-therefore visible on screen and may be captured by terminal recording or
-streaming tools. Do not use a shared or recorded terminal, never reuse another
-password, and prefer an available Linux Secret Service or defer vault-dependent
-testing until the input path is fixed. Never put a passphrase in shell history,
-source control, an issue, or a shared log.
+Passphrase-backed `service start` acquires the single state owner and publishes
+the dashboard without opening the vault or database. Unlock the running service
+from a second local terminal:
 
-Keep the passphrase-backed service running while testing. Other commands then
-route through that state owner. If no service is running, append
+```sh
+./build/bin/codex-folio vault unlock
+./build/bin/codex-folio service status --json
+```
+
+`vault unlock` reads from a terminal with echo disabled and sends the value only
+over the authenticated loopback command transport. It does not accept a
+passphrase argument or environment variable, and the browser has no unlock
+endpoint or passphrase field. Failed unlock keeps one locked owner; successful
+unlock activates the state-owning workflows once. Every service restart returns
+passphrase mode to locked state. Never put a passphrase in shell history, source
+control, an issue, or a shared log.
+
+Keep the unlocked passphrase-backed service running while testing. Other
+commands then route through that state owner. If no service is running, append
 `--vault-mode passphrase` to each vault-dependent command and enter the same
-passphrase, subject to the terminal-echo limitation above.
+passphrase through that command's existing input path.
 
 Recovery commands are intentionally separate from normal startup:
 
@@ -227,6 +236,13 @@ that is exchanged for a short-lived browser session and then removed from the
 address bar. Browser mutations require the authenticated session, same-origin
 Host/Origin checks, and CSRF protection. Production assets are embedded and do
 not load scripts, styles, or fonts from a CDN.
+
+While a passphrase service is locked, the authenticated dashboard exposes only
+browser-safe service, vault, and database state plus fixed CLI guidance. It does
+not receive paths, vault metadata, recovery contents, provider errors, or the
+command credential, and it does not invoke state-owning workflows. If database
+open or migration requires recovery, stop the foreground owner and run the
+displayed existing `service recovery` commands before starting again.
 
 Do not publish, message, log, or bookmark bootstrap URLs. If authorization is
 expired or already used, run `service start` again to receive a new link.
@@ -661,8 +677,17 @@ delete lock or database files to force startup; use the reported recovery path.
 On WSL/headless Linux, `CF_VAULT_UNAVAILABLE` from a bare command normally means
 the default Linux Secret Service is absent. Start with
 `service start --vault-mode passphrase`, then keep that foreground owner running.
-This selects the encrypted passphrase vault rather than plaintext, but the
-current passphrase input limitation described above still applies.
+This selects the encrypted passphrase vault rather than plaintext. In another
+local terminal, run `vault unlock`; a failed attempt leaves the same owner
+locked and ready for another attempt.
+
+### The passphrase service is locked
+
+Run `service status --json` to confirm `service_state`, `vault_state`, and
+`database_state`, then run `vault unlock` in a private local terminal. The
+dashboard cannot unlock the vault. If the state is `recovery_required`, stop the
+foreground owner and follow its fixed `service recovery verify`, `list`, and
+`restore` guidance instead of deleting state files.
 
 ### The dashboard link is expired
 

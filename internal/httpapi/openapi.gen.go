@@ -20,7 +20,7 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "e8e9b907f4be8e00878d7ad33fc9b89e56e1baac46c89d08e449d39b833c7abf"
+	ContractSourceSHA256   = "4a2b7b5c22d9e9f99aec4a001ae7fbde0f131230b264480069881b6f22e51584"
 	BootstrapPath          = "/api/v1/bootstrap"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
@@ -480,9 +480,14 @@ type BootstrapResponse struct {
 }
 
 type MetadataResponse struct {
-	APIVersion      string `json:"api_version"`
-	ContractVersion string `json:"contract_version"`
-	Product         string `json:"product"`
+	APIVersion       string   `json:"api_version"`
+	ContractVersion  string   `json:"contract_version"`
+	Product          string   `json:"product"`
+	ServiceState     string   `json:"service_state"`
+	VaultState       string   `json:"vault_state"`
+	DatabaseState    string   `json:"database_state"`
+	ErrorCode        string   `json:"error_code"`
+	GuidanceCommands []string `json:"guidance_commands"`
 }
 
 type ProfileSetupStages struct {

@@ -57,17 +57,25 @@ On WSL or headless Linux, explicitly choose the passphrase vault:
 ./build/bin/codex-folio service start --vault-mode passphrase
 ```
 
-> **Known WSL/headless limitation:** passphrase mode currently shows no input
-> prompt and echoes the passphrase as you type. Do not use it in a shared,
-> recorded, or observable terminal, and never enter a reused password. Prefer an
-> available Linux Secret Service or defer vault-dependent testing until this is
-> fixed.
+The service starts locked without asking for a passphrase, but still publishes
+the dashboard. In a second local terminal, unlock that running session:
+
+```sh
+./build/bin/codex-folio vault unlock
+```
+
+The unlock command uses private terminal input with echo disabled. It sends the
+passphrase only to the authenticated loopback command endpoint; the dashboard
+never accepts or receives it. A wrong passphrase leaves the service locked, and
+stopping or restarting the service requires a new unlock.
 
 CodexFolio does not silently fall back to plaintext or infer passphrase mode
 from a missing Secret Service.
 
-The command prints a one-time local dashboard URL. Open it in your browser and
-keep this terminal running. Press `Ctrl-C` when you want to stop the service.
+The start command prints a one-time local dashboard URL. Open it in your browser
+and keep this terminal running. A locked dashboard shows only safe unlock or
+recovery guidance and does not run profile, usage, launch, analytics, or
+continuation workflows. Press `Ctrl-C` when you want to stop the service.
 Running `service start` again while the service is active prints a fresh URL.
 
 The dashboard is loopback-only. Do not share its URL: the bootstrap value is a
@@ -95,9 +103,8 @@ You can also create a managed profile directly from the CLI:
 
 When the service is stopped on WSL/headless Linux, add
 `--vault-mode passphrase` to vault-dependent commands and enter the same
-passphrase, subject to the known terminal-echo limitation above. Keeping the
-service running avoids reopening the vault for each command because the CLI
-routes operations through that owner.
+passphrase. Keeping the unlocked service running avoids reopening the vault for
+each command because the CLI routes operations through that owner.
 
 Use a Referenced Identity Home only when you intentionally want to register an
 existing Codex home. CodexFolio does not own or delete referenced files.
@@ -206,6 +213,7 @@ Useful checks:
 
 ```sh
 ./build/bin/codex-folio service status
+./build/bin/codex-folio vault unlock
 ./build/bin/codex-folio profile list --json
 ./build/bin/codex-folio --help
 ```

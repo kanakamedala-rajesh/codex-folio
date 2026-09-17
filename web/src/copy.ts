@@ -99,6 +99,37 @@ export const copy = {
   hoursAgo: "hours ago",
   future: "Future capture; freshness unknown",
 } as const;
+
+export const serviceHealthCopy = {
+  lockedTitle: "Unlock for this user session",
+  lockedState: "Settings · Vault locked · Explicit session unlock",
+  lockedNotice:
+    "The passphrase-backed service is locked after reboot. Sensitive collection is paused.",
+  runTerminal: "In your local terminal, run",
+  privatePrompt: "and follow the private prompt.",
+  neverExpose:
+    "Never place your passphrase in this dashboard, a saved command, an environment variable, or unattended startup configuration.",
+  onDemand: "On-demand access does not require telemetry or persistent-service enrollment.",
+  recoveryTitle: "Local data needs recovery",
+  recoveryState: "Settings · Recovery required · No automatic deletion",
+  recoveryNotice:
+    "The service preserved the database and stopped writes. It will not silently reset your data.",
+  recoveryGuidance: "Recovery guidance",
+  recoverySteps: [
+    "Keep the preserved database and recovery artifacts.",
+    "Stop the service owner, then use the CLI recovery workflow to inspect health and available backups.",
+    "Review an explicit recovery choice before restoring.",
+  ],
+  recoveryUnavailable:
+    "Profiles, collection and continuation stay unavailable until the state owner reports recovery complete.",
+  checkpointRecovery: "Checkpoint recovery",
+  checkpointRetention: "Drafts and approved checkpoints retain their recorded revision and expiry.",
+  checkpointBoundary:
+    "Unknown source-process state cannot authorize a new launch. Verify the source terminal and choose a valid checkpoint after storage recovery.",
+  vaultAndRecovery: "Vault and recovery",
+  ready: "Unlocked for this service session · Database ready",
+  locked: "Locked after reboot",
+} as const;
 export const stateCopy: Record<string, string> = {
   ready: "Ready",
   pending: "Pending",

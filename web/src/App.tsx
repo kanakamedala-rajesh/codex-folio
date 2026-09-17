@@ -10,6 +10,7 @@ import {
   type CheckpointManagementResponse,
   type HandoffRequest,
   type HandoffResponse,
+  type MetadataResponse,
   type ProfileAuthenticationRequest,
   type ProfileEditRequest,
   type ProfileLifecycleRecord,
@@ -19,13 +20,14 @@ import {
   type SelectionResponse,
   type UsageSnapshotResponse,
 } from "./generated/openapi";
-import { copy as c, stateCopy, provenanceCopy } from "./copy";
+import { copy as c, serviceHealthCopy, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
 import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
 import { Analytics } from "./Analytics";
 import { Handoff } from "./Handoff";
 import { CheckpointManagement } from "./CheckpointManagement";
+import { ServiceHealth } from "./ServiceHealth";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -436,6 +438,8 @@ function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias
 
 export function App() {
   const [status, setStatus] = useState("authorizing");
+  const [serviceHealth, setServiceHealth] = useState<MetadataResponse | null>(null);
+  const serviceState = serviceHealth?.service_state;
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -567,9 +571,16 @@ export function App() {
       try {
         const auth = await api.exchangeBootstrap({ bootstrap_token: token });
         csrf.current = auth.csrf_token;
-        const next = await load(true);
+        const health = await api.getMetadata();
+        setServiceHealth(health);
         setStatus("authorized");
-        void refresh("dashboard_open", next);
+        if (health.service_state === "ready") {
+          const next = await load(true);
+          void refresh("dashboard_open", next);
+        } else {
+          setRoute("Settings");
+          requestAnimationFrame(() => heading.current?.focus());
+        }
       } catch (e) {
         failure(e);
         setStatus(
@@ -580,11 +591,47 @@ export function App() {
       }
     })();
   });
+  const checkServiceHealth = useEffectEvent(async (cancelled: () => boolean) => {
+    try {
+      const health = await api.getMetadata();
+      if (cancelled()) return;
+      setServiceHealth(health);
+      if (health.service_state === "ready") {
+        const next = await load(true);
+        if (!cancelled()) {
+          setMessage(serviceHealthCopy.ready);
+          void refresh("vault_unlock", next);
+        }
+      }
+    } catch (error) {
+      if (!cancelled()) failure(error);
+    }
+  });
   useEffect(() => {
     start();
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (status !== "authorized" || !serviceState || serviceState === "ready") return;
+    let cancelled = false;
+    let loading = false;
+    const timer = setInterval(() => {
+      if (loading) return;
+      loading = true;
+      void checkServiceHealth(() => cancelled).finally(() => {
+        loading = false;
+      });
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [status, serviceState]);
+  useEffect(() => {
+    if (status !== "authorized" || !serviceState || serviceState === "ready") return;
+    requestAnimationFrame(() => heading.current?.focus());
+  }, [status, serviceState]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -990,6 +1037,8 @@ export function App() {
                 <code className="wrap-anywhere">{c.relaunchCommand}</code>
                 <p className="mb-4 max-w-[75ch]">{c.authorizationDetail}</p>
               </>
+            ) : serviceHealth && serviceHealth.service_state !== "ready" ? (
+              <ServiceHealth health={serviceHealth} heading={heading} />
             ) : handoff ? (
               <Handoff
                 initial={handoff}
@@ -1101,6 +1150,16 @@ export function App() {
                 )}
                 {route === "Settings" ? (
                   <section>
+                    <section className="border-b border-rule pb-6">
+                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                        {serviceHealthCopy.vaultAndRecovery}
+                      </h2>
+                      <p className="mb-4 max-w-[75ch]">
+                        {serviceHealth?.service_state === "ready"
+                          ? serviceHealthCopy.ready
+                          : serviceHealthCopy.locked}
+                      </p>
+                    </section>
                     <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                       {c.appearance}
                     </h2>

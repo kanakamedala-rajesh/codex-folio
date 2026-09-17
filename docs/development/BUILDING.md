@@ -11,7 +11,8 @@ and can run a foreground owner through the CLI:
 
 ```sh
 codex-folio service status [--state-root PATH] [--json]
-codex-folio service start [--state-root PATH] [--json]
+codex-folio service start [--state-root PATH] [--vault-mode MODE] [--json]
+codex-folio vault unlock [--state-root PATH] [--json]
 ```
 
 The owner lock, descriptor, SQLite database, vault, recovery artifacts, and
@@ -20,7 +21,10 @@ collection, analytics, and Safe Continuation CLI workflows now build on this
 foundation. The authorized Overview now displays live capacity and scope;
 later dashboard journeys and operational work remain pending. The service
 is the only composed process path that opens the durable SQLite store or runs
-its migrations.
+its migrations. A passphrase-backed owner starts locked and publishes safe
+health without opening storage; `vault unlock` privately supplies the
+passphrase over the command-authenticated loopback transport and activates the
+composed workflows once.
 
 ## Pinned prerequisites
 

@@ -1,5 +1,10 @@
 {
   "api_version": "v1",
   "contract_version": "0.0.1-alpha",
-  "product": "VenkataSudha CodexFolio"
+  "product": "VenkataSudha CodexFolio",
+  "service_state": "ready",
+  "vault_state": "unlocked",
+  "database_state": "ready",
+  "error_code": "",
+  "guidance_commands": []
 }

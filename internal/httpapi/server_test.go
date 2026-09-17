@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -31,6 +32,32 @@ func (clock *testClock) Now() time.Time {
 type diagnosticCapture struct {
 	mu     sync.Mutex
 	events []diagnostics.Event
+}
+
+type serviceLifecycleFixture struct {
+	mu         sync.Mutex
+	health     ServiceHealth
+	unlockErr  error
+	passphrase string
+}
+
+func (fixture *serviceLifecycleFixture) Health() ServiceHealth {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	result := fixture.health
+	result.GuidanceCommands = append([]string(nil), result.GuidanceCommands...)
+	return result
+}
+
+func (fixture *serviceLifecycleFixture) Unlock(_ context.Context, passphrase string) error {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	fixture.passphrase = passphrase
+	if fixture.unlockErr != nil {
+		return fixture.unlockErr
+	}
+	fixture.health = ServiceHealth{ServiceState: ServiceStateReady, VaultState: VaultStateUnlocked, DatabaseState: DatabaseStateReady}
+	return nil
 }
 
 func (capture *diagnosticCapture) Record(event diagnostics.Event) error {
@@ -138,6 +165,9 @@ func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
 	_ = metadata.Body.Close()
 	if got.APIVersion != APIVersion || got.ContractVersion != ContractVersion {
 		t.Fatalf("metadata = %#v, want API %q contract %q", got, APIVersion, ContractVersion)
+	}
+	if got.GuidanceCommands == nil || len(got.GuidanceCommands) != 0 {
+		t.Fatalf("metadata guidance_commands = %#v, want generated-contract empty array", got.GuidanceCommands)
 	}
 
 	replay, err := doRequest(
@@ -688,4 +718,111 @@ func TestCommandDashboardReentryRequiresCommandAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertErrorResponse(t, response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid, token)
+}
+
+func TestLockedServiceExposesSafeHealthAndCommandOnlyUnlock(t *testing.T) {
+	const passphrase = "private unlock sentinel"
+	lifecycle := &serviceLifecycleFixture{health: ServiceHealth{
+		ServiceState:     ServiceStateLocked,
+		VaultState:       VaultStateLocked,
+		DatabaseState:    DatabaseStateNotChecked,
+		GuidanceCommands: []string{"codex-folio vault unlock"},
+	}}
+	server, _, _ := startTestServer(t, Options{
+		CommandToken:     "vault-command-token",
+		ServiceLifecycle: lifecycle,
+		StartLocked:      true,
+	})
+	command := NewCommandClient(server.Origin(), "vault-command-token", nil)
+	health, err := command.ServiceHealth(context.Background())
+	if err != nil {
+		t.Fatalf("ServiceHealth() error = %v", err)
+	}
+	if health.ServiceState != ServiceStateLocked || health.VaultState != VaultStateLocked || health.DatabaseState != DatabaseStateNotChecked {
+		t.Fatalf("locked health = %#v", health)
+	}
+	response, err := doRequest(testClient(t), http.MethodGet, server.Origin()+CommandAnalyticsPath, server.Address(), server.Origin(), nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertErrorResponse(t, response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid, "vault-command-token")
+	if _, err := command.Analytics(context.Background(), "combined_identity"); apperrors.Code(err) != apperrors.VaultLocked {
+		t.Fatalf("locked analytics error = %v, want %s", err, apperrors.VaultLocked)
+	}
+	updated, err := command.UnlockVault(context.Background(), passphrase)
+	if err != nil {
+		t.Fatalf("UnlockVault() error = %v", err)
+	}
+	if updated.ServiceState != ServiceStateReady || updated.VaultState != VaultStateUnlocked || updated.DatabaseState != DatabaseStateReady {
+		t.Fatalf("unlocked health = %#v", updated)
+	}
+	if lifecycle.passphrase != passphrase {
+		t.Fatal("unlock lifecycle did not receive the private passphrase")
+	}
+	encoded, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(passphrase)) {
+		t.Fatalf("health response contains passphrase: %s", encoded)
+	}
+}
+
+func TestFailedVaultUnlockLeavesServiceLocked(t *testing.T) {
+	lifecycle := &serviceLifecycleFixture{
+		health:    ServiceHealth{ServiceState: ServiceStateLocked, VaultState: VaultStateLocked, DatabaseState: DatabaseStateNotChecked},
+		unlockErr: apperrors.New(apperrors.VaultKeyInvalid, errors.New("sensitive provider cause")),
+	}
+	server, _, _ := startTestServer(t, Options{CommandToken: "vault-command-token", ServiceLifecycle: lifecycle, StartLocked: true})
+	command := NewCommandClient(server.Origin(), "vault-command-token", nil)
+	if _, err := command.UnlockVault(context.Background(), "wrong passphrase"); apperrors.Code(err) != apperrors.VaultKeyInvalid {
+		t.Fatalf("UnlockVault() error = %v, want %s", err, apperrors.VaultKeyInvalid)
+	}
+	health, err := command.ServiceHealth(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.ServiceState != ServiceStateLocked || health.VaultState != VaultStateLocked {
+		t.Fatalf("health after failed unlock = %#v", health)
+	}
+}
+
+func TestLockedBrowserMutationStillRequiresValidCSRF(t *testing.T) {
+	lifecycle := &serviceLifecycleFixture{health: ServiceHealth{
+		ServiceState:     ServiceStateLocked,
+		VaultState:       VaultStateLocked,
+		DatabaseState:    DatabaseStateNotChecked,
+		GuidanceCommands: []string{"codex-folio vault unlock"},
+	}}
+	server, _, _ := startTestServer(t, Options{ServiceLifecycle: lifecycle, StartLocked: true})
+	client := testClient(t)
+	origin := server.Origin()
+	token := mustBootstrapToken(t, server.BootstrapURL())
+	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
+	if err != nil {
+		t.Fatalf("bootstrap exchange: %v", err)
+	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatalf("decode bootstrap: %v", err)
+	}
+	_ = exchange.Body.Close()
+
+	missing, err := doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, nil, "")
+	if err != nil {
+		t.Fatalf("locked mutation without CSRF: %v", err)
+	}
+	assertErrorResponse(t, missing, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid, token)
+
+	invalid, err := doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, nil, "invalid-csrf")
+	if err != nil {
+		t.Fatalf("locked mutation with invalid CSRF: %v", err)
+	}
+	assertErrorResponse(t, invalid, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid, token)
+
+	valid, err := doRequest(client, http.MethodPost, origin+UsageRefreshPath, server.Address(), origin, nil, bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatalf("locked mutation with valid CSRF: %v", err)
+	}
+	assertErrorResponse(t, valid, http.StatusLocked, apperrors.VaultLocked, token)
 }

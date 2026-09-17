@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
@@ -48,12 +50,14 @@ const (
 	CommandActivityPath              = "/api/v1/command/activity"
 	CommandHistoryPath               = "/api/v1/command/analytics-history"
 	CommandCheckpointPath            = "/api/v1/command/checkpoint"
+	CommandVaultPath                 = "/api/v1/command/vault"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
 	maxSelectionBodySize             = 4096
 	maxConfigPackBodySize            = 9 * 1024 * 1024
 	maxCheckpointBodySize            = 64 * 1024
+	maxVaultUnlockBodySize           = 4096
 	randomTokenSize                  = 32
 )
 
@@ -69,6 +73,52 @@ var embeddedAssets embed.FS
 // Clock is the time seam for session and bootstrap expiry tests.
 type Clock interface {
 	Now() time.Time
+}
+
+const (
+	ServiceStateLocked            = "locked"
+	ServiceStateReady             = "ready"
+	ServiceStateRecoveryRequired  = "recovery_required"
+	VaultStateLocked              = "locked"
+	VaultStateUnlocked            = "unlocked"
+	DatabaseStateNotChecked       = "not_checked"
+	DatabaseStateReady            = "ready"
+	DatabaseStateRecoveryRequired = "recovery_required"
+)
+
+// ServiceHealth is the browser-safe operational projection. It deliberately
+// excludes vault mode, paths, key generations, recovery contents, and errors.
+type ServiceHealth struct {
+	ServiceState     string   `json:"service_state"`
+	VaultState       string   `json:"vault_state"`
+	DatabaseState    string   `json:"database_state"`
+	ErrorCode        string   `json:"error_code"`
+	GuidanceCommands []string `json:"guidance_commands"`
+}
+
+// ServiceLifecycle owns the process-local locked/unlocked transition. Unlock
+// is reachable only through the command-token transport, never the browser API.
+type ServiceLifecycle interface {
+	Health() ServiceHealth
+	Unlock(context.Context, string) error
+}
+
+// OperationalServices contains the state-owning workflows installed exactly
+// once after the vault and database have opened successfully.
+type OperationalServices struct {
+	Selection             *profile.Selector
+	Profiles              *profile.Registry
+	ProfileLifecycle      *profile.Lifecycle
+	ProfileAuthentication CommandProfileAuthenticationService
+	ConfigurationPacks    *configpack.Service
+	Launches              CommandLaunchService
+	Usage                 CommandUsageService
+	Projects              *activity.ProjectService
+	Activities            CommandActivityService
+	History               *usage.HistoryService
+	Exports               *activity.ExportService
+	Checkpoints           CommandCheckpointService
+	CheckpointHistory     BrowserCheckpointHistory
 }
 
 // Options configures the local browser service. Random is used only for
@@ -95,6 +145,8 @@ type Options struct {
 	Checkpoints           CommandCheckpointService
 	CheckpointHistory     BrowserCheckpointHistory
 	CommandToken          string
+	ServiceLifecycle      ServiceLifecycle
+	StartLocked           bool
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -127,6 +179,9 @@ type Server struct {
 	checkpoints           CommandCheckpointService
 	checkpointHistory     BrowserCheckpointHistory
 	commandToken          [sha256.Size]byte
+	serviceLifecycle      ServiceLifecycle
+	operational           atomic.Bool
+	activationMu          sync.Mutex
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
@@ -185,7 +240,7 @@ func NewServer(options Options) (*Server, error) {
 	encodedToken := base64.RawURLEncoding.EncodeToString(token)
 	now := clock.Now().UTC()
 	commandToken := sha256.Sum256([]byte(options.CommandToken))
-	return &Server{
+	server := &Server{
 		product:               product,
 		bootstrapTTL:          bootstrapTTL,
 		sessionTTL:            sessionTTL,
@@ -206,12 +261,15 @@ func NewServer(options Options) (*Server, error) {
 		checkpoints:           options.Checkpoints,
 		checkpointHistory:     options.CheckpointHistory,
 		commandToken:          commandToken,
+		serviceLifecycle:      options.ServiceLifecycle,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt:    now.Add(bootstrapTTL),
 		bootstrapAvailable:    true,
 		sessions:              make(map[[sha256.Size]byte]session),
-	}, nil
+	}
+	server.operational.Store(!options.StartLocked)
+	return server, nil
 }
 
 // Listen binds exclusively to an IPv4 loopback address. It deliberately does
@@ -391,6 +449,20 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
 		return
 	}
+	if requiresOperationalState(request.URL.Path) && !server.operational.Load() {
+		if strings.HasPrefix(request.URL.Path, "/api/v1/command/") {
+			if !server.authorizeCommand(response, request) {
+				return
+			}
+		} else if !server.authorize(response, request) {
+			return
+		} else if requiresBrowserCSRF(request.URL.Path, request.Method) && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.writeAPIError(response, http.StatusLocked, apperrors.VaultLocked)
+		return
+	}
 
 	switch request.URL.Path {
 	case CommandDashboardPath:
@@ -398,6 +470,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandDashboard(response, request)
+	case CommandVaultPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandVault(response, request)
 	case CommandCheckpointPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -1008,11 +1085,100 @@ func (server *Server) validCSRF(request *http.Request) bool {
 }
 
 func (server *Server) writeMetadata(response http.ResponseWriter, request *http.Request) {
+	health := server.health()
 	writeJSON(response, http.StatusOK, MetadataResponse{
-		APIVersion:      APIVersion,
-		ContractVersion: ContractVersion,
-		Product:         server.product,
+		APIVersion:       APIVersion,
+		ContractVersion:  ContractVersion,
+		Product:          server.product,
+		ServiceState:     health.ServiceState,
+		VaultState:       health.VaultState,
+		DatabaseState:    health.DatabaseState,
+		ErrorCode:        health.ErrorCode,
+		GuidanceCommands: health.GuidanceCommands,
 	})
+}
+
+// Activate installs the already-composed state-owning workflows exactly once.
+// Assignments happen before the atomic ready transition observed by handlers.
+func (server *Server) Activate(services OperationalServices) error {
+	if server == nil {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("service is unavailable"))
+	}
+	server.activationMu.Lock()
+	defer server.activationMu.Unlock()
+	if server.operational.Load() {
+		return nil
+	}
+	if services.Selection == nil || services.Profiles == nil || services.Usage == nil {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("operational services are incomplete"))
+	}
+	server.selection = services.Selection
+	server.profiles = services.Profiles
+	server.profileLifecycle = services.ProfileLifecycle
+	server.profileAuthentication = services.ProfileAuthentication
+	server.configurationPacks = services.ConfigurationPacks
+	server.launches = services.Launches
+	server.usage = services.Usage
+	server.projects = services.Projects
+	server.activities = services.Activities
+	server.historyService = services.History
+	server.exportService = services.Exports
+	server.checkpoints = services.Checkpoints
+	server.checkpointHistory = services.CheckpointHistory
+	server.operational.Store(true)
+	return nil
+}
+
+func (server *Server) health() ServiceHealth {
+	if server != nil && server.serviceLifecycle != nil {
+		health := server.serviceLifecycle.Health()
+		if health.GuidanceCommands == nil {
+			health.GuidanceCommands = []string{}
+		}
+		return health
+	}
+	if server != nil && server.operational.Load() {
+		return ServiceHealth{
+			ServiceState:     ServiceStateReady,
+			VaultState:       VaultStateUnlocked,
+			DatabaseState:    DatabaseStateReady,
+			GuidanceCommands: []string{},
+		}
+	}
+	return ServiceHealth{
+		ServiceState:     ServiceStateLocked,
+		VaultState:       VaultStateLocked,
+		DatabaseState:    DatabaseStateNotChecked,
+		GuidanceCommands: []string{"codex-folio vault unlock"},
+	}
+}
+
+// Health returns the same safe projection exposed to authenticated browser
+// and command clients.
+func (server *Server) Health() ServiceHealth {
+	return server.health()
+}
+
+func requiresOperationalState(path string) bool {
+	switch path {
+	case CommandDashboardPath, CommandVaultPath, BootstrapPathName, "/", "/index.html", "/assets/app.js", "/assets/styles.css", BootstrapPath, MetadataPath:
+		return false
+	default:
+		return strings.HasPrefix(path, "/api/")
+	}
+}
+
+func requiresBrowserCSRF(path, method string) bool {
+	switch path {
+	case HistoryPath, HandoffPath, UsageRefreshPath:
+		return true
+	case SelectionPath, ProjectsPath, ProfilesPath, ConfigurationPacksPath, ProfileLifecyclePath:
+		return method != http.MethodGet
+	case UsageLatestPath, AnalyticsPath, ActivityPath:
+		return false
+	default:
+		return strings.HasPrefix(path, "/api/") && !isReadMethod(method)
+	}
 }
 
 func (server *Server) getSelection(response http.ResponseWriter, request *http.Request) {

@@ -224,23 +224,20 @@ func runServiceStatusWithDiagnostics(paths platform.Paths, options serviceOption
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	if options.json {
-		if err := writeServiceJSON(stdout, serviceOutput{
-			Status:    statusName(status.Running),
-			PID:       metadataPID(status.Metadata),
-			StartedAt: metadataStart(status.Metadata),
-			Reused:    false,
-		}); err != nil {
-			recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
-			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode service status\n", apperrors.CLIInternal)
-			return exitFailure
-		}
-		return exitSuccess
-	}
+	health := httpapi.ServiceHealth{ServiceState: "stopped", VaultState: "unavailable", DatabaseState: httpapi.DatabaseStateNotChecked}
 	if status.Running {
-		_, _ = io.WriteString(stdout, "service owner running\n")
-	} else {
-		_, _ = io.WriteString(stdout, "service owner stopped\n")
+		connection, discoverErr := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+		if discoverErr != nil {
+			return writeServiceErrorWithDiagnostics(stderr, discoverErr, diagnosticSink)
+		}
+		health, err = httpapi.NewCommandClient(connection.Origin, connection.Token, nil).ServiceHealth(context.Background())
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
+	if err := writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, false, "", health); err != nil {
+		recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
+		return exitFailure
 	}
 	return exitSuccess
 }
@@ -253,7 +250,7 @@ func runServiceStartWithInput(paths platform.Paths, options serviceOptions, inpu
 	return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, nil)
 }
 
-func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
+func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options serviceOptions, _ io.Reader, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -278,108 +275,56 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		}
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	passphrase := ""
+	commandToken, err := newCommandToken()
+	if err != nil {
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	compose := func(stateStore *store.Store) (httpapi.OperationalServices, error) {
+		attachServiceDiagnosticStore(diagnosticSink, stateStore)
+		return composeServiceOperationalServices(paths, stateStore)
+	}
+	var services httpapi.OperationalServices
+	var stateOwner interface{ Close() error }
+	var serviceLifecycle *lockedServiceLifecycle
 	if options.vaultMode == platform.VaultModePassphrase {
-		passphrase, err = readServiceVaultPassphrase(input)
+		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openServiceStoreWithVaultMode, compose)
+		stateOwner = serviceLifecycle
+	} else {
+		stateStore, openErr := openServiceStoreWithVaultMode(paths, options.vaultMode, "")
+		if openErr != nil {
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, openErr, diagnosticSink)
+		}
+		stateOwner = stateStore
+		services, err = compose(stateStore)
 		if err != nil {
+			_ = stateStore.Close()
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 	}
-	stateStore, err := openServiceStoreWithVaultMode(paths, options.vaultMode, passphrase)
+	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
+	serverOptions.ServiceLifecycle = serviceLifecycle
+	serverOptions.StartLocked = serviceLifecycle != nil
+	server, err := httpapi.NewServer(serverOptions)
 	if err != nil {
+		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	attachServiceDiagnosticStore(diagnosticSink, stateStore)
-	selector, err := profile.NewSelector(stateStore)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	registry, err := profile.NewRegistry(stateStore)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	lifecycle, err := newProfileLifecycle(paths, stateStore)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	configurationPacks, err := newConfigurationPackService(stateStore)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	usageCommands, err := newUsageCommandService(stateStore, nil)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects, usageCommands)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	if err := launches.workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	profileAuthentication, err := newProfileAuthenticationCommandService(paths, stateStore, configurationPacks, codexadapter.NewResolver(codexadapter.ResolverOptions{}), codexadapter.NewAuthenticator())
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	activities, err := newActivityCommandService(stateStore, projects)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	checkpoints, err := newCheckpointService(stateStore, projects)
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	launches.continuations = checkpoints
-	commandToken, err := newCommandToken()
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-	}
-	historyAssistant := browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CheckpointHistory: historyAssistant, CommandToken: commandToken})
-	if err != nil {
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	if serviceLifecycle != nil {
+		serviceLifecycle.SetActivator(server.Activate)
 	}
 	listener, err := server.Listen()
 	if err != nil {
-		_ = stateStore.Close()
+		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
 		_ = server.Close()
-		_ = stateStore.Close()
+		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -388,7 +333,73 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		serveErrors <- server.Serve(listener)
 	}()
 
-	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+	return waitForServiceStopWithDiagnostics(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func composeServiceOperationalServices(paths platform.Paths, stateStore *store.Store) (httpapi.OperationalServices, error) {
+	selector, err := profile.NewSelector(stateStore)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	registry, err := profile.NewRegistry(stateStore)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	lifecycle, err := newProfileLifecycle(paths, stateStore)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	configurationPacks, err := newConfigurationPackService(stateStore)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	usageCommands, err := newUsageCommandService(stateStore, nil)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects, usageCommands)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	if err := launches.workflow.Reconcile(context.Background(), foregroundProcessInspector{}); err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	profileAuthentication, err := newProfileAuthenticationCommandService(paths, stateStore, configurationPacks, codexadapter.NewResolver(codexadapter.ResolverOptions{}), codexadapter.NewAuthenticator())
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	activities, err := newActivityCommandService(stateStore, projects)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	checkpoints, err := newCheckpointService(stateStore, projects)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	launches.continuations = checkpoints
+	return httpapi.OperationalServices{
+		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
+		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
+		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
+		History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
+		Checkpoints:       checkpoints,
+		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
+	}, nil
+}
+
+func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, services httpapi.OperationalServices) httpapi.Options {
+	return httpapi.Options{
+		Diagnostics: diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
+		ProfileLifecycle: services.ProfileLifecycle, ProfileAuthentication: services.ProfileAuthentication,
+		ConfigurationPacks: services.ConfigurationPacks, Launches: services.Launches, Usage: services.Usage,
+		Projects: services.Projects, Activities: services.Activities, History: services.History,
+		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
+		CommandToken: commandToken,
+	}
 }
 
 func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profile.Lifecycle, error) {
@@ -495,14 +506,14 @@ func runServiceRecoveryWithDiagnostics(paths platform.Paths, action string, opti
 	return resultCode
 }
 
-func waitForServiceStop(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
+func waitForServiceStop(owner *platform.Owner, stateStore interface{ Close() error }, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error) int {
 	return waitForServiceStopWithDiagnostics(owner, stateStore, server, options, stdout, stderr, reused, serveErrors, nil)
 }
 
-func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore *store.Store, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error, diagnosticSink diagnostics.Sink) int {
+func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interface{ Close() error }, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error, diagnosticSink diagnostics.Sink) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
-	if err := writeServiceStateWithDashboard(stdout, stderr, options.json, status, reused, server.BootstrapURL()); err != nil {
+	if err := writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, reused, server.BootstrapURL(), server.Health()); err != nil {
 		recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 		_ = server.Close()
 		_ = stateStore.Close()
@@ -538,11 +549,16 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore *store.
 }
 
 type serviceOutput struct {
-	Status    string     `json:"status"`
-	PID       int        `json:"pid,omitempty"`
-	StartedAt *time.Time `json:"started_at,omitempty"`
-	Reused    bool       `json:"reused,omitempty"`
-	Dashboard string     `json:"dashboard_url,omitempty"`
+	Status           string     `json:"status"`
+	PID              int        `json:"pid,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	Reused           bool       `json:"reused,omitempty"`
+	Dashboard        string     `json:"dashboard_url,omitempty"`
+	ServiceState     string     `json:"service_state"`
+	VaultState       string     `json:"vault_state"`
+	DatabaseState    string     `json:"database_state"`
+	ErrorCode        string     `json:"error_code,omitempty"`
+	GuidanceCommands []string   `json:"guidance_commands,omitempty"`
 }
 
 func writeServiceState(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool) error {
@@ -550,26 +566,48 @@ func writeServiceState(stdout, stderr io.Writer, jsonOutput bool, status platfor
 }
 
 func writeServiceStateWithDashboard(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool, dashboardURL string) error {
+	health := httpapi.ServiceHealth{ServiceState: httpapi.ServiceStateReady, VaultState: httpapi.VaultStateUnlocked, DatabaseState: httpapi.DatabaseStateReady}
+	if !status.Running {
+		health = httpapi.ServiceHealth{ServiceState: "stopped", VaultState: "unavailable", DatabaseState: httpapi.DatabaseStateNotChecked}
+	}
+	return writeServiceStateWithDashboardHealth(stdout, stderr, jsonOutput, status, reused, dashboardURL, health)
+}
+
+func writeServiceStateWithDashboardHealth(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool, dashboardURL string, health httpapi.ServiceHealth) error {
 	if jsonOutput {
 		if err := writeServiceJSON(stdout, serviceOutput{
-			Status:    statusName(status.Running),
-			PID:       metadataPID(status.Metadata),
-			StartedAt: metadataStart(status.Metadata),
-			Reused:    reused,
-			Dashboard: dashboardURL,
+			Status: statusName(status.Running), PID: metadataPID(status.Metadata), StartedAt: metadataStart(status.Metadata),
+			Reused: reused, Dashboard: dashboardURL, ServiceState: health.ServiceState, VaultState: health.VaultState,
+			DatabaseState: health.DatabaseState, ErrorCode: health.ErrorCode, GuidanceCommands: health.GuidanceCommands,
 		}); err != nil {
 			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode service status\n", apperrors.CLIInternal)
 			return err
 		}
 		return nil
 	}
-	if reused {
+	if !status.Running {
+		_, _ = io.WriteString(stdout, "service owner stopped\n")
+	} else if health.ServiceState == httpapi.ServiceStateLocked {
+		_, _ = io.WriteString(stdout, "service owner running; vault locked")
+		if dashboardURL != "" {
+			_, _ = fmt.Fprintf(stdout, "; dashboard: %s", dashboardURL)
+		}
+		_, _ = io.WriteString(stdout, "\n")
+		_, _ = io.WriteString(stdout, "run 'codex-folio vault unlock' in this terminal session\n")
+	} else if health.ServiceState == httpapi.ServiceStateRecoveryRequired {
+		_, _ = io.WriteString(stdout, "service owner running; local data needs recovery")
+		if dashboardURL != "" {
+			_, _ = fmt.Fprintf(stdout, "; dashboard: %s", dashboardURL)
+		}
+		_, _ = io.WriteString(stdout, "\n")
+		_, _ = io.WriteString(stdout, "stop the service owner, then run 'codex-folio service recovery verify'\n")
+	} else if reused {
 		_, _ = fmt.Fprintf(stdout, "service owner reused; dashboard: %s\n", dashboardURL)
 	} else if dashboardURL != "" {
 		_, _ = fmt.Fprintf(stdout, "service owner started; dashboard: %s\n", dashboardURL)
 		_, _ = io.WriteString(stdout, "press Ctrl-C to stop\n")
 	} else {
-		_, _ = io.WriteString(stdout, "service owner started; press Ctrl-C to stop\n")
+		_, _ = io.WriteString(stdout, "service owner running\n")
 	}
 	return nil
 }
@@ -938,9 +976,14 @@ func writeReusedDashboard(paths platform.Paths, options serviceOptions, status p
 	if err != nil {
 		return err
 	}
-	link, err := httpapi.NewCommandClient(connection.Origin, connection.Token, nil).Dashboard(context.Background())
+	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	link, err := client.Dashboard(context.Background())
 	if err != nil {
 		return err
 	}
-	return writeServiceStateWithDashboard(stdout, stderr, options.json, status, true, link)
+	health, err := client.ServiceHealth(context.Background())
+	if err != nil {
+		return err
+	}
+	return writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, true, link, health)
 }

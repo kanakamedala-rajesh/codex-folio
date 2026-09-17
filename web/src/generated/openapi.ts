@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "e8e9b907f4be8e00878d7ad33fc9b89e56e1baac46c89d08e449d39b833c7abf" as const;
+  "4a2b7b5c22d9e9f99aec4a001ae7fbde0f131230b264480069881b6f22e51584" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 
 export interface HistoryScope {
@@ -457,6 +457,11 @@ export interface MetadataResponse {
   api_version: string;
   contract_version: string;
   product: string;
+  service_state: string;
+  vault_state: string;
+  database_state: string;
+  error_code: string;
+  guidance_commands: string[];
 }
 
 export interface ProfileSetupStages {

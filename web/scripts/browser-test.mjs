@@ -11,7 +11,10 @@ import { testSessions } from "./sessions-browser-test.mjs";
 import { testAnalytics } from "./analytics-browser-test.mjs";
 
 const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
-assert.ok(["deep", "smoke", "benchmark", "reentry"].includes(phase), "unknown browser phase");
+assert.ok(
+  ["deep", "smoke", "benchmark", "reentry", "health-locked", "health-recovery"].includes(phase),
+  "unknown browser phase",
+);
 const output =
   process.env.CODEX_FOLIO_BROWSER_OUTPUT ?? join(tmpdir(), "codex-folio-overview-browser");
 mkdirSync(output, { recursive: true });
@@ -160,7 +163,37 @@ async function assertFocusedHeading(name) {
   );
 }
 try {
-  if (phase === "benchmark") {
+  if (phase === "health-locked" || phase === "health-recovery") {
+    await page.goto(link);
+    const recovery = phase === "health-recovery";
+    await assertFocusedHeading(
+      recovery ? "Local data needs recovery" : "Unlock for this user session",
+    );
+    assert.ok(!page.url().includes("bootstrap="));
+    const main = await page.locator("main").innerText();
+    if (recovery) {
+      assert.match(main, /preserved the database and stopped writes/);
+      assert.match(main, /codex-folio service recovery verify/);
+      assert.match(main, /codex-folio service recovery list/);
+    } else {
+      assert.match(main, /Sensitive collection is paused/);
+      assert.match(main, /codex-folio vault unlock/);
+      assert.equal(await page.locator('input[type="password"]').count(), 0);
+    }
+    const stateRequest = await page.request.get(new URL("/api/v1/analytics", link).href);
+    assert.equal(stateRequest.status(), 423);
+    await page.evaluate(axe.source);
+    await scanAccessibility(phase);
+    await capture(`${phase}-wide`, 1440, 1000);
+    await capture(`${phase}-narrow`, 390, 844);
+    await page.emulateMedia({
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      forcedColors: "active",
+    });
+    await capture(`${phase}-forced`, 390, 844);
+    check(`${phase}: authenticated safe health, state suppression, accessibility and reflow`);
+  } else if (phase === "benchmark") {
     const start = performance.now();
     await page.goto(link);
     await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();

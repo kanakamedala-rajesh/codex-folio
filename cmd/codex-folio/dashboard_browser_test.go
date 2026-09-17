@@ -18,6 +18,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -104,7 +105,51 @@ func TestOverviewBrowser(t *testing.T) {
 	if suite != "deep" && suite != "smoke" {
 		t.Fatalf("unknown browser suite %q", suite)
 	}
+	if suite == "deep" {
+		runServiceHealthBrowser(t)
+	}
 	runOverviewBrowser(t, suite)
+}
+
+func runServiceHealthBrowser(t *testing.T) {
+	t.Helper()
+	for _, scenario := range []struct {
+		name   string
+		health httpapi.ServiceHealth
+	}{
+		{name: "locked", health: httpapi.ServiceHealth{ServiceState: httpapi.ServiceStateLocked, VaultState: httpapi.VaultStateLocked, DatabaseState: httpapi.DatabaseStateNotChecked, GuidanceCommands: []string{"codex-folio vault unlock"}}},
+		{name: "recovery", health: httpapi.ServiceHealth{ServiceState: httpapi.ServiceStateRecoveryRequired, VaultState: httpapi.VaultStateLocked, DatabaseState: httpapi.DatabaseStateRecoveryRequired, ErrorCode: apperrors.StoreIntegrityFailed, GuidanceCommands: []string{"codex-folio service recovery verify", "codex-folio service recovery list"}}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			lifecycle := &vaultCommandLifecycle{health: scenario.health}
+			server, err := httpapi.NewServer(httpapi.Options{CommandToken: "health-browser-command", ServiceLifecycle: lifecycle, StartLocked: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener, err := server.Listen()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+			go func() { _ = server.Serve(listener) }()
+			output := os.Getenv("CODEX_FOLIO_BROWSER_OUTPUT")
+			if output == "" {
+				output = t.TempDir()
+			} else {
+				output = filepath.Join(output, "health-"+scenario.name)
+				if err := os.MkdirAll(output, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), filepath.Join(output, "unused"), "health-"+scenario.name)
+			runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
+			runner.Stdout = os.Stdout
+			runner.Stderr = os.Stderr
+			if err := runner.Run(); err != nil {
+				t.Fatalf("%s service-health browser journey failed: %v", scenario.name, err)
+			}
+		})
+	}
 }
 
 func TestOverviewStartupBenchmark(t *testing.T) {

@@ -54,6 +54,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runVersion(args, stdout, stderr, metadata)
 	case "service":
 		return runServiceWithPathResolver(args[1:], stdout, stderr, resolvePaths)
+	case "vault":
+		return runVault(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "codex":
 		return runCodex(args[1:], stdout, stderr, resolver)
 	case "profile":
@@ -120,6 +122,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
 	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio vault unlock [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
