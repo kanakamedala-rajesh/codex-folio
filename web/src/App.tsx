@@ -8,6 +8,7 @@ import {
   type ConfigurationPackResponse,
   type ConfigurationPackSummary,
   type CheckpointManagementResponse,
+  type CollectionSettingsResponse,
   type HandoffRequest,
   type HandoffResponse,
   type MetadataResponse,
@@ -445,6 +446,11 @@ export function App() {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [packs, setPacks] = useState<ConfigurationPackSummary[]>([]);
   const [quarantined, setQuarantined] = useState<ProfileLifecycleRecord[]>([]);
+  const [collectionSettings, setCollectionSettings] = useState<CollectionSettingsResponse | null>(
+    null,
+  );
+  const [activeMinutes, setActiveMinutes] = useState(5);
+  const [idleMinutes, setIdleMinutes] = useState(30);
   const [combined, setCombined] = useState(false);
   const [route, setRoute] = useState("Overview");
   const [sessionFilters, setSessionFilters] = useState<SessionFilters>({
@@ -517,7 +523,12 @@ export function App() {
         throw e;
       }),
       includeProfiles
-        ? Promise.all([api.getProfiles(), api.listProfileQuarantine(), api.getConfigurationPacks()])
+        ? Promise.all([
+            api.getProfiles(),
+            api.listProfileQuarantine(),
+            api.getConfigurationPacks(),
+            api.getCollectionSettings(),
+          ])
         : null,
     ]);
     setNow(Date.now());
@@ -527,6 +538,9 @@ export function App() {
       setProfiles(inventory[0].profiles);
       setQuarantined(inventory[1].quarantined);
       setPacks(inventory[2].packs);
+      setCollectionSettings(inventory[3]);
+      setActiveMinutes(inventory[3].active_interval_seconds / 60);
+      setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
     return next;
   }
@@ -696,11 +710,36 @@ export function App() {
       );
       setCombined(false);
       setWarning(result.warning);
-      await load();
       setMessage(c.selectedDone);
+      await load();
     } catch (e) {
       failure(e);
       throw e;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function saveCollectionSettings() {
+    if (operation.current || !collectionSettings) return;
+    operation.current = true;
+    setBusy(true);
+    setMessage(c.collectionScheduleSaving);
+    try {
+      const saved = await api.setCollectionSettings(
+        {
+          active_interval_seconds: activeMinutes * 60,
+          idle_interval_seconds: idleMinutes * 60,
+        },
+        { headers: { "X-CodexFolio-CSRF": csrf.current } },
+      );
+      setCollectionSettings(saved);
+      setActiveMinutes(saved.active_interval_seconds / 60);
+      setIdleMinutes(saved.idle_interval_seconds / 60);
+      setMessage(c.collectionScheduleSaved);
+    } catch (error) {
+      failure(error);
+      setMessage(c.collectionScheduleFailed);
     } finally {
       operation.current = false;
       setBusy(false);
@@ -779,7 +818,40 @@ export function App() {
       const result = await api.manageProfileLifecycle(request, {
         headers: { "X-CodexFolio-CSRF": csrf.current },
       });
-      if (request.action !== "preview") await load(true);
+      if (request.action === "remove") {
+        setProfiles((current) =>
+          current
+            .filter((profile) => profile.profile_id !== result.profile.profile_id)
+            .map((profile) => ({
+              ...profile,
+              selected: request.replacement
+                ? profile.alias === request.replacement
+                : profile.selected,
+            })),
+        );
+        setQuarantined((current) =>
+          result.action === "quarantined"
+            ? [
+                ...current.filter(
+                  (record) => record.profile.profile_id !== result.profile.profile_id,
+                ),
+                result,
+              ]
+            : current.filter((record) => record.profile.profile_id !== result.profile.profile_id),
+        );
+      } else if (request.action === "restore") {
+        setProfiles((current) => [
+          ...current.filter((profile) => profile.profile_id !== result.profile.profile_id),
+          result.profile,
+        ]);
+        setQuarantined((current) =>
+          current.filter((record) => record.profile.profile_id !== result.profile.profile_id),
+        );
+      } else if (request.action === "purge") {
+        setQuarantined((current) =>
+          current.filter((record) => record.profile.profile_id !== result.profile.profile_id),
+        );
+      }
       return result;
     } catch (error) {
       if (
@@ -804,6 +876,7 @@ export function App() {
       const result = await api.manageConfigurationPack(request, {
         headers: { "X-CodexFolio-CSRF": csrf.current },
       });
+      if (request.action === "preview" || request.action === "promotion-preview") return result;
       const [packInventory, profileInventory] = await Promise.all([
         api.getConfigurationPacks(),
         api.getProfiles(),
@@ -1186,6 +1259,67 @@ export function App() {
                           </code>
                         ))}
                       </div>
+                    </section>
+                    <section className="border-b border-rule py-6">
+                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                        {c.collectionSchedule}
+                      </h2>
+                      <p className="mb-4 max-w-[75ch]">
+                        {collectionSettings?.scheduler_enabled
+                          ? c.collectionScheduleEnabled
+                          : c.collectionScheduleDisabled}
+                      </p>
+                      <p className="mb-4 max-w-[75ch] text-muted">
+                        {c.collectionScheduleFloor(
+                          (collectionSettings?.provider_minimum_seconds ?? 300) / 60,
+                        )}
+                      </p>
+                      <form
+                        className="grid max-w-xl gap-4 sm:grid-cols-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void saveCollectionSettings();
+                        }}
+                      >
+                        <label className="grid min-w-0 gap-[0.4rem]">
+                          {c.collectionActiveMinutes}
+                          <input
+                            type="number"
+                            min="5"
+                            max="1440"
+                            step="1"
+                            value={activeMinutes}
+                            onChange={(event) => setActiveMinutes(Number(event.target.value))}
+                            className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink"
+                          />
+                        </label>
+                        <label className="grid min-w-0 gap-[0.4rem]">
+                          {c.collectionIdleMinutes}
+                          <input
+                            type="number"
+                            min="5"
+                            max="1440"
+                            step="1"
+                            value={idleMinutes}
+                            onChange={(event) => setIdleMinutes(Number(event.target.value))}
+                            className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink"
+                          />
+                        </label>
+                        <button
+                          type="submit"
+                          disabled={
+                            busy ||
+                            !collectionSettings ||
+                            activeMinutes < 5 ||
+                            activeMinutes > 1440 ||
+                            idleMinutes < 5 ||
+                            idleMinutes > 1440
+                          }
+                          className="min-h-11 max-w-full rounded border border-accent bg-accent px-[0.8rem] py-[0.55rem] font-semibold text-canvas cursor-pointer hover:border-ink disabled:cursor-not-allowed disabled:border-dashed disabled:bg-panel disabled:text-muted sm:col-span-2"
+                        >
+                          {c.collectionScheduleSave}
+                        </button>
+                      </form>
                     </section>
                     <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                       {c.appearance}

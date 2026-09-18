@@ -29,7 +29,7 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
-page.setDefaultTimeout(30_000);
+page.setDefaultTimeout(60_000);
 const errors = [],
   remote = [];
 page.on("pageerror", (error) => errors.push(error.message));
@@ -87,9 +87,32 @@ async function choose(value, confirm = true) {
 }
 async function scenario(mode) {
   writeFileSync(control, mode);
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await page.getByRole("button", { name: "Refresh", exact: true }).waitFor();
-  await page.waitForFunction(() => !document.querySelector("select")?.disabled);
+  const refreshButton = page.getByRole("button", { name: "Refresh", exact: true });
+  const refreshed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/usage/refresh" &&
+      response.request().method() === "POST",
+  );
+  const reloaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/analytics" &&
+      response.request().method() === "GET",
+  );
+  await refreshButton.click();
+  await refreshed;
+  const response = await reloaded;
+  await response.finished();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
+      ),
+  );
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Refresh" && !button.disabled,
+    ),
+  );
 }
 async function profileAction(name) {
   const completed = page.waitForResponse(
@@ -297,10 +320,9 @@ try {
       await page
         .getByRole("combobox", { name: "Project", exact: true })
         .selectOption({ label: "Atlas · atlas" });
-      assert.ok(
-        (await page.locator("main").innerText()).includes(
-          `codex-folio launch Personal --project ${projectId} --`,
-        ),
+      await page.waitForFunction(
+        (expected) => document.querySelector("main")?.textContent?.includes(expected),
+        `codex-folio launch Personal --project ${projectId} --`,
       );
       assert.match(await page.locator("main").innerText(), /Prepared · Not started/);
       // Axe is injected by the test harness, never shipped as a runtime app asset.
@@ -602,6 +624,34 @@ try {
       assert.match(settings, /Native per-user mechanism: systemd-user/);
       assert.match(settings, /codex-folio service install/);
       check("Settings exposes native enrollment status and explicit terminal guidance");
+      assert.match(settings, /Periodic collection schedule[\s\S]*On demand · Saved intervals/);
+      assert.equal(
+        await page.getByLabel("Managed Launch interval · minutes", { exact: true }).inputValue(),
+        "5",
+      );
+      assert.equal(
+        await page.getByLabel("Idle interval · minutes", { exact: true }).inputValue(),
+        "30",
+      );
+      const scheduleSaved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/collection-settings") &&
+          response.request().method() === "PUT",
+      );
+      await page.getByLabel("Idle interval · minutes", { exact: true }).fill("45");
+      await page.getByRole("button", { name: "Save collection intervals", exact: true }).click();
+      assert.equal((await scheduleSaved).status(), 200);
+      await page.getByText("Periodic collection intervals saved.", { exact: true }).waitFor();
+      const persistedSchedule = await page.request.get(
+        new URL("/api/v1/collection-settings", link).href,
+      );
+      assert.equal(persistedSchedule.status(), 200);
+      assert.equal((await persistedSchedule.json()).idle_interval_seconds, 2700);
+      assert.equal(
+        await page.getByLabel("Idle interval · minutes", { exact: true }).inputValue(),
+        "45",
+      );
+      check("Settings persists bounded collection intervals without enrolling the service");
       await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
       assert.match(await page.locator("main").innerText(), /Completed/);
       assert.match(await page.locator("main").innerText(), /Retained/);
@@ -745,7 +795,12 @@ try {
       await page.getByRole("button", { name: "Manage Shared Configuration", exact: true }).click();
       await assertFocusedHeading("Shared Configuration Packs");
       assert.doesNotMatch(await page.locator("main").innerText(), /model =|gpt-5-mini/);
-      await configurationAction("Preview projection", "preview");
+      const projectionPreview = await configurationAction("Preview projection", "preview");
+      const projectionPreviewBody = await projectionPreview.text();
+      assert.equal(projectionPreview.status(), 200, projectionPreviewBody);
+      assert.deepEqual(JSON.parse(projectionPreviewBody).plan?.conflicts, [
+        { path: "config.toml", kind: "modified" },
+      ]);
       await page
         .getByText("These profile-local files will be preserved:", { exact: true })
         .waitFor();

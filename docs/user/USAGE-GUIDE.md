@@ -227,6 +227,21 @@ for the current user, inspect it, and remove only that enrollment:
 ./build/bin/codex-folio service uninstall
 ```
 
+Only an explicitly installed native service runs periodic usage collection.
+Opening the dashboard or using `service start` on demand does not enroll or
+enable it. The default interval is five minutes while a Managed Launch is
+running and 30 minutes while idle. Review or change both intervals in
+**Settings → Periodic collection schedule**, or from a terminal:
+
+```sh
+./build/bin/codex-folio settings collection
+./build/bin/codex-folio settings collection --active-minutes 10 --idle-minutes 60
+```
+
+Intervals cannot be shorter than five minutes. Known provider reset times can
+trigger a collection near that boundary; missing or unknown reset metadata is
+never guessed. A passphrase-backed enrolled service stays paused while locked.
+
 CodexFolio uses Task Scheduler on Windows, a LaunchAgent on macOS, and
 `systemd --user` on Linux or systemd-enabled WSL2. These commands do not request
 administrator/root access, remove app data, change Codex, or fall back to a

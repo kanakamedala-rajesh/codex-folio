@@ -337,6 +337,77 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 19,
+			name:    "periodic-collection-schedule",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN collection_active_interval_seconds INTEGER NOT NULL DEFAULT 300 CHECK (collection_active_interval_seconds BETWEEN 300 AND 86400)`,
+					`ALTER TABLE settings ADD COLUMN collection_idle_interval_seconds INTEGER NOT NULL DEFAULT 1800 CHECK (collection_idle_interval_seconds BETWEEN 300 AND 86400)`,
+					`CREATE TABLE collection_schedule_state (
+						profile_id TEXT PRIMARY KEY NOT NULL,
+						last_attempt_at TEXT,
+						next_attempt_at TEXT NOT NULL,
+						consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+						last_outcome TEXT NOT NULL DEFAULT '' CHECK (last_outcome IN ('', 'succeeded', 'failed')),
+						updated_at TEXT NOT NULL,
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id) ON DELETE CASCADE
+					)`,
+					`CREATE INDEX idx_collection_schedule_next ON collection_schedule_state(next_attempt_at)`,
+					`PRAGMA defer_foreign_keys = ON`,
+					`CREATE TABLE usage_snapshots_v19 (
+						snapshot_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						source TEXT NOT NULL CHECK (source IN ('codex_app_server')),
+						source_version TEXT NOT NULL,
+						captured_at TEXT NOT NULL,
+						status TEXT NOT NULL DEFAULT 'available',
+						trigger_reason TEXT NOT NULL DEFAULT 'explicit_refresh' CHECK (trigger_reason IN ('explicit_refresh', 'dashboard_open', 'dashboard_refresh', 'pre_launch', 'post_exit', 'periodic_active', 'periodic_idle', 'periodic_reset')),
+						login_identity_ciphertext BLOB CHECK (login_identity_ciphertext IS NULL OR typeof(login_identity_ciphertext) = 'blob'),
+						workspace_ciphertext BLOB CHECK (workspace_ciphertext IS NULL OR typeof(workspace_ciphertext) = 'blob'),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`INSERT INTO usage_snapshots_v19 SELECT snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason, login_identity_ciphertext, workspace_ciphertext FROM usage_snapshots`,
+					`CREATE TABLE usage_observations_v19 (
+						observation_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL,
+						provenance_id TEXT,
+						metric_availability_id TEXT,
+						value REAL NOT NULL,
+						unit TEXT NOT NULL,
+						window_start TEXT,
+						window_end TEXT,
+						observed_at TEXT NOT NULL,
+						snapshot_id TEXT,
+						window_timezone TEXT NOT NULL DEFAULT '',
+						assumptions TEXT NOT NULL DEFAULT '',
+						uncertainty TEXT NOT NULL DEFAULT '',
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id),
+						FOREIGN KEY (metric_key) REFERENCES usage_metrics (metric_key),
+						FOREIGN KEY (provenance_id) REFERENCES metric_provenance (provenance_id),
+						FOREIGN KEY (metric_availability_id) REFERENCES metric_availability (metric_availability_id),
+						FOREIGN KEY (snapshot_id) REFERENCES usage_snapshots_v19 (snapshot_id)
+					)`,
+					`INSERT INTO usage_observations_v19 SELECT observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, window_start, window_end, observed_at, snapshot_id, window_timezone, assumptions, uncertainty FROM usage_observations`,
+					`DROP TABLE usage_observations`,
+					`DROP TABLE usage_snapshots`,
+					`ALTER TABLE usage_snapshots_v19 RENAME TO usage_snapshots`,
+					`ALTER TABLE usage_observations_v19 RENAME TO usage_observations`,
+					`CREATE INDEX idx_usage_snapshots_profile_time ON usage_snapshots (profile_id, captured_at)`,
+					`CREATE INDEX idx_usage_observations_profile_time ON usage_observations (profile_id, observed_at)`,
+					`CREATE INDEX idx_usage_observations_snapshot ON usage_observations (snapshot_id)`,
+					`CREATE INDEX idx_usage_observations_expiry ON usage_observations(rtrim(observed_at, 'Z'))`,
+					`CREATE INDEX idx_usage_observations_availability ON usage_observations(metric_availability_id)`,
+					`CREATE INDEX idx_usage_observations_provenance ON usage_observations(provenance_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -583,6 +654,7 @@ var expectedTables = map[string][]string{
 	"alerts":                         {"alert_id", "profile_id", "category", "severity", "state", "created_at", "acknowledged_at"},
 	"checkpoints":                    {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
 	"cli_aliases":                    {"alias_id", "profile_id", "alias", "created_at"},
+	"collection_schedule_state":      {"profile_id", "last_attempt_at", "next_attempt_at", "consecutive_failures", "last_outcome", "updated_at"},
 	"configuration_packs":            {"configuration_pack_id", "pack_version", "state", "content_digest", "created_at"},
 	"configuration_pack_assignments": {"profile_id", "configuration_pack_id", "pack_version", "assigned_at"},
 	"configuration_pack_overrides":   {"profile_id", "path", "content", "updated_at"},
@@ -604,7 +676,7 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
@@ -612,6 +684,7 @@ var expectedTables = map[string][]string{
 }
 
 var expectedIndexes = []string{
+	"idx_collection_schedule_next",
 	"idx_usage_aggregates_group",
 	"idx_usage_aggregates_profile_time",
 	"idx_usage_observations_expiry",

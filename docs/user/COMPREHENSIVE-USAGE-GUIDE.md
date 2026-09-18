@@ -93,6 +93,49 @@ Repeated install/uninstall is safe and reports whether enrollment changed. When
 the native mechanism is unavailable, status says so and on-demand `service
 start` remains available.
 
+### Periodic usage collection
+
+Periodic collection runs only inside a service session started by an explicit
+native enrollment. Merely opening the dashboard, running a CLI command, or
+starting the foreground service does not enroll or enable the scheduler.
+Passphrase-backed sessions do not start it until the vault is successfully
+unlocked, and stop it again when the service session closes.
+
+The defaults are five minutes while a Managed Launch is running and 30 minutes
+while idle. Read or update the persisted values through **Settings → Periodic
+collection schedule** or the generated-client-backed CLI surface:
+
+```sh
+./build/bin/codex-folio settings collection --json
+./build/bin/codex-folio settings collection --active-minutes 10 --idle-minutes 60
+```
+
+Both values accept whole minutes from 5 through 1,440. The five-minute minimum
+is CodexFolio's conservative provider-safe floor: the supported Codex App Server
+contract documents `account/rateLimits/read`, update notifications,
+`windowDurationMins`, and `resetsAt`, but publishes no polling cadence. See the
+[official App Server documentation](https://developers.openai.com/codex/app-server/).
+CodexFolio therefore will not accept a tighter cadence without a new documented
+provider contract.
+
+Known future reset timestamps can move the next collection to that reset
+boundary, subject to the same floor. Missing or unknown reset metadata is
+ignored rather than inferred. Ordinary intervals and retries use bounded
+positive jitter. Failures retain their normalized evidence and use persisted
+exponential backoff from five minutes up to six hours; a later success restores
+the configured cadence. At most four profiles are processed per scheduler tick,
+overlapping ticks and same-profile refreshes coalesce, and downtime does not
+replay every missed interval.
+
+The scheduler reuses the existing collector, SQLite writer, retention workflow,
+owner lock, and native launch identity. It does not create a second daemon or
+writer. An idle enrolled service wakes at one-minute resolution, performs no
+provider call before a profile is due, and writes schedule state only when the
+next attempt changes or a collection completes. The repository verification
+suite exercises active, idle, reset, retry, restart, coalescing, lock, API, CLI,
+and browser persistence paths; native runtime resource qualification remains
+part of the platform evidence recorded for release qualification.
+
 Supported vault modes are platform Secret Service and passphrase mode:
 
 ```sh

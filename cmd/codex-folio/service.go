@@ -386,7 +386,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	}
 	compose := func(stateStore *store.Store) (httpapi.OperationalServices, error) {
 		attachServiceDiagnosticStore(diagnosticSink, stateStore)
-		return composeServiceOperationalServices(paths, stateStore)
+		return composeServiceOperationalServices(paths, stateStore, options.enrolled)
 	}
 	var services httpapi.OperationalServices
 	var stateOwner interface{ Close() error }
@@ -400,13 +400,13 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, openErr, diagnosticSink)
 		}
-		stateOwner = stateStore
 		services, err = compose(stateStore)
 		if err != nil {
 			_ = stateStore.Close()
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
+		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background}
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
 	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
@@ -449,7 +449,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	return waitForServiceStopWithDiagnostics(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
 }
 
-func composeServiceOperationalServices(paths platform.Paths, stateStore *store.Store) (httpapi.OperationalServices, error) {
+func composeServiceOperationalServices(paths platform.Paths, stateStore *store.Store, enrolled ...bool) (httpapi.OperationalServices, error) {
 	selector, err := profile.NewSelector(stateStore)
 	if err != nil {
 		return httpapi.OperationalServices{}, err
@@ -494,14 +494,43 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		return httpapi.OperationalServices{}, err
 	}
 	launches.continuations = checkpoints
-	return httpapi.OperationalServices{
+	services := httpapi.OperationalServices{
 		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
-		History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
+		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: len(enrolled) > 0 && enrolled[0]},
+		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
 		Checkpoints:       checkpoints,
 		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
-	}, nil
+	}
+	if len(enrolled) > 0 && enrolled[0] {
+		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
+		if err != nil {
+			return httpapi.OperationalServices{}, err
+		}
+		services.Background = startCollectionScheduler(scheduler)
+	}
+	return services, nil
+}
+
+type serviceStateOwner struct {
+	store      *store.Store
+	background serviceCloser
+}
+
+func (owner *serviceStateOwner) Close() error {
+	if owner.background != nil {
+		if err := owner.background.Close(); err != nil {
+			return err
+		}
+		owner.background = nil
+	}
+	if owner.store == nil {
+		return nil
+	}
+	err := owner.store.Close()
+	owner.store = nil
+	return err
 }
 
 func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, services httpapi.OperationalServices) httpapi.Options {
@@ -509,7 +538,8 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		Diagnostics: diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
 		ProfileLifecycle: services.ProfileLifecycle, ProfileAuthentication: services.ProfileAuthentication,
 		ConfigurationPacks: services.ConfigurationPacks, Launches: services.Launches, Usage: services.Usage,
-		Projects: services.Projects, Activities: services.Activities, History: services.History,
+		CollectionSettings: services.CollectionSettings,
+		Projects:           services.Projects, Activities: services.Activities, History: services.History,
 		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
 		CommandToken: commandToken,
 	}

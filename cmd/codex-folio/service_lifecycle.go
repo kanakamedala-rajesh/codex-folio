@@ -19,14 +19,15 @@ type serviceActivator func(httpapi.OperationalServices) error
 // or migrating SQLite, composing workflows, and publishing them to HTTP are a
 // single serialized transition.
 type lockedServiceLifecycle struct {
-	mu        sync.Mutex
-	paths     platform.Paths
-	mode      platform.VaultMode
-	openStore profileStoreOpener
-	compose   serviceOperationalComposer
-	activate  serviceActivator
-	store     *store.Store
-	health    httpapi.ServiceHealth
+	mu         sync.Mutex
+	paths      platform.Paths
+	mode       platform.VaultMode
+	openStore  profileStoreOpener
+	compose    serviceOperationalComposer
+	activate   serviceActivator
+	store      *store.Store
+	background serviceCloser
+	health     httpapi.ServiceHealth
 }
 
 func newLockedServiceLifecycle(paths platform.Paths, mode platform.VaultMode, openStore profileStoreOpener, compose serviceOperationalComposer) *lockedServiceLifecycle {
@@ -81,9 +82,16 @@ func (lifecycle *lockedServiceLifecycle) Unlock(ctx context.Context, passphrase 
 	}
 	services, err := lifecycle.compose(stateStore)
 	if err == nil {
+		lifecycle.background = services.Background
+	}
+	if err == nil {
 		err = lifecycle.activate(services)
 	}
 	if err != nil {
+		if lifecycle.background != nil {
+			_ = lifecycle.background.Close()
+			lifecycle.background = nil
+		}
 		_ = stateStore.Close()
 		lifecycle.recordFailure(err)
 		return err
@@ -103,6 +111,12 @@ func (lifecycle *lockedServiceLifecycle) Close() error {
 	defer lifecycle.mu.Unlock()
 	if lifecycle.store == nil {
 		return nil
+	}
+	if lifecycle.background != nil {
+		if err := lifecycle.background.Close(); err != nil {
+			return err
+		}
+		lifecycle.background = nil
 	}
 	err := lifecycle.store.Close()
 	lifecycle.store = nil

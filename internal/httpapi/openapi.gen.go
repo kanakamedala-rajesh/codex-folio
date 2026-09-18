@@ -20,8 +20,9 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "977cb12776dcc27f93ccbc6409c581725c6309adab9f4d0e12a4c4d1563c9f39"
+	ContractSourceSHA256   = "e4e0ab4f13558ce90d6d8d56a3ccae277a2b4bedd149fc52236469a3c83258a7"
 	BootstrapPath          = "/api/v1/bootstrap"
+	CollectionSettingsPath = "/api/v1/collection-settings"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
 	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
@@ -477,6 +478,19 @@ type BootstrapRequest struct {
 
 type BootstrapResponse struct {
 	CSRFToken string `json:"csrf_token"`
+}
+
+type CollectionSettingsRequest struct {
+	ActiveIntervalSeconds int64 `json:"active_interval_seconds"`
+	IdleIntervalSeconds   int64 `json:"idle_interval_seconds"`
+}
+
+type CollectionSettingsResponse struct {
+	ActiveIntervalSeconds  int64  `json:"active_interval_seconds"`
+	IdleIntervalSeconds    int64  `json:"idle_interval_seconds"`
+	ProviderMinimumSeconds int64  `json:"provider_minimum_seconds"`
+	SchedulerEnabled       bool   `json:"scheduler_enabled"`
+	ProviderFloorBasis     string `json:"provider_floor_basis"`
 }
 
 type MetadataResponse struct {

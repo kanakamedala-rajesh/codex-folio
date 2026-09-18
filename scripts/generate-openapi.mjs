@@ -144,6 +144,7 @@ function validateContract(contract, productVersion) {
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const handoffPath = `/api/${apiVersion}/handoff`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
+  const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
   const profileLifecyclePath = `/api/${apiVersion}/profile-lifecycle`;
@@ -160,6 +161,7 @@ function validateContract(contract, productVersion) {
       analyticsPath,
       historyPath,
       bootstrapPath,
+      collectionSettingsPath,
       configurationPacksPath,
       handoffPath,
       metadataPath,
@@ -206,6 +208,19 @@ function validateContract(contract, productVersion) {
     metadataOperation,
     `GET ${metadataPath}`,
   );
+
+  const collectionSettingsPathItem = contract.paths[collectionSettingsPath];
+  assertObject(collectionSettingsPathItem, `path ${collectionSettingsPath}`);
+  assertExactKeys(collectionSettingsPathItem, ["get", "put"], `path ${collectionSettingsPath}`);
+  const getCollectionSettingsOperation = collectionSettingsPathItem.get;
+  const setCollectionSettingsOperation = collectionSettingsPathItem.put;
+  assertExactKeys(getCollectionSettingsOperation, ["operationId", "responses"], `GET ${collectionSettingsPath}`);
+  assertExactKeys(setCollectionSettingsOperation, ["operationId", "requestBody", "responses"], `PUT ${collectionSettingsPath}`);
+  assertIdentifier(getCollectionSettingsOperation.operationId, "get collection settings operationId");
+  assertIdentifier(setCollectionSettingsOperation.operationId, "set collection settings operationId");
+  const collectionSettingsRequestReference = requestReference(setCollectionSettingsOperation.requestBody, `PUT ${collectionSettingsPath} request body`);
+  const collectionSettingsResponseReference = responseReference(getCollectionSettingsOperation, `GET ${collectionSettingsPath}`, ["200", "default"]);
+  assertEqual(responseReference(setCollectionSettingsOperation, `PUT ${collectionSettingsPath}`, ["200", "default"]), collectionSettingsResponseReference, "collection settings response reference");
 
   const activityOperation = contract.paths[activityPath]?.get;
   assertObject(activityOperation, `GET ${activityPath}`);
@@ -426,6 +441,8 @@ function validateContract(contract, productVersion) {
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
+    schemaNameFromReference(collectionSettingsRequestReference, "collection settings request"),
+    schemaNameFromReference(collectionSettingsResponseReference, "collection settings response"),
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -532,8 +549,19 @@ function validateContract(contract, productVersion) {
   const profileLifecycleRecordFields = schemaFields(contract.$defs.ProfileLifecycleRecord, "ProfileLifecycleRecord");
   const profileLifecycleListResponseFields = schemaFields(contract.$defs.ProfileLifecycleListResponse, "ProfileLifecycleListResponse");
   const profileLifecycleRequestFields = schemaFields(contract.$defs.ProfileLifecycleRequest, "ProfileLifecycleRequest");
+  const collectionSettingsRequestType = schemaNameFromReference(collectionSettingsRequestReference, "collection settings request");
+  const collectionSettingsResponseType = schemaNameFromReference(collectionSettingsResponseReference, "collection settings response");
+  const collectionSettingsRequestFields = schemaFields(contract.$defs[collectionSettingsRequestType], collectionSettingsRequestType);
+  const collectionSettingsResponseFields = schemaFields(contract.$defs[collectionSettingsResponseType], collectionSettingsResponseType);
 
   return {
+    collectionSettingsPath,
+    collectionSettingsGetOperationId: getCollectionSettingsOperation.operationId,
+    collectionSettingsSetOperationId: setCollectionSettingsOperation.operationId,
+    collectionSettingsRequestFields,
+    collectionSettingsRequestType,
+    collectionSettingsResponseFields,
+    collectionSettingsResponseType,
     configurationPacksPath,
     configurationPackGetOperationId: getConfigurationPacksOperation.operationId,
     configurationPackManageOperationId: manageConfigurationPackOperation.operationId,
@@ -737,6 +765,13 @@ function renderGo(productVersion, sourceHash, contractShape) {
     bootstrapRequestType,
     bootstrapResponseFields,
     bootstrapResponseType,
+    collectionSettingsGetOperationId,
+    collectionSettingsPath,
+    collectionSettingsRequestFields,
+    collectionSettingsRequestType,
+    collectionSettingsResponseFields,
+    collectionSettingsResponseType,
+    collectionSettingsSetOperationId,
     handoffOperationId,
     handoffPath,
     handoffRequestType,
@@ -825,6 +860,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
+    renderGoStruct(collectionSettingsRequestType, collectionSettingsRequestFields),
+    renderGoStruct(collectionSettingsResponseType, collectionSettingsResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
     renderGoStruct("ProfileSetupStages", profileSetupStagesFields),
     renderGoStruct("ProfileSummary", profileSummaryFields),
@@ -880,6 +917,7 @@ const (
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
+\tCollectionSettingsPath = "${collectionSettingsPath}"
 \tConfigurationPacksPath = "${configurationPacksPath}"
 \tMetadataPath         = "${metadataPath}"
 \tProfileLifecyclePath = "${profileLifecyclePath}"
@@ -1350,6 +1388,13 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     bootstrapRequestType,
     bootstrapResponseFields,
     bootstrapResponseType,
+    collectionSettingsGetOperationId,
+    collectionSettingsPath,
+    collectionSettingsRequestFields,
+    collectionSettingsRequestType,
+    collectionSettingsResponseFields,
+    collectionSettingsResponseType,
+    collectionSettingsSetOperationId,
     metadataFields,
     metadataPath,
     metadataOperationId,
@@ -1416,6 +1461,12 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const metadataLines = metadataFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const collectionSettingsRequestLines = collectionSettingsRequestFields
+    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .join("\n");
+  const collectionSettingsResponseLines = collectionSettingsResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const profileSetupStagesLines = profileSetupStagesFields
@@ -1514,6 +1565,14 @@ ${bootstrapResponseLines}
 
 export interface ${metadataResponseType} {
 ${metadataLines}
+}
+
+export interface ${collectionSettingsRequestType} {
+${collectionSettingsRequestLines}
+}
+
+export interface ${collectionSettingsResponseType} {
+${collectionSettingsResponseLines}
 }
 
 export interface ProfileSetupStages {
@@ -1694,6 +1753,23 @@ export interface ApiPaths {
       };
     };
   };
+  "${collectionSettingsPath}": {
+    get: {
+      operationId: "${collectionSettingsGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${collectionSettingsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    put: {
+      operationId: "${collectionSettingsSetOperationId}";
+      requestBody: ${collectionSettingsRequestType};
+      responses: {
+        200: { content: { "application/json": ${collectionSettingsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${profilesPath}": {
     get: {
       operationId: "${getProfilesOperationId}";
@@ -1798,6 +1874,11 @@ export interface CodexFolioApiClient {
   ): Promise<${activityResponseType}>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
+  ${collectionSettingsGetOperationId}(init?: RequestInit): Promise<${collectionSettingsResponseType}>;
+  ${collectionSettingsSetOperationId}(
+    request: ${collectionSettingsRequestType},
+    init?: RequestInit,
+  ): Promise<${collectionSettingsResponseType}>;
   ${getProfilesOperationId}(init?: RequestInit): Promise<ProfilesResponse>;
   ${editProfileOperationId}(request: ProfileEditRequest, init?: RequestInit): Promise<ProfilesResponse>;
   ${authenticateProfileOperationId}(
@@ -1954,6 +2035,38 @@ export function createCodexFolioApiClient(
         throw new Error("GET ${metadataPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${metadataResponseType};
+    },
+    async ${collectionSettingsGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${collectionSettingsPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${collectionSettingsResponseType};
+    },
+    async ${collectionSettingsSetOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${collectionSettingsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${collectionSettingsResponseType};
     },
     async ${getProfilesOperationId}(init = {}) {
       const headers = new Headers(init.headers);

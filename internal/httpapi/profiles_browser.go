@@ -92,6 +92,13 @@ func (server *Server) browserProfileLifecycle(response http.ResponseWriter, requ
 
 func (server *Server) browserLifecycleRecord(request *http.Request, record profile.RemovalRecord) (ProfileLifecycleRecord, error) {
 	projected := browserProfileSummary(record.Profile)
+	if record.Action == profile.RemovalRestored {
+		var err error
+		projected, err = server.browserProfile(request, record.Profile)
+		if err != nil {
+			return ProfileLifecycleRecord{}, err
+		}
+	}
 	return ProfileLifecycleRecord{
 		Profile: projected, Action: string(record.Action), State: string(record.State),
 		QuarantinedAt: lifecycleTime(record.QuarantinedAt), PurgeAfter: lifecycleTime(record.PurgeAfter),
@@ -352,7 +359,7 @@ func (server *Server) browserProfile(request *http.Request, item profile.Identit
 				}
 			}
 			result.LastSuccessfulRefresh = formatUsageTime(latest)
-		} else if !errors.Is(err, usage.ErrProfileUnavailable) {
+		} else if !errors.Is(err, usage.ErrProfileUnavailable) && !errors.Is(err, usage.ErrSourceInvalid) {
 			return ProfileSummary{}, err
 		}
 	}

@@ -93,6 +93,19 @@ export const copy = {
   enrollmentUnavailable: "Native enrollment unavailable · On-demand access remains available",
   enrollmentMechanism: "Native per-user mechanism",
   enrollmentGuidance: "Review or change enrollment in your local terminal:",
+  collectionSchedule: "Periodic collection schedule",
+  collectionScheduleEnabled:
+    "Enabled by explicit native service enrollment for this service session.",
+  collectionScheduleDisabled:
+    "On demand · Saved intervals do not enroll or start a persistent service.",
+  collectionScheduleFloor: (minutes: number) =>
+    `Provider-safe minimum · ${number.format(minutes)} minutes · Supported App Server read with no published polling cadence`,
+  collectionActiveMinutes: "Managed Launch interval · minutes",
+  collectionIdleMinutes: "Idle interval · minutes",
+  collectionScheduleSave: "Save collection intervals",
+  collectionScheduleSaving: "Saving periodic collection intervals.",
+  collectionScheduleSaved: "Periodic collection intervals saved.",
+  collectionScheduleFailed: "Periodic collection intervals were not changed.",
   analyticsRetention: "Analytics retention",
   analyticsRetentionDetail:
     "13 calendar months by default · Configurable from 30 days to unlimited · Scoped purge is reviewed separately.",

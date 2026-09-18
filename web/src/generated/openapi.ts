@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "977cb12776dcc27f93ccbc6409c581725c6309adab9f4d0e12a4c4d1563c9f39" as const;
+  "e4e0ab4f13558ce90d6d8d56a3ccae277a2b4bedd149fc52236469a3c83258a7" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 
 export interface HistoryScope {
@@ -468,6 +468,19 @@ export interface MetadataResponse {
   enrollment_guidance: string[];
 }
 
+export interface CollectionSettingsRequest {
+  active_interval_seconds: number;
+  idle_interval_seconds: number;
+}
+
+export interface CollectionSettingsResponse {
+  active_interval_seconds: number;
+  idle_interval_seconds: number;
+  provider_minimum_seconds: number;
+  scheduler_enabled: boolean;
+  provider_floor_basis: string;
+}
+
 export interface ProfileSetupStages {
   discovery: boolean;
   home: boolean;
@@ -740,6 +753,23 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/collection-settings": {
+    get: {
+      operationId: "getCollectionSettings";
+      responses: {
+        200: { content: { "application/json": CollectionSettingsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    put: {
+      operationId: "setCollectionSettings";
+      requestBody: CollectionSettingsRequest;
+      responses: {
+        200: { content: { "application/json": CollectionSettingsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/profiles": {
     get: {
       operationId: "getProfiles";
@@ -844,6 +874,11 @@ export interface CodexFolioApiClient {
   ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
+  getCollectionSettings(init?: RequestInit): Promise<CollectionSettingsResponse>;
+  setCollectionSettings(
+    request: CollectionSettingsRequest,
+    init?: RequestInit,
+  ): Promise<CollectionSettingsResponse>;
   getProfiles(init?: RequestInit): Promise<ProfilesResponse>;
   editProfile(request: ProfileEditRequest, init?: RequestInit): Promise<ProfilesResponse>;
   authenticateProfile(
@@ -1000,6 +1035,38 @@ export function createCodexFolioApiClient(
         throw new Error("GET /api/v1/meta failed with HTTP " + response.status);
       }
       return (await response.json()) as MetadataResponse;
+    },
+    async getCollectionSettings(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/collection-settings", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as CollectionSettingsResponse;
+    },
+    async setCollectionSettings(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/collection-settings", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as CollectionSettingsResponse;
     },
     async getProfiles(init = {}) {
       const headers = new Headers(init.headers);

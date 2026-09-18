@@ -45,6 +45,7 @@ const (
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
+	CommandCollectionSettingsPath    = "/api/v1/command/collection-settings"
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
@@ -112,6 +113,7 @@ type ServiceLifecycle interface {
 // OperationalServices contains the state-owning workflows installed exactly
 // once after the vault and database have opened successfully.
 type OperationalServices struct {
+	Background            io.Closer
 	Selection             *profile.Selector
 	Profiles              *profile.Registry
 	ProfileLifecycle      *profile.Lifecycle
@@ -119,6 +121,7 @@ type OperationalServices struct {
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
 	Usage                 CommandUsageService
+	CollectionSettings    CollectionSettingsService
 	Projects              *activity.ProjectService
 	Activities            CommandActivityService
 	History               *usage.HistoryService
@@ -144,6 +147,7 @@ type Options struct {
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
 	Usage                 CommandUsageService
+	CollectionSettings    CollectionSettingsService
 	Projects              *activity.ProjectService
 	Activities            CommandActivityService
 	History               *usage.HistoryService
@@ -179,6 +183,7 @@ type Server struct {
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
 	usage                 CommandUsageService
+	collectionSettings    CollectionSettingsService
 	projects              *activity.ProjectService
 	activities            CommandActivityService
 	historyService        *usage.HistoryService
@@ -262,6 +267,7 @@ func NewServer(options Options) (*Server, error) {
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
 		usage:                 options.Usage,
+		collectionSettings:    options.CollectionSettings,
 		projects:              options.Projects,
 		activities:            options.Activities,
 		historyService:        options.History,
@@ -548,6 +554,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageLatest(response, request)
+	case CommandCollectionSettingsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.collectionSettingsHandler(response, request)
 	case CommandAnalyticsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -640,6 +651,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.analytics(response, request)
+	case CollectionSettingsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.collectionSettingsHandler(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1132,6 +1152,7 @@ func (server *Server) Activate(services OperationalServices) error {
 	server.configurationPacks = services.ConfigurationPacks
 	server.launches = services.Launches
 	server.usage = services.Usage
+	server.collectionSettings = services.CollectionSettings
 	server.projects = services.Projects
 	server.activities = services.Activities
 	server.historyService = services.History

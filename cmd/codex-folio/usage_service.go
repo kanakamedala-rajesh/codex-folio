@@ -17,6 +17,21 @@ type usageCommandService struct {
 	store    *store.Store
 }
 
+type collectionSettingsCommandService struct {
+	store   *store.Store
+	enabled bool
+}
+
+func (service *collectionSettingsCommandService) CollectionSettings(ctx context.Context) (usagefeature.CollectionSettings, bool, error) {
+	settings, err := service.store.CollectionSettings(ctx)
+	return settings, service.enabled, err
+}
+
+func (service *collectionSettingsCommandService) SetCollectionSettings(ctx context.Context, settings usagefeature.CollectionSettings) (usagefeature.CollectionSettings, bool, error) {
+	result, err := service.store.SetCollectionSettings(ctx, settings)
+	return result, service.enabled, err
+}
+
 func newUsageCommandService(stateStore *store.Store, resolver launch.ExecutableResolver) (*usageCommandService, error) {
 	workflow, err := usagefeature.NewService(stateStore, codexadapter.NewUsageCollector(), usageClock{})
 	if err != nil {

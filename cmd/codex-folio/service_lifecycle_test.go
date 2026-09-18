@@ -7,11 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/httpapi"
@@ -98,6 +102,149 @@ func TestLockedServiceLifecycleSuppressesStateUntilOneSuccessfulUnlock(t *testin
 	if health := restarted.Health(); health.ServiceState != httpapi.ServiceStateLocked || health.VaultState != httpapi.VaultStateLocked {
 		t.Fatalf("restarted health = %#v, want locked", health)
 	}
+}
+
+func TestCollectionSchedulerExistsOnlyForExplicitEnrollment(t *testing.T) {
+	root := testServiceTempDir(t)
+	override := root
+	paths, err := platform.ResolvePaths(platform.PathOptions{Platform: platform.Platform(runtime.GOOS), HomeDir: filepath.Join(root, "home"), OwnerHomeDir: filepath.Join(root, "home"), StateRootOverride: &override, Environment: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	databasePath := paths.DatabaseFile
+	secureVault, err := vault.NewMemoryVault(vault.MemoryVaultOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithVault(databasePath, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+
+	onDemand, err := composeServiceOperationalServices(paths, stateStore, false)
+	if err != nil {
+		t.Fatalf("on-demand composition error = %v", err)
+	}
+	if onDemand.Background != nil {
+		t.Fatal("on-demand service unexpectedly started periodic collection")
+	}
+	if settings, enabled, err := onDemand.CollectionSettings.CollectionSettings(context.Background()); err != nil || enabled || settings.ActiveInterval == 0 {
+		t.Fatalf("on-demand collection settings = %#v/%v/%v", settings, enabled, err)
+	}
+
+	enrolled, err := composeServiceOperationalServices(paths, stateStore, true)
+	if err != nil {
+		t.Fatalf("enrolled composition error = %v", err)
+	}
+	if enrolled.Background == nil {
+		t.Fatal("explicitly enrolled service did not start periodic collection")
+	}
+	if _, enabled, err := enrolled.CollectionSettings.CollectionSettings(context.Background()); err != nil || !enabled {
+		t.Fatalf("enrolled collection settings enabled = %v, error = %v", enabled, err)
+	}
+	if err := enrolled.Background.Close(); err != nil {
+		t.Fatalf("scheduler Close() error = %v", err)
+	}
+}
+
+func TestEnrolledServiceIdleResourceBudgetOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc resource evidence is Linux-specific")
+	}
+	if os.Getenv("CODEX_FOLIO_IDLE_RESOURCE_HELPER") != "1" {
+		helper := exec.Command(os.Args[0], "-test.run=^TestEnrolledServiceIdleResourceBudgetOnLinux$", "-test.count=1", "-test.v")
+		helper.Env = append(os.Environ(), "CODEX_FOLIO_IDLE_RESOURCE_HELPER=1")
+		output, err := helper.CombinedOutput()
+		if err != nil {
+			t.Fatalf("isolated idle resource measurement failed: %v\n%s", err, output)
+		}
+		t.Logf("isolated idle resource evidence:\n%s", output)
+		return
+	}
+
+	root := testServiceTempDir(t)
+	override := root
+	paths, err := platform.ResolvePaths(platform.PathOptions{Platform: platform.PlatformLinux, HomeDir: filepath.Join(root, "home"), OwnerHomeDir: filepath.Join(root, "home"), StateRootOverride: &override, Environment: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secureVault, err := vault.NewMemoryVault(vault.MemoryVaultOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithVault(paths.DatabaseFile, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services, err := composeServiceOperationalServices(paths, stateStore, true)
+	if err != nil {
+		_ = stateStore.Close()
+		t.Fatal(err)
+	}
+	owner := &serviceStateOwner{store: stateStore, background: services.Background}
+	defer owner.Close()
+	server, err := httpapi.NewServer(serviceServerOptions(nil, "idle-resource-fixture", services))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	time.Sleep(100 * time.Millisecond)
+	startTicks, rssBytes, err := linuxProcessResourceSample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	time.Sleep(2 * time.Second)
+	endTicks, rssAfter, err := linuxProcessResourceSample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rssAfter > rssBytes {
+		rssBytes = rssAfter
+	}
+	cpuPercent := (float64(endTicks-startTicks) / 100 / time.Since(started).Seconds()) * 100
+	t.Logf("idle enrolled service: rss=%d bytes cpu=%.3f%% interval=%s; no profiles, unlocked memory vault, composed real SQLite/service/API workflows", rssBytes, cpuPercent, time.Since(started).Round(time.Millisecond))
+	if rssBytes >= 75*1024*1024 {
+		t.Fatalf("idle resident memory = %d bytes, want < 75 MiB", rssBytes)
+	}
+	if cpuPercent >= 1 {
+		t.Fatalf("idle CPU = %.3f%%, want < 1%%", cpuPercent)
+	}
+}
+
+func linuxProcessResourceSample() (uint64, uint64, error) {
+	stat, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return 0, 0, err
+	}
+	closing := strings.LastIndexByte(string(stat), ')')
+	fields := strings.Fields(string(stat)[closing+1:])
+	if closing < 0 || len(fields) < 13 {
+		return 0, 0, errors.New("unexpected /proc/self/stat format")
+	}
+	userTicks, err := strconv.ParseUint(fields[11], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	systemTicks, err := strconv.ParseUint(fields[12], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	statm, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0, 0, err
+	}
+	memoryFields := strings.Fields(string(statm))
+	if len(memoryFields) < 2 {
+		return 0, 0, errors.New("unexpected /proc/self/statm format")
+	}
+	residentPages, err := strconv.ParseUint(memoryFields[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	return userTicks + systemTicks, residentPages * uint64(os.Getpagesize()), nil
 }
 
 func TestLockedServiceLifecycleActivatesRealServerThroughAuthenticatedUnlock(t *testing.T) {

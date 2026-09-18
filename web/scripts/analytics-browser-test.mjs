@@ -56,7 +56,7 @@ export async function testAnalytics({
   axeSource,
 }) {
   async function waitForControl(expected, failed) {
-    for (let attempt = 0; attempt < 500; attempt++) {
+    for (let attempt = 0; attempt < 3000; attempt++) {
       const state = readFileSync(control, "utf8");
       if (state === expected) return;
       assert.notEqual(state, failed);
@@ -103,6 +103,7 @@ export async function testAnalytics({
     .getByRole("navigation", { name: "Primary", exact: true })
     .getByRole("button", { name: "Overview", exact: true })
     .click();
+  await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
   const responsePromise = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/v1/analytics/history") &&

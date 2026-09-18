@@ -32,6 +32,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"alerts",
 		"checkpoints",
 		"cli_aliases",
+		"collection_schedule_state",
 		"configuration_pack_assignments",
 		"configuration_pack_overrides",
 		"configuration_pack_versions",
