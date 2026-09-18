@@ -1160,6 +1160,33 @@ export function App() {
                           : serviceHealthCopy.locked}
                       </p>
                     </section>
+                    <section className="border-b border-rule py-6">
+                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                        {c.backgroundService}
+                      </h2>
+                      <p className="mb-4 max-w-[75ch]" role="status" aria-live="polite">
+                        {serviceHealth?.enrollment_state === "active"
+                          ? c.enrollmentActive
+                          : serviceHealth?.enrollment_state === "installed"
+                            ? c.enrollmentInstalled
+                            : serviceHealth?.enrollment_state === "not_installed"
+                              ? c.enrollmentNotInstalled
+                              : c.enrollmentUnavailable}
+                      </p>
+                      {serviceHealth?.enrollment_mechanism ? (
+                        <p className="mb-4 max-w-[75ch] text-muted">
+                          {c.enrollmentMechanism}: {serviceHealth.enrollment_mechanism}
+                        </p>
+                      ) : null}
+                      <p className="mb-2 max-w-[75ch] text-muted">{c.enrollmentGuidance}</p>
+                      <div className="grid gap-2">
+                        {serviceHealth?.enrollment_guidance.map((command) => (
+                          <code className="wrap-anywhere" key={command}>
+                            {command}
+                          </code>
+                        ))}
+                      </div>
+                    </section>
                     <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                       {c.appearance}
                     </h2>

@@ -23,14 +23,18 @@ func TestGeneratedClientRoundTripsMetadataFixture(t *testing.T) {
 		t.Fatalf("read metadata fixture: %v", err)
 	}
 	want := MetadataResponse{
-		APIVersion:       APIVersion,
-		ContractVersion:  buildinfo.Version,
-		Product:          buildinfo.ProductName,
-		ServiceState:     ServiceStateReady,
-		VaultState:       VaultStateUnlocked,
-		DatabaseState:    DatabaseStateReady,
-		ErrorCode:        "",
-		GuidanceCommands: []string{},
+		APIVersion:          APIVersion,
+		ContractVersion:     buildinfo.Version,
+		Product:             buildinfo.ProductName,
+		ServiceState:        ServiceStateReady,
+		VaultState:          VaultStateUnlocked,
+		DatabaseState:       DatabaseStateReady,
+		ErrorCode:           "",
+		GuidanceCommands:    []string{},
+		EnrollmentState:     "not_installed",
+		EnrollmentMechanism: "systemd-user",
+		EnrollmentAvailable: true,
+		EnrollmentGuidance:  []string{"codex-folio service status", "codex-folio service install"},
 	}
 	encoded, err := json.Marshal(want)
 	if err != nil {

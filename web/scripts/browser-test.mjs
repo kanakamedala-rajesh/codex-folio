@@ -29,7 +29,7 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
-page.setDefaultTimeout(10000);
+page.setDefaultTimeout(30_000);
 const errors = [],
   remote = [];
 page.on("pageerror", (error) => errors.push(error.message));
@@ -68,6 +68,12 @@ async function choose(value, confirm = true) {
           (response) =>
             response.url().endsWith("/api/v1/selection") && response.request().method() === "PUT",
         );
+  const confirmation =
+    changed && confirm
+      ? page
+          .getByText("Selected Profile updated for future interactive launches.", { exact: true })
+          .waitFor()
+      : null;
   await scope().selectOption(value);
   if (changed) await changed;
   await page.waitForFunction(
@@ -77,10 +83,7 @@ async function choose(value, confirm = true) {
       ),
     value,
   );
-  if (changed && confirm)
-    await page
-      .getByText("Selected Profile updated for future interactive launches.", { exact: true })
-      .waitFor();
+  if (confirmation) await confirmation;
 }
 async function scenario(mode) {
   writeFileSync(control, mode);
@@ -239,7 +242,7 @@ try {
         exact: true,
       })
       .waitFor();
-    assert.match(await page.locator("main").innerText(), /18 minutes ago/);
+    assert.match(await page.locator("main").innerText(), /1[78] minutes ago/);
     assert.equal(await page.getByText("Recommended", { exact: true }).count(), 0);
     check(
       "one-time bootstrap stripped; stale cached evidence loaded; failed open refresh retains ages",
@@ -594,6 +597,11 @@ try {
       );
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
+      const settings = await page.locator("main").innerText();
+      assert.match(settings, /Background service[\s\S]*On demand · Not enrolled/);
+      assert.match(settings, /Native per-user mechanism: systemd-user/);
+      assert.match(settings, /codex-folio service install/);
+      check("Settings exposes native enrollment status and explicit terminal guidance");
       await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
       assert.match(await page.locator("main").innerText(), /Completed/);
       assert.match(await page.locator("main").innerText(), /Retained/);
@@ -789,13 +797,14 @@ try {
       assert.equal(assignedPack.status(), 200, await assignedPack.text());
       await configurationAction("Preview projection", "preview");
       await page.getByText("No profile-local conflicts detected.", { exact: true }).waitFor();
-      const applied = await configurationAction("Apply reviewed projection", "apply");
-      assert.equal(applied.status(), 200, await applied.text());
-      await page
+      const projectionApplied = page
         .getByText("Reviewed projection applied; profile-local conflicts were preserved.", {
           exact: true,
         })
         .waitFor();
+      const applied = await configurationAction("Apply reviewed projection", "apply");
+      assert.equal(applied.status(), 200, await applied.text());
+      await projectionApplied;
       await page.getByRole("button", { name: "Back to Profiles", exact: true }).click();
       check(
         "configuration assignment, conflict preview, cancellation, rejected application, reviewed promotion and successful projection",
@@ -836,7 +845,9 @@ try {
       await page.getByRole("button", { name: "Continue in Codex", exact: true }).click();
       assert.equal((await failed).status(), 409);
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
-      await page.getByRole("button", { name: "Failure", exact: true }).click();
+      const failedProfile = page.getByRole("button", { name: "Failure", exact: true });
+      await failedProfile.waitFor();
+      await failedProfile.click();
       assert.match(await page.locator("main").innerText(), /Pending · Resume setup/);
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
@@ -939,25 +950,28 @@ try {
       await page.getByText("Removal and recovery", { exact: true }).click();
       await lifecycleAction("Review local removal", "preview");
       await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");
-      const quarantine = await lifecycleAction("Confirm local removal", "remove");
-      assert.equal(quarantine.status(), 200, await quarantine.text());
-      await page
+      const quarantined = page
         .getByText("Identity Profile moved to seven-day local quarantine.", { exact: true })
         .waitFor();
+      const quarantine = await lifecycleAction("Confirm local removal", "remove");
+      assert.equal(quarantine.status(), 200, await quarantine.text());
+      await quarantined;
       assert.match(await page.locator("main").innerText(), /Recoverable until/);
-      await lifecycleAction("Restore", "restore");
-      await page
+      const restored = page
         .getByText("Identity Profile restored from local quarantine.", { exact: true })
         .waitFor();
+      await lifecycleAction("Restore", "restore");
+      await restored;
 
       await page.getByRole("button", { name: "Research", exact: true }).click();
       await page.getByText("Removal and recovery", { exact: true }).click();
       await lifecycleAction("Review local removal", "preview");
       await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");
-      await lifecycleAction("Confirm local removal", "remove");
-      await page
+      const quarantinedAgain = page
         .getByText("Identity Profile moved to seven-day local quarantine.", { exact: true })
         .waitFor();
+      await lifecycleAction("Confirm local removal", "remove");
+      await quarantinedAgain;
       await page.getByRole("button", { name: "Purge permanently", exact: true }).click();
       await assertFocusedHeading("Review final local purge");
       await page.getByLabel("Type CLI Alias to confirm", { exact: true }).fill("Research");

@@ -218,6 +218,21 @@ Useful checks:
 ./build/bin/codex-folio --help
 ```
 
+Background startup remains optional. To enroll this exact development build
+for the current user, inspect it, and remove only that enrollment:
+
+```sh
+./build/bin/codex-folio service install
+./build/bin/codex-folio service status --json
+./build/bin/codex-folio service uninstall
+```
+
+CodexFolio uses Task Scheduler on Windows, a LaunchAgent on macOS, and
+`systemd --user` on Linux or systemd-enabled WSL2. These commands do not request
+administrator/root access, remove app data, change Codex, or fall back to a
+different startup mechanism. If the native mechanism is unavailable, continue
+with the existing on-demand `service start` workflow.
+
 If a bare command on WSL reports `CF_VAULT_UNAVAILABLE`, rerun the service with
 `--vault-mode passphrase`. This error normally means Linux Secret Service is not
 available in that session; it does not authorize a plaintext fallback.

@@ -12,6 +12,9 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,11 +33,25 @@ import (
 type serviceOptions struct {
 	stateRoot *string
 	json      bool
+	enrolled  bool
 	candidate string
 	vaultMode platform.VaultMode
 }
 
 type servicePathResolver func(*string) (platform.Paths, error)
+
+type nativeServiceEnrollment interface {
+	Mechanism() string
+	Status() (platform.ServiceEnrollmentStatus, error)
+	Install() (platform.ServiceEnrollmentResult, error)
+	Uninstall() (platform.ServiceEnrollmentResult, error)
+}
+
+type serviceEnrollmentFactory func(platform.Paths, serviceOptions) (nativeServiceEnrollment, error)
+
+type serviceCloser interface {
+	Close() error
+}
 
 func runService(args []string, stdout, stderr io.Writer) int {
 	return runServiceWithInput(args, os.Stdin, stdout, stderr, resolveCLIPaths)
@@ -49,6 +66,10 @@ func runServiceWithInput(args []string, input io.Reader, stdout, stderr io.Write
 }
 
 func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, diagnosticSink diagnostics.Sink) int {
+	return runServiceWithEnrollment(args, input, stdout, stderr, resolvePaths, diagnosticSink, newNativeServiceEnrollment)
+}
+
+func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, diagnosticSink diagnostics.Sink, enrollmentFactory serviceEnrollmentFactory) int {
 	if len(args) == 0 {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "a service command is required", diagnosticSink)
 	}
@@ -66,7 +87,7 @@ func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, s
 		}
 		serviceArgs = args[2:]
 	}
-	if command != "status" && command != "start" && command != "recovery" {
+	if command != "status" && command != "start" && command != "install" && command != "uninstall" && command != "recovery" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown service command", diagnosticSink)
 	}
 	options, err := parseServiceOptions(serviceArgs)
@@ -82,6 +103,9 @@ func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, s
 	if recoveryAction != "" && recoveryAction != "restore" && options.candidate != "" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--candidate is only valid for recovery restore", diagnosticSink)
 	}
+	if options.enrolled && command != "start" {
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--enrolled is only valid for service start", diagnosticSink)
+	}
 
 	paths, err := resolvePaths(options.stateRoot)
 	if err != nil {
@@ -93,12 +117,23 @@ func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, s
 		}
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	var enrollment nativeServiceEnrollment
+	if command == "status" || command == "install" || command == "uninstall" {
+		enrollment, err = enrollmentFactory(paths, options)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 
 	switch command {
 	case "status":
-		return runServiceStatusWithDiagnostics(paths, options, stdout, stderr, diagnosticSink)
+		return runServiceStatusWithEnrollment(paths, options, stdout, stderr, diagnosticSink, enrollment)
 	case "start":
 		return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, diagnosticSink)
+	case "install":
+		return runServiceEnrollmentChange(enrollment.Install, options, stdout, stderr, diagnosticSink)
+	case "uninstall":
+		return runServiceEnrollmentChange(enrollment.Uninstall, options, stdout, stderr, diagnosticSink)
 	case "recovery":
 		return runServiceRecoveryWithDiagnostics(paths, recoveryAction, options, stdout, stderr, diagnosticSink)
 	default:
@@ -106,6 +141,33 @@ func runServiceWithInputAndDiagnostics(args []string, input io.Reader, stdout, s
 		writeServiceUsage(stderr)
 		return exitUsage
 	}
+}
+
+func newNativeServiceEnrollment(paths platform.Paths, options serviceOptions) (nativeServiceEnrollment, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, apperrors.New(apperrors.PlatformServiceUnavailable, err)
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return nil, apperrors.New(apperrors.PlatformServiceUnavailable, err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, apperrors.New(apperrors.PlatformStatePathInvalid, err)
+	}
+	uid := 0
+	if current, currentErr := user.Current(); currentErr == nil && current != nil {
+		uid, _ = strconv.Atoi(current.Uid)
+	}
+	arguments := []string{"service", "start", "--enrolled", "--state-root", paths.Root}
+	if options.vaultMode != "" {
+		arguments = append(arguments, "--vault-mode", string(options.vaultMode))
+	}
+	return platform.NewServiceEnrollment(platform.ServiceEnrollmentOptions{
+		Platform: platform.Platform(runtime.GOOS), HomeDir: home, UID: uid,
+		Executable: executable, Arguments: arguments,
+	})
 }
 
 func parseServiceOptions(args []string) (serviceOptions, error) {
@@ -118,6 +180,11 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 				return serviceOptions{}, errors.New("--json may be supplied only once")
 			}
 			options.json = true
+		case arg == "--enrolled":
+			if options.enrolled {
+				return serviceOptions{}, errors.New("--enrolled may be supplied only once")
+			}
+			options.enrolled = true
 		case arg == "--state-root":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
 				return serviceOptions{}, errors.New("--state-root requires a value")
@@ -220,6 +287,14 @@ func runServiceStatus(paths platform.Paths, options serviceOptions, stdout, stde
 }
 
 func runServiceStatusWithDiagnostics(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
+	enrollment, err := newNativeServiceEnrollment(paths, options)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	return runServiceStatusWithEnrollment(paths, options, stdout, stderr, diagnosticSink, enrollment)
+}
+
+func runServiceStatusWithEnrollment(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, enrollment nativeServiceEnrollment) int {
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -235,10 +310,33 @@ func runServiceStatusWithDiagnostics(paths platform.Paths, options serviceOption
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 	}
-	if err := writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, false, "", health); err != nil {
+	enrollmentStatus, err := enrollment.Status()
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if err := writeServiceStateWithEnrollment(stdout, stderr, options.json, status, false, "", health, enrollmentStatus); err != nil {
 		recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
 		return exitFailure
 	}
+	return exitSuccess
+}
+
+func runServiceEnrollmentChange(change func() (platform.ServiceEnrollmentResult, error), options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
+	result, err := change()
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if options.json {
+		if err := writeServiceJSON(stdout, result); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		return exitSuccess
+	}
+	action := "unchanged"
+	if result.Changed {
+		action = "changed"
+	}
+	_, _ = fmt.Fprintf(stdout, "%s: %s; enrollment %s via %s\n", action, result.State, availabilityName(result.Available), result.Mechanism)
 	return exitSuccess
 }
 
@@ -256,6 +354,9 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
+		if options.enrolled {
+			return exitSuccess
+		}
 		if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
@@ -267,6 +368,9 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
+				if options.enrolled {
+					return exitSuccess
+				}
 				if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 				}
@@ -305,6 +409,15 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		}
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
+	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
+		serverOptions.ServiceEnrollment = func() (state, mechanism string, available bool) {
+			status, statusErr := enrollment.Status()
+			if statusErr != nil {
+				return platform.EnrollmentUnavailable, enrollment.Mechanism(), false
+			}
+			return status.State, status.Mechanism, status.Available
+		}
+	}
 	serverOptions.ServiceLifecycle = serviceLifecycle
 	serverOptions.StartLocked = serviceLifecycle != nil
 	server, err := httpapi.NewServer(serverOptions)
@@ -513,15 +626,17 @@ func waitForServiceStop(owner *platform.Owner, stateStore interface{ Close() err
 func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interface{ Close() error }, server *httpapi.Server, options serviceOptions, stdout, stderr io.Writer, reused bool, serveErrors <-chan error, diagnosticSink diagnostics.Sink) int {
 	metadata := owner.Metadata()
 	status := platform.OwnerStatus{Running: true, Metadata: &metadata}
-	if err := writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, reused, server.BootstrapURL(), server.Health()); err != nil {
-		recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
-		_ = server.Close()
-		_ = stateStore.Close()
-		_ = owner.Close()
-		return exitFailure
+	if !options.enrolled {
+		if err := writeServiceStateWithDashboardHealth(stdout, stderr, options.json, status, reused, server.BootstrapURL(), server.Health()); err != nil {
+			recordServiceDiagnostic(diagnosticSink, apperrors.CLIInternal, diagnostics.SeverityError)
+			_ = server.Close()
+			_ = stateStore.Close()
+			_ = owner.Close()
+			return exitFailure
+		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), serviceStopSignals()...)
 	defer stop()
 	select {
 	case <-ctx.Done():
@@ -533,6 +648,10 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interfa
 		}
 		return exitSuccess
 	}
+	return closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink)
+}
+
+func closeServiceAfterStop(server, stateStore, owner serviceCloser, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
 	if err := server.Close(); err != nil {
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -549,16 +668,20 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interfa
 }
 
 type serviceOutput struct {
-	Status           string     `json:"status"`
-	PID              int        `json:"pid,omitempty"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	Reused           bool       `json:"reused,omitempty"`
-	Dashboard        string     `json:"dashboard_url,omitempty"`
-	ServiceState     string     `json:"service_state"`
-	VaultState       string     `json:"vault_state"`
-	DatabaseState    string     `json:"database_state"`
-	ErrorCode        string     `json:"error_code,omitempty"`
-	GuidanceCommands []string   `json:"guidance_commands,omitempty"`
+	Status              string     `json:"status"`
+	PID                 int        `json:"pid,omitempty"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	Reused              bool       `json:"reused,omitempty"`
+	Dashboard           string     `json:"dashboard_url,omitempty"`
+	ServiceState        string     `json:"service_state"`
+	VaultState          string     `json:"vault_state"`
+	DatabaseState       string     `json:"database_state"`
+	ErrorCode           string     `json:"error_code,omitempty"`
+	GuidanceCommands    []string   `json:"guidance_commands,omitempty"`
+	EnrollmentState     string     `json:"enrollment_state"`
+	EnrollmentMechanism string     `json:"enrollment_mechanism"`
+	EnrollmentAvailable bool       `json:"enrollment_available"`
+	EnrollmentGuidance  []string   `json:"enrollment_guidance"`
 }
 
 func writeServiceState(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool) error {
@@ -574,11 +697,19 @@ func writeServiceStateWithDashboard(stdout, stderr io.Writer, jsonOutput bool, s
 }
 
 func writeServiceStateWithDashboardHealth(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool, dashboardURL string, health httpapi.ServiceHealth) error {
+	return writeServiceStateWithEnrollment(stdout, stderr, jsonOutput, status, reused, dashboardURL, health, platform.ServiceEnrollmentStatus{
+		State: health.EnrollmentState, Mechanism: health.EnrollmentMechanism, Available: health.EnrollmentAvailable,
+	})
+}
+
+func writeServiceStateWithEnrollment(stdout, stderr io.Writer, jsonOutput bool, status platform.OwnerStatus, reused bool, dashboardURL string, health httpapi.ServiceHealth, enrollment platform.ServiceEnrollmentStatus) error {
 	if jsonOutput {
 		if err := writeServiceJSON(stdout, serviceOutput{
 			Status: statusName(status.Running), PID: metadataPID(status.Metadata), StartedAt: metadataStart(status.Metadata),
 			Reused: reused, Dashboard: dashboardURL, ServiceState: health.ServiceState, VaultState: health.VaultState,
 			DatabaseState: health.DatabaseState, ErrorCode: health.ErrorCode, GuidanceCommands: health.GuidanceCommands,
+			EnrollmentState: enrollment.State, EnrollmentMechanism: enrollment.Mechanism, EnrollmentAvailable: enrollment.Available,
+			EnrollmentGuidance: []string{"codex-folio service status", "codex-folio service install", "codex-folio service uninstall"},
 		}); err != nil {
 			fmt.Fprintf(stderr, "codex-folio [%s]: could not encode service status\n", apperrors.CLIInternal)
 			return err
@@ -609,7 +740,17 @@ func writeServiceStateWithDashboardHealth(stdout, stderr io.Writer, jsonOutput b
 	} else {
 		_, _ = io.WriteString(stdout, "service owner running\n")
 	}
+	if enrollment.Mechanism != "" {
+		_, _ = fmt.Fprintf(stdout, "native enrollment: %s via %s (%s)\n", enrollment.State, enrollment.Mechanism, availabilityName(enrollment.Available))
+	}
 	return nil
+}
+
+func availabilityName(available bool) string {
+	if available {
+		return "available"
+	}
+	return "unavailable; on-demand operation remains available"
 }
 
 func writeServiceJSON(stdout io.Writer, output any) error {
@@ -926,6 +1067,8 @@ func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service install [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service uninstall [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service recovery {verify|list|restore} [--state-root PATH] [--candidate ID] [--json]")
 }
 

@@ -20,7 +20,7 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "4a2b7b5c22d9e9f99aec4a001ae7fbde0f131230b264480069881b6f22e51584"
+	ContractSourceSHA256   = "977cb12776dcc27f93ccbc6409c581725c6309adab9f4d0e12a4c4d1563c9f39"
 	BootstrapPath          = "/api/v1/bootstrap"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
@@ -480,14 +480,18 @@ type BootstrapResponse struct {
 }
 
 type MetadataResponse struct {
-	APIVersion       string   `json:"api_version"`
-	ContractVersion  string   `json:"contract_version"`
-	Product          string   `json:"product"`
-	ServiceState     string   `json:"service_state"`
-	VaultState       string   `json:"vault_state"`
-	DatabaseState    string   `json:"database_state"`
-	ErrorCode        string   `json:"error_code"`
-	GuidanceCommands []string `json:"guidance_commands"`
+	APIVersion          string   `json:"api_version"`
+	ContractVersion     string   `json:"contract_version"`
+	Product             string   `json:"product"`
+	ServiceState        string   `json:"service_state"`
+	VaultState          string   `json:"vault_state"`
+	DatabaseState       string   `json:"database_state"`
+	ErrorCode           string   `json:"error_code"`
+	GuidanceCommands    []string `json:"guidance_commands"`
+	EnrollmentState     string   `json:"enrollment_state"`
+	EnrollmentMechanism string   `json:"enrollment_mechanism"`
+	EnrollmentAvailable bool     `json:"enrollment_available"`
+	EnrollmentGuidance  []string `json:"enrollment_guidance"`
 }
 
 type ProfileSetupStages struct {

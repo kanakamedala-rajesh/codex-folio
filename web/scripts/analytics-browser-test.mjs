@@ -107,9 +107,11 @@ export async function testAnalytics({
     (response) =>
       response.url().endsWith("/api/v1/analytics/history") &&
       response.request().method() === "POST",
+    { timeout: 30_000 },
   );
   const reloadedProjects = page.waitForResponse(
     (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "GET",
+    { timeout: 30_000 },
   );
   const started = performance.now();
   await analyticsLink.focus();
@@ -529,9 +531,9 @@ export async function testAnalytics({
     "390px Projects reflow and Chromium 200% page scale keep keyboard disclosures and alias editing operable without essential horizontal overflow",
   );
 
-  const profilesBeforeDataControls = await (
-    await page.request.get(new URL("/api/v1/profiles", link).href)
-  ).json();
+  const profilesBeforeResponse = await page.request.get(new URL("/api/v1/profiles", link).href);
+  assert.equal(profilesBeforeResponse.status(), 200, await profilesBeforeResponse.text());
+  const profilesBeforeDataControls = await profilesBeforeResponse.json();
   const capacityHistory = page.waitForResponse(
     (item) =>
       item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",

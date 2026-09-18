@@ -121,7 +121,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
-	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio service {install|start|status|uninstall|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio vault unlock [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--json]")

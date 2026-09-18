@@ -370,6 +370,25 @@
           "description": "Fixed local terminal commands that can safely guide unlock or recovery.",
           "items": {"type": "string"},
           "type": "array"
+        },
+        "enrollment_state": {
+          "description": "The inspectable state of optional native per-user startup enrollment.",
+          "enum": ["unavailable", "not_installed", "installed", "active"],
+          "type": "string"
+        },
+        "enrollment_mechanism": {
+          "description": "The platform-native per-user mechanism, or an empty string when unsupported.",
+          "enum": ["", "task-scheduler", "launch-agent", "systemd-user"],
+          "type": "string"
+        },
+        "enrollment_available": {
+          "description": "Whether the required native mechanism is available without affecting on-demand operation.",
+          "type": "boolean"
+        },
+        "enrollment_guidance": {
+          "description": "Fixed terminal commands for explicit enrollment inspection and installation.",
+          "items": {"type": "string"},
+          "type": "array"
         }
       },
       "required": [
@@ -380,7 +399,11 @@
         "vault_state",
         "database_state",
         "error_code",
-        "guidance_commands"
+        "guidance_commands",
+        "enrollment_state",
+        "enrollment_mechanism",
+        "enrollment_available",
+        "enrollment_guidance"
       ],
       "type": "object"
     },

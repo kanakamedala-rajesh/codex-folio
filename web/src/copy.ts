@@ -86,6 +86,13 @@ export const copy = {
   themes: ["System", "Light", "Dark"],
   locale: "Dates and numbers",
   osLocale: "Use operating-system locale",
+  backgroundService: "Background service",
+  enrollmentActive: "Installed and active",
+  enrollmentInstalled: "Installed; start is pending",
+  enrollmentNotInstalled: "On demand · Not enrolled",
+  enrollmentUnavailable: "Native enrollment unavailable · On-demand access remains available",
+  enrollmentMechanism: "Native per-user mechanism",
+  enrollmentGuidance: "Review or change enrollment in your local terminal:",
   analyticsRetention: "Analytics retention",
   analyticsRetentionDetail:
     "13 calendar months by default · Configurable from 30 days to unlimited · Scoped purge is reviewed separately.",

@@ -89,12 +89,18 @@ const (
 // ServiceHealth is the browser-safe operational projection. It deliberately
 // excludes vault mode, paths, key generations, recovery contents, and errors.
 type ServiceHealth struct {
-	ServiceState     string   `json:"service_state"`
-	VaultState       string   `json:"vault_state"`
-	DatabaseState    string   `json:"database_state"`
-	ErrorCode        string   `json:"error_code"`
-	GuidanceCommands []string `json:"guidance_commands"`
+	ServiceState        string   `json:"service_state"`
+	VaultState          string   `json:"vault_state"`
+	DatabaseState       string   `json:"database_state"`
+	ErrorCode           string   `json:"error_code"`
+	GuidanceCommands    []string `json:"guidance_commands"`
+	EnrollmentState     string   `json:"enrollment_state"`
+	EnrollmentMechanism string   `json:"enrollment_mechanism"`
+	EnrollmentAvailable bool     `json:"enrollment_available"`
+	EnrollmentGuidance  []string `json:"enrollment_guidance"`
 }
+
+type ServiceEnrollmentHealth func() (state, mechanism string, available bool)
 
 // ServiceLifecycle owns the process-local locked/unlocked transition. Unlock
 // is reachable only through the command-token transport, never the browser API.
@@ -147,6 +153,7 @@ type Options struct {
 	CommandToken          string
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
+	ServiceEnrollment     ServiceEnrollmentHealth
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -180,6 +187,7 @@ type Server struct {
 	checkpointHistory     BrowserCheckpointHistory
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
+	serviceEnrollment     ServiceEnrollmentHealth
 	operational           atomic.Bool
 	activationMu          sync.Mutex
 
@@ -262,6 +270,7 @@ func NewServer(options Options) (*Server, error) {
 		checkpointHistory:     options.CheckpointHistory,
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
+		serviceEnrollment:     options.ServiceEnrollment,
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt:    now.Add(bootstrapTTL),
@@ -1087,14 +1096,18 @@ func (server *Server) validCSRF(request *http.Request) bool {
 func (server *Server) writeMetadata(response http.ResponseWriter, request *http.Request) {
 	health := server.health()
 	writeJSON(response, http.StatusOK, MetadataResponse{
-		APIVersion:       APIVersion,
-		ContractVersion:  ContractVersion,
-		Product:          server.product,
-		ServiceState:     health.ServiceState,
-		VaultState:       health.VaultState,
-		DatabaseState:    health.DatabaseState,
-		ErrorCode:        health.ErrorCode,
-		GuidanceCommands: health.GuidanceCommands,
+		APIVersion:          APIVersion,
+		ContractVersion:     ContractVersion,
+		Product:             server.product,
+		ServiceState:        health.ServiceState,
+		VaultState:          health.VaultState,
+		DatabaseState:       health.DatabaseState,
+		ErrorCode:           health.ErrorCode,
+		GuidanceCommands:    health.GuidanceCommands,
+		EnrollmentState:     health.EnrollmentState,
+		EnrollmentMechanism: health.EnrollmentMechanism,
+		EnrollmentAvailable: health.EnrollmentAvailable,
+		EnrollmentGuidance:  health.EnrollmentGuidance,
 	})
 }
 
@@ -1130,27 +1143,41 @@ func (server *Server) Activate(services OperationalServices) error {
 }
 
 func (server *Server) health() ServiceHealth {
+	var health ServiceHealth
 	if server != nil && server.serviceLifecycle != nil {
-		health := server.serviceLifecycle.Health()
+		health = server.serviceLifecycle.Health()
 		if health.GuidanceCommands == nil {
 			health.GuidanceCommands = []string{}
 		}
-		return health
-	}
-	if server != nil && server.operational.Load() {
-		return ServiceHealth{
+	} else if server != nil && server.operational.Load() {
+		health = ServiceHealth{
 			ServiceState:     ServiceStateReady,
 			VaultState:       VaultStateUnlocked,
 			DatabaseState:    DatabaseStateReady,
 			GuidanceCommands: []string{},
 		}
+	} else {
+		health = ServiceHealth{
+			ServiceState:     ServiceStateLocked,
+			VaultState:       VaultStateLocked,
+			DatabaseState:    DatabaseStateNotChecked,
+			GuidanceCommands: []string{"codex-folio vault unlock"},
+		}
 	}
-	return ServiceHealth{
-		ServiceState:     ServiceStateLocked,
-		VaultState:       VaultStateLocked,
-		DatabaseState:    DatabaseStateNotChecked,
-		GuidanceCommands: []string{"codex-folio vault unlock"},
+	health.EnrollmentState = "unavailable"
+	health.EnrollmentGuidance = []string{"codex-folio service status"}
+	if server != nil && server.serviceEnrollment != nil {
+		health.EnrollmentState, health.EnrollmentMechanism, health.EnrollmentAvailable = server.serviceEnrollment()
 	}
+	if health.EnrollmentAvailable {
+		switch health.EnrollmentState {
+		case "installed", "active":
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, "codex-folio service uninstall")
+		case "not_installed":
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, "codex-folio service install")
+		}
+	}
+	return health
 }
 
 // Health returns the same safe projection exposed to authenticated browser

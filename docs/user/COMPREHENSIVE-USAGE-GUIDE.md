@@ -70,6 +70,29 @@ Inspect or start the foreground owner:
 foreground. Press `Ctrl-C` for an orderly stop. A second invocation discovers an
 existing owner, prints a new dashboard URL, and exits.
 
+Optional persistent startup is explicit and per-user:
+
+```sh
+./build/bin/codex-folio service install --json
+./build/bin/codex-folio service status --json
+./build/bin/codex-folio service uninstall --json
+```
+
+`service install` writes and starts only CodexFolio's native user enrollment:
+Task Scheduler on Windows AMD64, a LaunchAgent on macOS ARM64, or
+`systemd --user` on Linux AMD64 and systemd-enabled WSL2. The enrolled command
+uses the same executable and resolved state root and therefore reuses the same
+owner lock. It never requests machine-wide privilege, edits shell/startup files,
+or substitutes another autostart method. `service status` reports owner state
+separately from `enrollment_state`, `enrollment_mechanism`, and
+`enrollment_available`.
+
+`service uninstall` removes only the native enrollment. It retains SQLite,
+profiles, authentication, vault data, configuration, and foreground Codex work.
+Repeated install/uninstall is safe and reports whether enrollment changed. When
+the native mechanism is unavailable, status says so and on-demand `service
+start` remains available.
+
 Supported vault modes are platform Secret Service and passphrase mode:
 
 ```sh
@@ -680,6 +703,15 @@ the default Linux Secret Service is absent. Start with
 This selects the encrypted passphrase vault rather than plaintext. In another
 local terminal, run `vault unlock`; a failed attempt leaves the same owner
 locked and ready for another attempt.
+
+### Native service enrollment is unavailable
+
+Run `service status --json` and inspect `enrollment_available`,
+`enrollment_mechanism`, and `enrollment_state`. Linux and WSL2 require a working
+`systemd --user` session; macOS requires LaunchAgents; Windows requires the
+current user's Task Scheduler. CodexFolio does not replace an unavailable
+mechanism with cron, login scripts, registry startup entries, or a machine-wide
+service. Use foreground `service start` for on-demand operation.
 
 ### The passphrase service is locked
 

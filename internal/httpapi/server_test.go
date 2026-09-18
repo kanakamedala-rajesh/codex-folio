@@ -103,7 +103,9 @@ func TestServerBindsOnlyToLoopbackAndPublishesOneTimeURL(t *testing.T) {
 }
 
 func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
-	server, _, _ := startTestServer(t, Options{})
+	server, _, _ := startTestServer(t, Options{ServiceEnrollment: func() (string, string, bool) {
+		return "not_installed", "systemd-user", true
+	}})
 	client := testClient(t)
 	bootstrapURL := server.BootstrapURL()
 	origin := server.Origin()
@@ -168,6 +170,12 @@ func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
 	}
 	if got.GuidanceCommands == nil || len(got.GuidanceCommands) != 0 {
 		t.Fatalf("metadata guidance_commands = %#v, want generated-contract empty array", got.GuidanceCommands)
+	}
+	if got.EnrollmentState != "not_installed" || got.EnrollmentMechanism != "systemd-user" || !got.EnrollmentAvailable {
+		t.Fatalf("metadata enrollment = %#v", got)
+	}
+	if len(got.EnrollmentGuidance) != 2 || got.EnrollmentGuidance[0] != "codex-folio service status" {
+		t.Fatalf("metadata enrollment guidance = %#v", got.EnrollmentGuidance)
 	}
 
 	replay, err := doRequest(

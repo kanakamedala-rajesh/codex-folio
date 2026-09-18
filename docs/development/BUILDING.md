@@ -12,6 +12,8 @@ and can run a foreground owner through the CLI:
 ```sh
 codex-folio service status [--state-root PATH] [--json]
 codex-folio service start [--state-root PATH] [--vault-mode MODE] [--json]
+codex-folio service install [--state-root PATH] [--vault-mode MODE] [--json]
+codex-folio service uninstall [--state-root PATH] [--json]
 codex-folio vault unlock [--state-root PATH] [--json]
 ```
 

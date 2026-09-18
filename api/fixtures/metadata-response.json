@@ -6,5 +6,9 @@
   "vault_state": "unlocked",
   "database_state": "ready",
   "error_code": "",
-  "guidance_commands": []
+  "guidance_commands": [],
+  "enrollment_state": "not_installed",
+  "enrollment_mechanism": "systemd-user",
+  "enrollment_available": true,
+  "enrollment_guidance": ["codex-folio service status", "codex-folio service install"]
 }
