@@ -13,6 +13,71 @@ const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 
 const label = (value: string) => value.replaceAll("_", " ");
 
+export function NotificationPrivacy({
+  data,
+  busy,
+  manage,
+}: {
+  data: AlertsResponse;
+  busy: boolean;
+  manage: (request: AlertActionRequest) => Promise<AlertsResponse>;
+}) {
+  const detailed = data.delivery_health.detailed_content_enabled;
+  const [pendingChoice, setPendingChoice] = useState<boolean | null>(null);
+  const detailedChoice = pendingChoice ?? detailed;
+
+  function selectDetail(enabled: boolean) {
+    setPendingChoice(enabled);
+    void manage({ action: "set_notification_detail", detailed_content_enabled: enabled }).then(
+      () => setPendingChoice(null),
+      () => setPendingChoice(null),
+    );
+  }
+  return (
+    <section className="border-b border-rule py-6" aria-labelledby="notification-privacy">
+      <h2 id="notification-privacy" className="mb-4 text-[1.4rem] font-bold">
+        {c.privacy}
+      </h2>
+      <p id="notification-privacy-detail" className="mb-4 max-w-[75ch] text-muted">
+        {c.privacyDetail}
+      </p>
+      <fieldset
+        className="grid max-w-2xl gap-3"
+        aria-describedby="notification-privacy-detail"
+        disabled={busy}
+      >
+        <legend className="sr-only">{c.privacy}</legend>
+        <label className="grid min-h-11 cursor-pointer grid-cols-[auto_1fr] gap-x-3 rounded border border-rule bg-panel p-3 hover:border-accent has-checked:border-accent">
+          <input
+            type="radio"
+            name="notification-detail"
+            checked={!detailedChoice}
+            onChange={() => selectDetail(false)}
+            className="mt-1 size-5 accent-accent"
+          />
+          <span>
+            <strong className="block">{c.genericNotifications}</strong>
+            <span className="block text-sm text-muted">{c.genericNotificationsDetail}</span>
+          </span>
+        </label>
+        <label className="grid min-h-11 cursor-pointer grid-cols-[auto_1fr] gap-x-3 rounded border border-rule bg-panel p-3 hover:border-accent has-checked:border-accent">
+          <input
+            type="radio"
+            name="notification-detail"
+            checked={detailedChoice}
+            onChange={() => selectDetail(true)}
+            className="mt-1 size-5 accent-accent"
+          />
+          <span>
+            <strong className="block">{c.detailedNotifications}</strong>
+            <span className="block text-sm text-warning">{c.detailedNotificationsDetail}</span>
+          </span>
+        </label>
+      </fieldset>
+    </section>
+  );
+}
+
 function AlertItem({
   alert,
   busy,
@@ -232,6 +297,8 @@ export function Alerts({
         </form>
       </details>
 
+      <NotificationPrivacy data={data} busy={busy} manage={manage} />
+
       <section className="py-6">
         <h2 className="mb-4 text-[1.4rem] font-bold">{c.delivery}</h2>
         <p className="mb-2 max-w-[75ch]">
@@ -240,6 +307,11 @@ export function Alerts({
         <p className="mb-2 max-w-[75ch]">
           {c.native}: {label(data.delivery_health.native_notifications)}
         </p>
+        {data.delivery_health.mechanism ? (
+          <p className="mb-2 max-w-[75ch]">
+            {c.mechanism}: {label(data.delivery_health.mechanism)}
+          </p>
+        ) : null}
         <p className="mb-4 max-w-[75ch] text-muted">{data.delivery_health.detail}</p>
       </section>
     </section>

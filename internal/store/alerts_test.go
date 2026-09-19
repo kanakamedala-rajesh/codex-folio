@@ -199,6 +199,124 @@ func TestOperationalAlertsMigrationPreservesExistingAlert(t *testing.T) {
 	}
 }
 
+func TestNotificationPreferenceAndDeliveryClaimPersistWithoutDuplicateDelivery(t *testing.T) {
+	now := time.Date(2026, time.September, 19, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "notifications.sqlite3")
+	state, err := OpenWithOptions(Options{Path: path, Clock: fixedStoreClock{now: now}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAlertProfile(t, state)
+	preference, err := state.NotificationPreference(context.Background())
+	if err != nil || preference.DetailEnabled {
+		t.Fatalf("default preference = %#v/%v", preference, err)
+	}
+	preference, err = state.SetNotificationDetail(context.Background(), true, now)
+	if err != nil || !preference.DetailEnabled {
+		t.Fatalf("SetNotificationDetail() = %#v/%v", preference, err)
+	}
+	condition := alerts.Condition{Key: "profile-1|reauthentication", ProfileID: "profile-1", Category: alerts.CategoryReauthentication, Kind: alerts.KindReauthentication, Severity: alerts.SeverityError, Title: "Reauthentication required", Guidance: "Reauthenticate", ObservedAt: now}
+	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now, alerts.HistoryLimit); err != nil {
+		t.Fatal(err)
+	}
+	records, _ := state.ListAlerts(context.Background(), alerts.HistoryLimit)
+	if len(records) != 1 || records[0].DeliveryState != alerts.DeliveryPending || records[0].DeliveryAttempts != 0 {
+		t.Fatalf("new delivery = %#v", records)
+	}
+	claimed, err := state.ClaimAlertDelivery(context.Background(), records[0].ID, now)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimAlertDelivery() = %v/%v", claimed, err)
+	}
+	claimed, err = state.ClaimAlertDelivery(context.Background(), records[0].ID, now)
+	if err != nil || claimed {
+		t.Fatalf("duplicate ClaimAlertDelivery() = %v/%v", claimed, err)
+	}
+	if err := state.RecordAlertDelivery(context.Background(), records[0].ID, alerts.DeliveryOutcome{State: alerts.DeliveryDelivered, Attempts: 1, AttemptedAt: now, DeliveredAt: &now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now.Add(time.Minute), alerts.HistoryLimit); err != nil {
+		t.Fatal(err)
+	}
+	records, _ = state.ListAlerts(context.Background(), alerts.HistoryLimit)
+	if records[0].DeliveryState != alerts.DeliveryDelivered || records[0].DeliveryAttempts != 1 {
+		t.Fatalf("repeated observation reset delivery = %#v", records[0])
+	}
+	if err := state.SyncAlerts(context.Background(), "profile-1", nil, now.Add(2*time.Minute), alerts.HistoryLimit); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now.Add(3*time.Minute), alerts.HistoryLimit); err != nil {
+		t.Fatal(err)
+	}
+	records, _ = state.ListAlerts(context.Background(), alerts.HistoryLimit)
+	if records[0].DeliveryState != alerts.DeliveryPending || records[0].DeliveryAttempts != 0 || records[0].DeliveredAt != nil {
+		t.Fatalf("reopened delivery = %#v", records[0])
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	preference, err = reopened.NotificationPreference(context.Background())
+	if err != nil || !preference.DetailEnabled {
+		t.Fatalf("persisted preference = %#v/%v", preference, err)
+	}
+}
+
+func TestNativeAlertDeliveryMigrationDefaultsToGenericPendingState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schema-v20.sqlite3")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, candidate := range migrations() {
+		if candidate.version > 20 {
+			break
+		}
+		tx, err := database.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := candidate.apply(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply migration %d: %v", candidate.version, err)
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)", candidate.version, candidate.name, "2026-09-19T12:00:00Z"); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", candidate.version)); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO alerts (alert_id, condition_key, category, kind, severity, state, title, guidance, observed_at, first_seen_at, last_seen_at, occurrence_count) VALUES ('alert-1', 'condition-1', 'compatibility', 'compatibility_changed', 'warning', 'open', 'Compatibility changed', 'Refresh', '2026-09-19T12:00:00Z', '2026-09-19T12:00:00Z', '2026-09-19T12:00:00Z', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(v20): %v", err)
+	}
+	defer func() { _ = state.Close() }()
+	preference, err := state.NotificationPreference(ctx)
+	if err != nil || preference.DetailEnabled {
+		t.Fatalf("migrated preference = %#v/%v", preference, err)
+	}
+	records, err := state.ListAlerts(ctx, 10)
+	if err != nil || len(records) != 1 || records[0].DeliveryState != alerts.DeliveryPending || records[0].DeliveryAttempts != 0 {
+		t.Fatalf("migrated delivery = %#v/%v", records, err)
+	}
+}
+
 func seedAlertProfile(t *testing.T, state *Store) {
 	t.Helper()
 	if _, err := state.db.Exec(`INSERT INTO identity_profiles (profile_id, display_name, status, created_at, updated_at) VALUES ('profile-1', 'Work', 'ready', '2026-09-19T12:00:00Z', '2026-09-19T12:00:00Z')`); err != nil {

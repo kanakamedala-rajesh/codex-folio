@@ -218,6 +218,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_ALERT_NOTIFICATION_FAILED",
+      "owner": "alert",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_USAGE_ANALYTICS_REQUEST_INVALID",
       "owner": "usage",
       "lifecycle": "active",

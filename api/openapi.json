@@ -939,8 +939,8 @@
     },
     "AlertDeliveryHealth": {
       "additionalProperties": false,
-      "properties": {"dashboard": {"type": "string"}, "native_notifications": {"type": "string"}, "detail": {"type": "string"}},
-      "required": ["dashboard", "native_notifications", "detail"],
+      "properties": {"dashboard": {"type": "string"}, "native_notifications": {"type": "string"}, "mechanism": {"type": "string"}, "detail": {"type": "string"}, "detailed_content_enabled": {"type": "boolean"}},
+      "required": ["dashboard", "native_notifications", "mechanism", "detail", "detailed_content_enabled"],
       "type": "object"
     },
     "AlertsResponse": {
@@ -957,8 +957,9 @@
     "AlertActionRequest": {
       "additionalProperties": false,
       "properties": {
-        "action": {"enum": ["acknowledge", "set_threshold"], "type": "string"}, "alert_id": {"type": "string"},
-        "profile_id": {"type": "string"}, "metric_key": {"type": "string"}, "warning_percent": {"type": "number"}, "critical_percent": {"type": "number"}
+        "action": {"enum": ["acknowledge", "set_threshold", "set_notification_detail"], "type": "string"}, "alert_id": {"type": "string"},
+        "profile_id": {"type": "string"}, "metric_key": {"type": "string"}, "warning_percent": {"type": "number"}, "critical_percent": {"type": "number"},
+        "detailed_content_enabled": {"type": "boolean"}
       },
       "required": ["action"],
       "type": "object"
@@ -983,7 +984,7 @@
         "operationId": "manageAlerts",
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertActionRequest"}}}, "required": true},
         "responses": {
-          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertsResponse"}}}, "description": "Acknowledges one alert or updates one bounded per-profile/per-window threshold."},
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertsResponse"}}}, "description": "Acknowledges one alert, updates one bounded per-profile/per-window threshold, or changes the separate per-device native notification detail preference."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }

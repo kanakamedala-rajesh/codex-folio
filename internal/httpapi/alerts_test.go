@@ -14,6 +14,7 @@ type alertRepositoryStub struct {
 	records    []alertfeature.Record
 	thresholds []alertfeature.Threshold
 	acked      string
+	preference alertfeature.NotificationPreference
 }
 
 func (repository *alertRepositoryStub) AlertEvidence(context.Context, string) ([]alertfeature.Evidence, error) {
@@ -40,6 +41,19 @@ func (repository *alertRepositoryStub) AcknowledgeAlert(_ context.Context, id st
 }
 func (repository *alertRepositoryStub) SetAlertThreshold(_ context.Context, threshold alertfeature.Threshold, _ time.Time) error {
 	repository.thresholds = []alertfeature.Threshold{threshold}
+	return nil
+}
+func (repository *alertRepositoryStub) NotificationPreference(context.Context) (alertfeature.NotificationPreference, error) {
+	return repository.preference, nil
+}
+func (repository *alertRepositoryStub) SetNotificationDetail(_ context.Context, enabled bool, now time.Time) (alertfeature.NotificationPreference, error) {
+	repository.preference = alertfeature.NotificationPreference{DetailEnabled: enabled, UpdatedAt: now}
+	return repository.preference, nil
+}
+func (repository *alertRepositoryStub) ClaimAlertDelivery(context.Context, string, time.Time) (bool, error) {
+	return true, nil
+}
+func (repository *alertRepositoryStub) RecordAlertDelivery(context.Context, string, alertfeature.DeliveryOutcome) error {
 	return nil
 }
 
@@ -94,7 +108,7 @@ func TestBrowserAlertsRequireSessionAndCSRFAndProjectSafeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = read.Body.Close()
-	if len(result.Active) != 1 || result.Active[0].ProfileAlias != "Work" || result.Active[0].Scope != "provider_quota_window" || result.Active[0].Freshness != "fresh" || result.Active[0].OccurrenceCount != 2 || result.DeliveryHealth.NativeNotifications != "not_configured" {
+	if len(result.Active) != 1 || result.Active[0].ProfileAlias != "Work" || result.Active[0].Scope != "provider_quota_window" || result.Active[0].Freshness != "fresh" || result.Active[0].OccurrenceCount != 2 || result.DeliveryHealth.NativeNotifications != "not_enrolled" || result.DeliveryHealth.DetailedContentEnabled {
 		t.Fatalf("alerts response = %#v", result)
 	}
 
@@ -113,4 +127,16 @@ func TestBrowserAlertsRequireSessionAndCSRFAndProjectSafeState(t *testing.T) {
 		t.Fatalf("threshold = %d/%v/%#v", threshold.StatusCode, err, repository.thresholds)
 	}
 	_ = threshold.Body.Close()
+	privacy, err := doRequest(client, http.MethodPost, origin+AlertsPath, server.Address(), origin, []byte(`{"action":"set_notification_detail","detailed_content_enabled":true}`), bootstrap.CSRFToken)
+	if err != nil || privacy.StatusCode != http.StatusOK || !repository.preference.DetailEnabled {
+		t.Fatalf("notification detail = %d/%v/%#v", privacy.StatusCode, err, repository.preference)
+	}
+	var privacyResult AlertsResponse
+	if err := json.NewDecoder(privacy.Body).Decode(&privacyResult); err != nil {
+		t.Fatal(err)
+	}
+	_ = privacy.Body.Close()
+	if !privacyResult.DeliveryHealth.DetailedContentEnabled {
+		t.Fatalf("notification detail response = %#v", privacyResult.DeliveryHealth)
+	}
 }

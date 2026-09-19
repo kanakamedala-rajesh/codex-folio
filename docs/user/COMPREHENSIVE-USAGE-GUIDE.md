@@ -339,8 +339,10 @@ Implemented dashboard flows include:
   credit/spend units separate.
 - **Alerts:** active operational conditions, bounded deduplicated history,
   acknowledgement, per-profile/per-window capacity thresholds, actionable
-  guidance, and delivery health. Overview consumes only decision-relevant
-  notices from the same evaluator.
+  guidance, privacy-preserving native delivery for explicitly enrolled
+  services, separate per-device notification-detail consent, and delivery
+  health. Overview consumes only decision-relevant notices from the same
+  evaluator.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
@@ -370,8 +372,27 @@ reset, or credit expiry. Repeated observations update one durable condition;
 acknowledgement does not hide that an active condition still exists. Conditions
 resolve when current evidence no longer supports them and remain in bounded
 history. Dashboard delivery is available locally. Native notification delivery
-is a separate capability and preference; an unavailable native channel does not
-disable evaluation or the Alerts route.
+runs only inside the explicitly enrolled state-owning service. Windows uses the
+user-session toast facility, macOS uses Notification Center, and Linux uses the
+desktop notification facility when `notify-send` and a desktop session are
+available. There is no alternate daemon or remote push service.
+
+Native text is generic by default: it says that CodexFolio has an operational
+alert and directs you to the dashboard. **Alerts** and **Settings** expose the
+same per-device **Notification privacy** preference. Detailed text may contain
+the Identity Profile alias, remaining capacity, and guidance, so enable it only
+when those values may appear on shared or locked screens. Enabling or revoking
+detail does not install or uninstall the service, enable update checks or
+telemetry, or change alert thresholds. Portable configuration does not carry
+this consent.
+
+Each new or reopened condition has one durable delivery lifecycle. The service
+claims a bounded notification before calling the OS, preserves successful
+delivery across repeated observations, and uses bounded retry intervals for
+known failures. A crash after the durable claim is treated conservatively as an
+uncertain failed delivery rather than risking a duplicate flood. Native facility
+unavailability or failure is shown in delivery health and never disables alert
+evaluation, the dashboard, on-demand collection, or foreground Codex.
 
 ### Sessions timeline
 

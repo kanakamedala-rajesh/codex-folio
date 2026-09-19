@@ -180,7 +180,13 @@ func (store *Store) SyncAlerts(ctx context.Context, profileID string, conditions
 		} else if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE alerts SET category = ?, kind = ?, severity = ?, title = ?, guidance = ?, metric_key = ?, window_start = ?, window_end = ?, remaining_percent = ?, source = ?, source_version = ?, provenance = ?, scope = ?, freshness = ?, availability_reason = ?, evidence_captured_at = ?, observed_at = ?,
 				last_seen_at = ?, occurrence_count = occurrence_count + 1, state = CASE WHEN state = 'resolved' THEN 'open' ELSE state END,
-				acknowledged_at = CASE WHEN state = 'resolved' THEN NULL ELSE acknowledged_at END, resolved_at = NULL WHERE alert_id = ?`,
+				acknowledged_at = CASE WHEN state = 'resolved' THEN NULL ELSE acknowledged_at END, resolved_at = NULL,
+				delivery_state = CASE WHEN state = 'resolved' THEN 'pending' ELSE delivery_state END,
+				delivery_attempts = CASE WHEN state = 'resolved' THEN 0 ELSE delivery_attempts END,
+				last_delivery_attempt_at = CASE WHEN state = 'resolved' THEN NULL ELSE last_delivery_attempt_at END,
+				next_delivery_attempt_at = CASE WHEN state = 'resolved' THEN NULL ELSE next_delivery_attempt_at END,
+				delivered_at = CASE WHEN state = 'resolved' THEN NULL ELSE delivered_at END,
+				delivery_error_code = CASE WHEN state = 'resolved' THEN '' ELSE delivery_error_code END WHERE alert_id = ?`,
 				condition.Category, condition.Kind, condition.Severity, condition.Title, condition.Guidance, condition.MetricKey, nullableAlertTime(condition.WindowStart), nullableAlertTime(condition.WindowEnd), condition.RemainingPercent, condition.Source, condition.SourceVersion, condition.Provenance, condition.Scope, condition.Freshness, condition.AvailabilityReason, nullableAlertTimeValue(condition.EvidenceCapturedAt), formatStoredTime(condition.ObservedAt), formatStoredTime(now), existingID)
 		}
 		if err != nil {
@@ -261,6 +267,7 @@ func (store *Store) ListAlerts(ctx context.Context, limit int) ([]alerts.Record,
 	defer store.operationMu.RUnlock()
 	rows, err := store.db.QueryContext(ctx, `SELECT a.alert_id, a.condition_key, COALESCE(a.profile_id, ''), COALESCE(c.alias, ''), a.category, a.kind, a.severity, a.state,
 		a.title, a.guidance, a.metric_key, a.window_start, a.window_end, a.remaining_percent, a.source, a.source_version, a.provenance, a.scope, a.freshness, a.availability_reason, a.evidence_captured_at, a.observed_at, a.first_seen_at, a.last_seen_at, a.acknowledged_at, a.resolved_at, a.occurrence_count
+		, a.delivery_state, a.delivery_attempts, a.last_delivery_attempt_at, a.next_delivery_attempt_at, a.delivered_at, a.delivery_error_code
 		FROM alerts a LEFT JOIN cli_aliases c ON c.profile_id = a.profile_id
 		ORDER BY CASE a.state WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END, rtrim(a.last_seen_at, 'Z') DESC, a.alert_id DESC LIMIT ?`, limit)
 	if err != nil {
@@ -270,10 +277,10 @@ func (store *Store) ListAlerts(ctx context.Context, limit int) ([]alerts.Record,
 	result := []alerts.Record{}
 	for rows.Next() {
 		var item alerts.Record
-		var start, end, evidenceCaptured, acknowledged, resolved sql.NullString
+		var start, end, evidenceCaptured, acknowledged, resolved, lastDeliveryAttempt, nextDeliveryAttempt, delivered sql.NullString
 		var remaining sql.NullFloat64
 		var observed, firstSeen, lastSeen string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProfileID, &item.ProfileAlias, &item.Category, &item.Kind, &item.Severity, &item.State, &item.Title, &item.Guidance, &item.MetricKey, &start, &end, &remaining, &item.Source, &item.SourceVersion, &item.Provenance, &item.Scope, &item.Freshness, &item.AvailabilityReason, &evidenceCaptured, &observed, &firstSeen, &lastSeen, &acknowledged, &resolved, &item.OccurrenceCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Key, &item.ProfileID, &item.ProfileAlias, &item.Category, &item.Kind, &item.Severity, &item.State, &item.Title, &item.Guidance, &item.MetricKey, &start, &end, &remaining, &item.Source, &item.SourceVersion, &item.Provenance, &item.Scope, &item.Freshness, &item.AvailabilityReason, &evidenceCaptured, &observed, &firstSeen, &lastSeen, &acknowledged, &resolved, &item.OccurrenceCount, &item.DeliveryState, &item.DeliveryAttempts, &lastDeliveryAttempt, &nextDeliveryAttempt, &delivered, &item.DeliveryErrorCode); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, err)
 		}
 		item.FirstSeenAt, err = parseStoredTime(firstSeen)
@@ -298,6 +305,15 @@ func (store *Store) ListAlerts(ctx context.Context, limit int) ([]alerts.Record,
 		if err == nil {
 			item.ResolvedAt, err = parseOptionalAlertTime(resolved)
 		}
+		if err == nil {
+			item.LastDeliveryAttemptAt, err = parseOptionalAlertTime(lastDeliveryAttempt)
+		}
+		if err == nil {
+			item.NextDeliveryAttemptAt, err = parseOptionalAlertTime(nextDeliveryAttempt)
+		}
+		if err == nil {
+			item.DeliveredAt, err = parseOptionalAlertTime(delivered)
+		}
 		if err != nil {
 			return nil, coded(apperrors.StoreReadFailed, err)
 		}
@@ -310,6 +326,96 @@ func (store *Store) ListAlerts(ctx context.Context, limit int) ([]alerts.Record,
 		return nil, coded(apperrors.StoreReadFailed, err)
 	}
 	return result, nil
+}
+
+func (store *Store) NotificationPreference(ctx context.Context) (alerts.NotificationPreference, error) {
+	if store == nil || store.db == nil {
+		return alerts.NotificationPreference{}, coded(apperrors.StoreReadFailed, alerts.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var enabled int
+	var updated string
+	err := store.db.QueryRowContext(ctx, `SELECT notification_detail_enabled, updated_at FROM settings WHERE settings_id = 1`).Scan(&enabled, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return alerts.NotificationPreference{}, nil
+	}
+	if err != nil {
+		return alerts.NotificationPreference{}, coded(apperrors.StoreReadFailed, err)
+	}
+	parsed, err := parseStoredTime(updated)
+	if err != nil {
+		return alerts.NotificationPreference{}, coded(apperrors.StoreReadFailed, err)
+	}
+	return alerts.NotificationPreference{DetailEnabled: enabled == 1, UpdatedAt: parsed}, nil
+}
+
+func (store *Store) SetNotificationDetail(ctx context.Context, enabled bool, now time.Time) (alerts.NotificationPreference, error) {
+	if store == nil || store.db == nil || now.IsZero() {
+		return alerts.NotificationPreference{}, apperrors.New(apperrors.UsageRequestInvalid, alerts.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	value := 0
+	if enabled {
+		value = 1
+	}
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	_, err := store.db.ExecContext(ctx, `INSERT INTO settings (settings_id, notification_detail_enabled, updated_at) VALUES (1, ?, ?)
+		ON CONFLICT(settings_id) DO UPDATE SET notification_detail_enabled = excluded.notification_detail_enabled, updated_at = excluded.updated_at`, value, formatStoredTime(now))
+	if err != nil {
+		return alerts.NotificationPreference{}, coded(apperrors.StoreWriteFailed, err)
+	}
+	return alerts.NotificationPreference{DetailEnabled: enabled, UpdatedAt: now.UTC()}, nil
+}
+
+func (store *Store) ClaimAlertDelivery(ctx context.Context, id string, now time.Time) (bool, error) {
+	if store == nil || store.db == nil || id == "" || now.IsZero() {
+		return false, apperrors.New(apperrors.UsageRequestInvalid, alerts.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	result, err := store.db.ExecContext(ctx, `UPDATE alerts SET delivery_state = 'attempting', delivery_attempts = delivery_attempts + 1,
+		last_delivery_attempt_at = ?, next_delivery_attempt_at = NULL, delivery_error_code = ''
+		WHERE alert_id = ? AND state = 'open' AND delivery_state IN ('pending', 'failed', 'unavailable') AND delivery_attempts < ?
+		AND (next_delivery_attempt_at IS NULL OR rtrim(next_delivery_attempt_at, 'Z') <= rtrim(?, 'Z'))`,
+		formatStoredTime(now), id, alerts.DeliveryMaxAttempts, formatStoredTime(now))
+	if err != nil {
+		return false, coded(apperrors.StoreWriteFailed, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, coded(apperrors.StoreWriteFailed, err)
+	}
+	return updated == 1, nil
+}
+
+func (store *Store) RecordAlertDelivery(ctx context.Context, id string, outcome alerts.DeliveryOutcome) error {
+	if store == nil || store.db == nil || id == "" || outcome.AttemptedAt.IsZero() || outcome.Attempts < 0 || outcome.Attempts > alerts.DeliveryMaxAttempts || (outcome.State != alerts.DeliveryDelivered && outcome.State != alerts.DeliveryFailed && outcome.State != alerts.DeliveryUnavailable) {
+		return apperrors.New(apperrors.UsageRequestInvalid, alerts.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	query := `UPDATE alerts SET delivery_state = ?, delivery_attempts = ?, last_delivery_attempt_at = ?, next_delivery_attempt_at = ?, delivered_at = ?, delivery_error_code = ? WHERE alert_id = ? AND state = 'open'`
+	args := []any{outcome.State, outcome.Attempts, formatStoredTime(outcome.AttemptedAt), nullableAlertTime(outcome.NextAttemptAt), nullableAlertTime(outcome.DeliveredAt), outcome.ErrorCode, id}
+	if outcome.State == alerts.DeliveryUnavailable {
+		query += ` AND delivery_state IN ('pending', 'failed', 'unavailable')`
+	} else {
+		query += ` AND delivery_state = 'attempting' AND delivery_attempts = ?`
+		args = append(args, outcome.Attempts)
+	}
+	result, err := store.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil || updated != 1 {
+		return apperrors.New(apperrors.UsageRequestInvalid, alerts.ErrInvalid)
+	}
+	return nil
 }
 
 func nullableAlertProfile(value string) any {

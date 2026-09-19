@@ -656,13 +656,41 @@ try {
         await page.getByRole("heading", { name: "Capacity at warning threshold" }).count(),
         1,
       );
+      const [detailEnabled] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/api/v1/alerts") &&
+            response.request().method() === "POST" &&
+            response.request().postDataJSON().action === "set_notification_detail" &&
+            response.request().postDataJSON().detailed_content_enabled === true,
+        ),
+        page
+          .getByRole("radio", {
+            name: /Include identity and quota details on this device/,
+          })
+          .check(),
+      ]);
+      assert.equal(detailEnabled.status(), 200);
+      const [detailRevoked] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/api/v1/alerts") &&
+            response.request().method() === "POST" &&
+            response.request().postDataJSON().action === "set_notification_detail" &&
+            response.request().postDataJSON().detailed_content_enabled === false,
+        ),
+        page.getByRole("radio", { name: /Generic notifications/ }).check(),
+      ]);
+      assert.equal(detailRevoked.status(), 200);
       assert.match(
         await page.locator("main").innerText(),
-        /Dashboard delivery: available[\s\S]*Native notification delivery: not configured/,
+        /Dashboard delivery: available[\s\S]*Native notification delivery: not enrolled/,
       );
       await scanAccessibility("alerts");
       await capture("alerts-narrow", 390, 844);
-      check("Alerts evaluates thresholds, deduplicates, acknowledges and retains bounded history");
+      check(
+        "Alerts evaluates thresholds, deduplicates, acknowledges, retains bounded history, and revokes native detail consent",
+      );
       await page.getByText("More", { exact: true }).click();
       await page
         .getByRole("button", { name: "Settings", exact: true })
@@ -679,6 +707,14 @@ try {
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
       const settings = await page.locator("main").innerText();
+      assert.equal(
+        await page.getByRole("radio", { name: /Generic notifications/ }).isChecked(),
+        true,
+      );
+      assert.match(
+        settings,
+        /Notification privacy[\s\S]*separate consent on this device[\s\S]*Generic notifications/,
+      );
       assert.match(settings, /Background service[\s\S]*On demand · Not enrolled/);
       assert.match(settings, /Native per-user mechanism: systemd-user/);
       assert.match(settings, /codex-folio service install/);

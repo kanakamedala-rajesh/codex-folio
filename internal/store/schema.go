@@ -466,6 +466,26 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 21,
+			name:    "native-alert-delivery",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN notification_detail_enabled INTEGER NOT NULL DEFAULT 0 CHECK (notification_detail_enabled IN (0, 1))`,
+					`ALTER TABLE alerts ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'attempting', 'delivered', 'failed', 'unavailable'))`,
+					`ALTER TABLE alerts ADD COLUMN delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0 AND delivery_attempts <= 3)`,
+					`ALTER TABLE alerts ADD COLUMN last_delivery_attempt_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN next_delivery_attempt_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN delivered_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN delivery_error_code TEXT NOT NULL DEFAULT ''`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -709,7 +729,7 @@ var foundationSchemaStatements = []string{
 }
 
 var expectedTables = map[string][]string{
-	"alerts":                         {"alert_id", "condition_key", "profile_id", "category", "kind", "severity", "state", "title", "guidance", "metric_key", "window_start", "window_end", "remaining_percent", "source", "source_version", "provenance", "scope", "freshness", "availability_reason", "evidence_captured_at", "observed_at", "first_seen_at", "last_seen_at", "acknowledged_at", "resolved_at", "occurrence_count"},
+	"alerts":                         {"alert_id", "condition_key", "profile_id", "category", "kind", "severity", "state", "title", "guidance", "metric_key", "window_start", "window_end", "remaining_percent", "source", "source_version", "provenance", "scope", "freshness", "availability_reason", "evidence_captured_at", "observed_at", "first_seen_at", "last_seen_at", "acknowledged_at", "resolved_at", "occurrence_count", "delivery_state", "delivery_attempts", "last_delivery_attempt_at", "next_delivery_attempt_at", "delivered_at", "delivery_error_code"},
 	"alert_thresholds":               {"profile_id", "metric_key", "warning_percent", "critical_percent", "updated_at"},
 	"checkpoints":                    {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
 	"cli_aliases":                    {"alias_id", "profile_id", "alias", "created_at"},
@@ -735,7 +755,7 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},

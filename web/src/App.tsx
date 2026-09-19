@@ -31,7 +31,7 @@ import { Analytics } from "./Analytics";
 import { Handoff } from "./Handoff";
 import { CheckpointManagement } from "./CheckpointManagement";
 import { ServiceHealth } from "./ServiceHealth";
-import { Alerts } from "./Alerts";
+import { Alerts, NotificationPrivacy } from "./Alerts";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -1404,6 +1404,9 @@ export function App() {
                           : serviceHealthCopy.locked}
                       </p>
                     </section>
+                    {alerts ? (
+                      <NotificationPrivacy data={alerts} busy={busy} manage={manageAlerts} />
+                    ) : null}
                     <section className="border-b border-rule py-6">
                       <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                         {c.backgroundService}

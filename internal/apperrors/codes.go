@@ -40,6 +40,7 @@ const (
 	ConfigurationPackAssignmentInvalid       = "CF_CONFIGPACK_ASSIGNMENT_INVALID"
 	ConfigurationPackProjectionFailed        = "CF_CONFIGPACK_PROJECTION_FAILED"
 	ConfigurationPackPromotionReviewRequired = "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED"
+	AlertNotificationFailed                  = "CF_ALERT_NOTIFICATION_FAILED"
 	AnalyticsRequestInvalid                  = "CF_USAGE_ANALYTICS_REQUEST_INVALID"
 	AnalyticsConfirmationInvalid             = "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID"
 	AnalyticsScopeTooLarge                   = "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE"
@@ -168,6 +169,7 @@ func IsRegistered(code string) bool {
 		ConfigurationPackAssignmentInvalid,
 		ConfigurationPackProjectionFailed,
 		ConfigurationPackPromotionReviewRequired,
+		AlertNotificationFailed,
 		AnalyticsRequestInvalid,
 		AnalyticsConfirmationInvalid,
 		AnalyticsScopeTooLarge,

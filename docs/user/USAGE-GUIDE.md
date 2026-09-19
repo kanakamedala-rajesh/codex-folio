@@ -154,8 +154,13 @@ In the dashboard:
   20% warning and 10% critical remaining thresholds for one profile/window.
   Missing or contradictory evidence never becomes a capacity or exact-reset
   alert. Overview shows only decision-relevant notices; Alerts remains
-  available without native service enrollment. Native notification delivery is
-  reported separately and is not enabled by this flow.
+  available without native service enrollment. An explicitly enrolled service
+  can deliver supported native notifications. Notification text is generic by
+  default; choose **Notification privacy → Include identity and quota details
+  on this device** only if aliases and capacity may safely appear on shared or
+  locked screens. This per-device choice is separate from service enrollment,
+  update checks, and telemetry, and can be revoked by selecting **Generic
+  notifications** again. Delivery failure never disables Alerts or collection.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated

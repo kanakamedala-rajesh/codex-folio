@@ -47,17 +47,26 @@ func (server *Server) alertsHandler(response http.ResponseWriter, request *http.
 		var records []alertfeature.Record
 		switch input.Action {
 		case "acknowledge":
-			if input.AlertId == nil || *input.AlertId == "" || input.ProfileId != nil || input.MetricKey != nil || input.WarningPercent != nil || input.CriticalPercent != nil {
+			if input.AlertId == nil || *input.AlertId == "" || input.ProfileId != nil || input.MetricKey != nil || input.WarningPercent != nil || input.CriticalPercent != nil || input.DetailedContentEnabled != nil {
 				server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 				return
 			}
 			records, err = server.alerts.Acknowledge(request.Context(), *input.AlertId)
 		case "set_threshold":
-			if input.AlertId != nil || input.ProfileId == nil || input.MetricKey == nil || input.WarningPercent == nil || input.CriticalPercent == nil {
+			if input.AlertId != nil || input.ProfileId == nil || input.MetricKey == nil || input.WarningPercent == nil || input.CriticalPercent == nil || input.DetailedContentEnabled != nil {
 				server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 				return
 			}
 			_, err = server.alerts.SetThreshold(request.Context(), alertfeature.Threshold{ProfileID: *input.ProfileId, MetricKey: *input.MetricKey, WarningPercent: *input.WarningPercent, CriticalPercent: *input.CriticalPercent})
+			if err == nil {
+				records, err = server.alerts.Evaluate(request.Context(), "")
+			}
+		case "set_notification_detail":
+			if input.AlertId != nil || input.ProfileId != nil || input.MetricKey != nil || input.WarningPercent != nil || input.CriticalPercent != nil || input.DetailedContentEnabled == nil {
+				server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
+				return
+			}
+			_, err = server.alerts.SetNotificationDetail(request.Context(), *input.DetailedContentEnabled)
 			if err == nil {
 				records, err = server.alerts.Evaluate(request.Context(), "")
 			}
@@ -81,9 +90,14 @@ func (server *Server) writeAlerts(response http.ResponseWriter, records []alertf
 		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
 		return
 	}
+	health, err := server.alerts.DeliveryHealth(nil)
+	if err != nil {
+		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+		return
+	}
 	result := AlertsResponse{
 		Active: []AlertRecord{}, History: []AlertRecord{}, Thresholds: []AlertThreshold{},
-		DeliveryHealth: AlertDeliveryHealth{Dashboard: "available", NativeNotifications: "not_configured", Detail: "Alerts remain available in CodexFolio. Native delivery is added separately."},
+		DeliveryHealth: AlertDeliveryHealth{Dashboard: health.Dashboard, NativeNotifications: health.Native, Mechanism: health.Mechanism, Detail: health.Detail, DetailedContentEnabled: health.DetailEnabled},
 	}
 	for _, item := range records {
 		projected := alertRecord(item)

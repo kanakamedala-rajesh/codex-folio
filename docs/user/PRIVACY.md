@@ -30,6 +30,7 @@ retention, and deletion behavior before it is enabled.
 | Transcript-assisted checkpoints | Separate consent, review, and retention policy; not ordinary analytics data |
 | Profile quarantine | Local removal and purge are different operations; product policy specifies a seven-day quarantine |
 | User-written exports and backups | Copies at destinations you choose; do not assume later database purge removes these copies |
+| Native notifications | Generic text by default. A separate per-device preference may allow Identity Profile aliases, capacity, and guidance on OS-managed notification surfaces, including shared or locked screens |
 
 The analytics implementation processes bounded maintenance batches; it does not
 promise that every expired row disappears immediately. No periodic scheduler is
@@ -40,6 +41,23 @@ The short retention statement in the product document is broader than the detail
 retention behavior described here. Maintainers must reconcile the accepted
 requirements and implementation before advertising a uniform deletion guarantee.
 This page does not silently approve a change to that product requirement.
+
+## Native notification privacy
+
+Installing the user service does not consent to detailed notification text.
+Update checks, telemetry choices, imported configuration, and generic
+confirmation also do not grant that consent. Generic native notifications do
+not include Identity Profile aliases, quota values, provider windows, paths, or
+Codex content. If you explicitly enable detailed text in Alerts or Settings,
+the operating system may display an alias, remaining capacity, and guidance on
+notification history, shared desktops, or locked screens according to platform
+policy. Re-select **Generic notifications** to revoke detail for future
+deliveries.
+
+The native adapter receives only the already-projected title and body. Delivery
+failure is stored as a stable safe status; raw native command output and message
+content are not written to diagnostics. Alerts remain available locally when a
+desktop notification facility or permission is unavailable.
 
 ## Analytics and exports
 

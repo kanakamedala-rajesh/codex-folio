@@ -515,7 +515,12 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
-	alertService, err := alertfeature.NewService(stateStore, usageClock{})
+	notificationAdapter, err := platform.NewNotificationAdapter(platform.NotificationOptions{})
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	deliveryEnabled := len(enrolled) > 0 && enrolled[0]
+	alertService, err := alertfeature.NewService(stateStore, usageClock{}, alertfeature.DeliveryOptions{Enabled: deliveryEnabled, Adapter: notificationAdapter})
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
@@ -544,13 +549,13 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
-		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: len(enrolled) > 0 && enrolled[0]},
+		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: deliveryEnabled},
 		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
 		Checkpoints:       checkpoints,
 		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
 		Alerts:            alertService,
 	}
-	if len(enrolled) > 0 && enrolled[0] {
+	if deliveryEnabled {
 		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
 		if err != nil {
 			return httpapi.OperationalServices{}, err

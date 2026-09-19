@@ -19,6 +19,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
@@ -102,6 +103,78 @@ func TestFailedUsageRefreshRunsRetentionForPersistedFailureSnapshot(t *testing.T
 	}
 	if result, err := stateStore.RetainAnalytics(context.Background()); err != nil || result.Processed != 0 {
 		t.Fatalf("second retention = %#v/%v", result, err)
+	}
+}
+
+func TestManualAndPeriodicRefreshesDeliverNewConditionsThroughRecordingAdapter(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	clock := &composedUsageClock{now: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	capacitySnapshot := func(capturedAt time.Time, used float64) usage.Snapshot {
+		snapshot := usage.NewUnavailableSnapshot("0.153.4", capturedAt, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+		metric := usage.Registry()[0]
+		start, end := capturedAt.Add(-time.Hour), capturedAt.Add(time.Hour)
+		snapshot.Observations = append(snapshot.Observations, usage.Observation{Metric: metric, Value: used, CapturedAt: capturedAt, ObservedAt: capturedAt, WindowStart: &start, WindowEnd: &end, WindowTimezone: "UTC", Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Availability: usage.AvailabilityAvailable})
+		snapshot.Availability[0].State, snapshot.Availability[0].Reason = usage.AvailabilityAvailable, ""
+		return snapshot
+	}
+	collector := &composedUsageCollector{fixtures: []composedUsageFixture{
+		{snapshot: capacitySnapshot(clock.now, 95)},
+		{snapshot: capacitySnapshot(clock.now.Add(time.Minute), 50)},
+		{snapshot: capacitySnapshot(clock.now.Add(2*time.Minute), 95)},
+	}}
+	workflow, err := usage.NewService(stateStore, collector, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &recordingUsageNotificationAdapter{}
+	alertService, err := alertfeature.NewService(stateStore, clock, alertfeature.DeliveryOptions{Enabled: true, Adapter: adapter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &usageCommandService{workflow: workflow, store: stateStore, alerts: alertService}
+	executable := filepath.Join(paths.Root, "codex")
+	service.resolver = launchTestResolver{candidate: launch.Candidate{Path: executable, Version: "0.153.4"}}
+	if _, err := stateStore.SetCollectionSettings(context.Background(), usage.CollectionSettings{ActiveInterval: usage.ProviderSafeMinimum, IdleInterval: usage.ProviderSafeMinimum}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RefreshWithCandidate(context.Background(), "Work", executable, "0.153.4", usage.TriggerExplicitRefresh); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.notifications) != 1 || strings.Contains(adapter.notifications[0].Body, "Work") {
+		t.Fatalf("manual generic delivery = %#v", adapter.notifications)
+	}
+	scheduler, err := usage.NewScheduler(stateStore, service, clock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(usage.ProviderSafeMinimum)
+	if result, err := scheduler.Tick(context.Background()); err != nil || result.Collected != 1 {
+		t.Fatalf("closing scheduler tick = %#v/%v", result, err)
+	}
+	if _, err := alertService.SetNotificationDetail(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(usage.ProviderSafeMinimum)
+	if result, err := scheduler.Tick(context.Background()); err != nil || result.Collected != 1 {
+		t.Fatalf("reopening scheduler tick = %#v/%v", result, err)
+	}
+	if len(adapter.notifications) != 2 || !strings.Contains(adapter.notifications[1].Body, "Work") {
+		records, _ := stateStore.ListAlerts(context.Background(), alertfeature.HistoryLimit)
+		t.Fatalf("reopened periodic detailed delivery = %#v, records = %#v", adapter.notifications, records)
+	}
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := stateStore.RecentUsageSnapshots(context.Background(), target)
+	if err != nil || len(snapshots) != 3 || snapshots[0].TriggerReason != usage.TriggerExplicitRefresh || snapshots[1].TriggerReason != usage.TriggerPeriodicIdle || snapshots[2].TriggerReason != usage.TriggerPeriodicIdle {
+		t.Fatalf("manual/scheduled triggers = %#v/%v", snapshots, err)
 	}
 }
 
@@ -720,6 +793,19 @@ func (collector *composedUsageCollector) Collect(ctx context.Context, request us
 type composedUsageClock struct{ now time.Time }
 
 func (clock *composedUsageClock) Now() time.Time { return clock.now }
+
+type recordingUsageNotificationAdapter struct {
+	notifications []alertfeature.Notification
+}
+
+func (*recordingUsageNotificationAdapter) Health(context.Context) alertfeature.AdapterHealth {
+	return alertfeature.AdapterHealth{Available: true, Mechanism: "recording", Detail: "available"}
+}
+
+func (adapter *recordingUsageNotificationAdapter) Deliver(_ context.Context, notification alertfeature.Notification) error {
+	adapter.notifications = append(adapter.notifications, notification)
+	return nil
+}
 
 type composedBrowserDoer struct {
 	client *http.Client

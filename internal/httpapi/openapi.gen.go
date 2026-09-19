@@ -21,7 +21,7 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "89a264ec513d7063b72ffc8b1be57be39362b89a808892bf5e87d93571fcd0dc"
+	ContractSourceSHA256   = "28e741f10bb13c1f8dececc5bb1ef918d94790bb7cbfbe69961c3f17419d840f"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
@@ -71,9 +71,11 @@ type AlertThreshold struct {
 }
 
 type AlertDeliveryHealth struct {
-	Dashboard           string `json:"dashboard"`
-	NativeNotifications string `json:"native_notifications"`
-	Detail              string `json:"detail"`
+	Dashboard              string `json:"dashboard"`
+	NativeNotifications    string `json:"native_notifications"`
+	Mechanism              string `json:"mechanism"`
+	Detail                 string `json:"detail"`
+	DetailedContentEnabled bool   `json:"detailed_content_enabled"`
 }
 
 type AlertsResponse struct {
@@ -84,12 +86,13 @@ type AlertsResponse struct {
 }
 
 type AlertActionRequest struct {
-	Action          string   `json:"action"`
-	AlertId         *string  `json:"alert_id,omitempty"`
-	ProfileId       *string  `json:"profile_id,omitempty"`
-	MetricKey       *string  `json:"metric_key,omitempty"`
-	WarningPercent  *float64 `json:"warning_percent,omitempty"`
-	CriticalPercent *float64 `json:"critical_percent,omitempty"`
+	Action                 string   `json:"action"`
+	AlertId                *string  `json:"alert_id,omitempty"`
+	ProfileId              *string  `json:"profile_id,omitempty"`
+	MetricKey              *string  `json:"metric_key,omitempty"`
+	WarningPercent         *float64 `json:"warning_percent,omitempty"`
+	CriticalPercent        *float64 `json:"critical_percent,omitempty"`
+	DetailedContentEnabled *bool    `json:"detailed_content_enabled,omitempty"`
 }
 
 type ConfigurationDocument struct {

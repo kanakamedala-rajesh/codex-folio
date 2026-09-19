@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "89a264ec513d7063b72ffc8b1be57be39362b89a808892bf5e87d93571fcd0dc" as const;
+  "28e741f10bb13c1f8dececc5bb1ef918d94790bb7cbfbe69961c3f17419d840f" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 
@@ -46,7 +46,9 @@ export interface AlertThreshold {
 export interface AlertDeliveryHealth {
   dashboard: string;
   native_notifications: string;
+  mechanism: string;
   detail: string;
+  detailed_content_enabled: boolean;
 }
 
 export interface AlertsResponse {
@@ -63,6 +65,7 @@ export interface AlertActionRequest {
   metric_key?: string;
   warning_percent?: number;
   critical_percent?: number;
+  detailed_content_enabled?: boolean;
 }
 
 export interface HistoryScope {

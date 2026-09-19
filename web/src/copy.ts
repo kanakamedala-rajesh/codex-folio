@@ -939,6 +939,16 @@ export const alertsCopy = {
   delivery: "Delivery health",
   dashboard: "Dashboard delivery",
   native: "Native notification delivery",
+  mechanism: "Native mechanism",
+  privacy: "Notification privacy",
+  privacyDetail:
+    "Generic text is the default. Identity and quota details require separate consent on this device and are independent of service enrollment, updates, and telemetry.",
+  genericNotifications: "Generic notifications",
+  genericNotificationsDetail:
+    "Shows only that CodexFolio has an operational alert. Open the dashboard for details.",
+  detailedNotifications: "Include identity and quota details on this device",
+  detailedNotificationsDetail:
+    "May show the Identity Profile alias, remaining capacity, and guidance on shared or locked screens.",
   saved: "Alert settings saved.",
   acknowledged: "Alert acknowledged.",
   failed: "Alert change was not applied.",
