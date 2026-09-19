@@ -16,11 +16,12 @@ import (
 const (
 	APIVersion             = "v1"
 	ActivityPath           = "/api/v1/activity"
+	AlertsPath             = "/api/v1/alerts"
 	AnalyticsPath          = "/api/v1/analytics"
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "1b11432b3dea53cf05ebcc6bfa4c088d8284abe1db03ee2b0635315b6c645bd2"
+	ContractSourceSHA256   = "89a264ec513d7063b72ffc8b1be57be39362b89a808892bf5e87d93571fcd0dc"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
@@ -32,6 +33,64 @@ const (
 	UsageLatestPath        = "/api/v1/usage/latest"
 	UsageRefreshPath       = "/api/v1/usage/refresh"
 )
+
+type AlertRecord struct {
+	AlertId            string   `json:"alert_id"`
+	ProfileId          string   `json:"profile_id"`
+	ProfileAlias       string   `json:"profile_alias"`
+	Category           string   `json:"category"`
+	Kind               string   `json:"kind"`
+	Severity           string   `json:"severity"`
+	State              string   `json:"state"`
+	Title              string   `json:"title"`
+	Guidance           string   `json:"guidance"`
+	MetricKey          string   `json:"metric_key"`
+	WindowStart        string   `json:"window_start"`
+	WindowEnd          string   `json:"window_end"`
+	RemainingPercent   *float64 `json:"remaining_percent,omitempty"`
+	Source             string   `json:"source"`
+	SourceVersion      string   `json:"source_version"`
+	Provenance         string   `json:"provenance"`
+	Scope              string   `json:"scope"`
+	Freshness          string   `json:"freshness"`
+	AvailabilityReason string   `json:"availability_reason"`
+	EvidenceCapturedAt string   `json:"evidence_captured_at"`
+	ObservedAt         string   `json:"observed_at"`
+	FirstSeenAt        string   `json:"first_seen_at"`
+	LastSeenAt         string   `json:"last_seen_at"`
+	AcknowledgedAt     string   `json:"acknowledged_at"`
+	ResolvedAt         string   `json:"resolved_at"`
+	OccurrenceCount    int64    `json:"occurrence_count"`
+}
+
+type AlertThreshold struct {
+	ProfileId       string  `json:"profile_id"`
+	MetricKey       string  `json:"metric_key"`
+	WarningPercent  float64 `json:"warning_percent"`
+	CriticalPercent float64 `json:"critical_percent"`
+}
+
+type AlertDeliveryHealth struct {
+	Dashboard           string `json:"dashboard"`
+	NativeNotifications string `json:"native_notifications"`
+	Detail              string `json:"detail"`
+}
+
+type AlertsResponse struct {
+	Active         []AlertRecord       `json:"active"`
+	History        []AlertRecord       `json:"history"`
+	Thresholds     []AlertThreshold    `json:"thresholds"`
+	DeliveryHealth AlertDeliveryHealth `json:"delivery_health"`
+}
+
+type AlertActionRequest struct {
+	Action          string   `json:"action"`
+	AlertId         *string  `json:"alert_id,omitempty"`
+	ProfileId       *string  `json:"profile_id,omitempty"`
+	MetricKey       *string  `json:"metric_key,omitempty"`
+	WarningPercent  *float64 `json:"warning_percent,omitempty"`
+	CriticalPercent *float64 `json:"critical_percent,omitempty"`
+}
 
 type ConfigurationDocument struct {
 	Kind    string `json:"kind"`

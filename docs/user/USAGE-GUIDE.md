@@ -148,6 +148,14 @@ In the dashboard:
   or CSV browser download, configures retention from 30 days through unlimited,
   and dry-runs fully scoped purge counts before confirmation. Canonical project
   paths require explicit inclusion.
+- **Alerts** shows active capacity, reset, reauthentication, stale-evidence,
+  repeated-collection-failure, and compatibility conditions plus bounded,
+  deduplicated history. Acknowledge an active condition or change the default
+  20% warning and 10% critical remaining thresholds for one profile/window.
+  Missing or contradictory evidence never becomes a capacity or exact-reset
+  alert. Overview shows only decision-relevant notices; Alerts remains
+  available without native service enrollment. Native notification delivery is
+  reported separately and is not enabled by this flow.
 - **Launch Codex** displays an explicit terminal command; it does not start a
   hidden browser process. Choose a registered Project Identity, then run that
   command to keep the selected working directory in the service-validated

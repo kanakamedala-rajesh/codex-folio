@@ -337,11 +337,41 @@ Implemented dashboard flows include:
   Project Alias editing, and an explicit Compare view that keeps identities,
   subscription windows, evidence state, source, provenance, and API
   credit/spend units separate.
+- **Alerts:** active operational conditions, bounded deduplicated history,
+  acknowledgement, per-profile/per-window capacity thresholds, actionable
+  guidance, and delivery health. Overview consumes only decision-relevant
+  notices from the same evaluator.
 
 The browser never receives Identity Home IDs/paths, raw Codex authentication
 output, the service command credential, vault material, or raw provider payloads.
 Device-code work that needs terminal interaction is returned as an explicit
 local command.
+
+### Operational alerts
+
+Alert evaluation consumes the same normalized usage, availability, source
+version, capture-time, provider-window, profile authentication, and collection
+failure state used by Overview and the scheduler. Manual and periodic refreshes
+share that evaluation path; opening Alerts also evaluates time-sensitive stale
+and approaching-reset state through the application clock. On-demand alerts do
+not require native service enrollment.
+
+The bounded set is: 20% warning and 10% critical remaining by default,
+exhaustion, approaching provider-reported resets and reset-credit expiry when a
+supported source supplies them, reauthentication, evidence older than ten
+minutes, three consecutive collection failures, and source compatibility
+changes. Configure capacity thresholds for one Identity Profile and normalized
+provider window in **Alerts → Capacity thresholds**. The critical value must be
+below the warning value. There is no rule language or arbitrary action engine.
+
+Missing, partial, contradictory, future, unsupported, out-of-window, or
+non-provider capacity data does not manufacture remaining capacity, an exact
+reset, or credit expiry. Repeated observations update one durable condition;
+acknowledgement does not hide that an active condition still exists. Conditions
+resolve when current evidence no longer supports them and remain in bounded
+history. Dashboard delivery is available locally. Native notification delivery
+is a separate capability and preference; an unavailable native channel does not
+disable evaluation or the Alerts route.
 
 ### Sessions timeline
 

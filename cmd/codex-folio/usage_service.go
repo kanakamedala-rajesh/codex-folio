@@ -6,6 +6,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/store"
 	usagefeature "venkatasudha.com/codex-folio/internal/usage"
@@ -15,6 +16,7 @@ type usageCommandService struct {
 	workflow *usagefeature.Service
 	resolver launch.ExecutableResolver
 	store    *store.Store
+	alerts   *alertfeature.Service
 }
 
 type collectionSettingsCommandService struct {
@@ -57,6 +59,12 @@ func (service *usageCommandService) RefreshWithCandidate(ctx context.Context, al
 		_, retentionErr := service.store.RetainAnalytics(ctx)
 		if err == nil {
 			err = retentionErr
+		}
+	}
+	if service.alerts != nil && snapshot.ProfileID != "" {
+		_, alertErr := service.alerts.Evaluate(ctx, snapshot.ProfileID)
+		if err == nil {
+			err = alertErr
 		}
 	}
 	return snapshot, err

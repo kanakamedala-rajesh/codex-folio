@@ -3,8 +3,67 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "1b11432b3dea53cf05ebcc6bfa4c088d8284abe1db03ee2b0635315b6c645bd2" as const;
+  "89a264ec513d7063b72ffc8b1be57be39362b89a808892bf5e87d93571fcd0dc" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
+export const AlertsPath = "/api/v1/alerts" as const;
+
+export interface AlertRecord {
+  alert_id: string;
+  profile_id: string;
+  profile_alias: string;
+  category: string;
+  kind: string;
+  severity: string;
+  state: string;
+  title: string;
+  guidance: string;
+  metric_key: string;
+  window_start: string;
+  window_end: string;
+  remaining_percent?: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  scope: string;
+  freshness: string;
+  availability_reason: string;
+  evidence_captured_at: string;
+  observed_at: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  acknowledged_at: string;
+  resolved_at: string;
+  occurrence_count: number;
+}
+
+export interface AlertThreshold {
+  profile_id: string;
+  metric_key: string;
+  warning_percent: number;
+  critical_percent: number;
+}
+
+export interface AlertDeliveryHealth {
+  dashboard: string;
+  native_notifications: string;
+  detail: string;
+}
+
+export interface AlertsResponse {
+  active: AlertRecord[];
+  history: AlertRecord[];
+  thresholds: AlertThreshold[];
+  delivery_health: AlertDeliveryHealth;
+}
+
+export interface AlertActionRequest {
+  action: string;
+  alert_id?: string;
+  profile_id?: string;
+  metric_key?: string;
+  warning_percent?: number;
+  critical_percent?: number;
+}
 
 export interface HistoryScope {
   profile_id: string;
@@ -680,6 +739,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/alerts": {
+    get: {
+      operationId: "getAlerts";
+      responses: {
+        200: { content: { "application/json": AlertsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageAlerts";
+      requestBody: AlertActionRequest;
+      responses: {
+        200: { content: { "application/json": AlertsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/configuration-packs": {
     get: {
       operationId: "getConfigurationPacks";
@@ -863,6 +939,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getAlerts(init?: RequestInit): Promise<AlertsResponse>;
+  manageAlerts(request: AlertActionRequest, init?: RequestInit): Promise<AlertsResponse>;
   getConfigurationPacks(init?: RequestInit): Promise<ConfigurationPackResponse>;
   manageConfigurationPack(
     request: ConfigurationPackRequest,
@@ -907,6 +985,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getAlerts(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/alerts", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AlertsResponse;
+    },
+    async manageAlerts(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/alerts", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AlertsResponse;
+    },
     async getConfigurationPacks(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

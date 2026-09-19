@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
+	"venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/configpack"
@@ -128,6 +129,7 @@ type OperationalServices struct {
 	Exports               *activity.ExportService
 	Checkpoints           CommandCheckpointService
 	CheckpointHistory     BrowserCheckpointHistory
+	Alerts                *alerts.Service
 }
 
 // Options configures the local browser service. Random is used only for
@@ -154,6 +156,7 @@ type Options struct {
 	Exports               *activity.ExportService
 	Checkpoints           CommandCheckpointService
 	CheckpointHistory     BrowserCheckpointHistory
+	Alerts                *alerts.Service
 	CommandToken          string
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
@@ -192,6 +195,7 @@ type Server struct {
 	exportService         *activity.ExportService
 	checkpoints           CommandCheckpointService
 	checkpointHistory     BrowserCheckpointHistory
+	alerts                *alerts.Service
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
 	serviceEnrollment     ServiceEnrollmentHealth
@@ -279,6 +283,7 @@ func NewServer(options Options) (*Server, error) {
 		exportService:         options.Exports,
 		checkpoints:           options.Checkpoints,
 		checkpointHistory:     options.CheckpointHistory,
+		alerts:                options.Alerts,
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
 		serviceEnrollment:     options.ServiceEnrollment,
@@ -701,6 +706,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.analytics(response, request)
+	case AlertsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.alertsHandler(response, request)
 	case CollectionSettingsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1219,6 +1233,7 @@ func (server *Server) Activate(services OperationalServices) error {
 	server.exportService = services.Exports
 	server.checkpoints = services.Checkpoints
 	server.checkpointHistory = services.CheckpointHistory
+	server.alerts = services.Alerts
 	server.operational.Store(true)
 	return nil
 }

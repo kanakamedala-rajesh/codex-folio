@@ -140,6 +140,7 @@ function validateContract(contract, productVersion) {
   }
 
   const activityPath = `/api/${apiVersion}/activity`;
+  const alertsPath = `/api/${apiVersion}/alerts`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const handoffPath = `/api/${apiVersion}/handoff`;
@@ -158,6 +159,7 @@ function validateContract(contract, productVersion) {
     contract.paths,
     [
       activityPath,
+      alertsPath,
       analyticsPath,
       historyPath,
       bootstrapPath,
@@ -221,6 +223,21 @@ function validateContract(contract, productVersion) {
   const collectionSettingsRequestReference = requestReference(setCollectionSettingsOperation.requestBody, `PUT ${collectionSettingsPath} request body`);
   const collectionSettingsResponseReference = responseReference(getCollectionSettingsOperation, `GET ${collectionSettingsPath}`, ["200", "default"]);
   assertEqual(responseReference(setCollectionSettingsOperation, `PUT ${collectionSettingsPath}`, ["200", "default"]), collectionSettingsResponseReference, "collection settings response reference");
+
+  const alertsPathItem = contract.paths[alertsPath];
+  assertObject(alertsPathItem, `path ${alertsPath}`);
+  assertExactKeys(alertsPathItem, ["get", "post"], `path ${alertsPath}`);
+  const getAlertsOperation = alertsPathItem.get;
+  const manageAlertsOperation = alertsPathItem.post;
+  assertExactKeys(getAlertsOperation, ["operationId", "responses"], `GET ${alertsPath}`);
+  assertExactKeys(manageAlertsOperation, ["operationId", "requestBody", "responses"], `POST ${alertsPath}`);
+  assertIdentifier(getAlertsOperation.operationId, "get alerts operationId");
+  assertIdentifier(manageAlertsOperation.operationId, "manage alerts operationId");
+  const alertsResponseReference = responseReference(getAlertsOperation, `GET ${alertsPath}`, ["200", "default"]);
+  const alertActionRequestReference = requestReference(manageAlertsOperation.requestBody, `POST ${alertsPath} request body`);
+  assertEqual(responseReference(manageAlertsOperation, `POST ${alertsPath}`, ["200", "default"]), alertsResponseReference, "alerts response reference");
+  assertEqual(errorResponseReference(getAlertsOperation, `GET ${alertsPath}`), "#/$defs/UsageErrorResponse", "alerts error response");
+  assertEqual(errorResponseReference(manageAlertsOperation, `POST ${alertsPath}`), "#/$defs/UsageErrorResponse", "alerts mutation error response");
 
   const activityOperation = contract.paths[activityPath]?.get;
   assertObject(activityOperation, `GET ${activityPath}`);
@@ -400,6 +417,7 @@ function validateContract(contract, productVersion) {
   assertEqual(errorResponseReference(handoffOperation, "handoff error"), usageErrorResponseReference, "handoff error response");
   const handoffSchemaNames = ["HandoffFields", "HandoffFieldEvidence", "HandoffValidationEvidence", "HandoffCheckpointFields", "HandoffRepository", "HandoffCheckpointSummary", "HandoffRetentionPolicy", "HandoffOperationPreview", "HandoffDownload", "HandoffResponse", "CheckpointManagementResponse", schemaNameFromReference(handoffRequestReference, "handoff request"), schemaNameFromReference(handoffResponseReference, "handoff response")];
   const configurationSchemaNames = ["ConfigurationDocument", "ConfigurationPackSummary", "ConfigurationChange", "ConfigurationAssignment", "ConfigurationProjectionPlan", "ConfigurationProjectionResult", "ConfigurationPromotionPreview", schemaNameFromReference(configurationPackRequestReference, "configuration pack request"), schemaNameFromReference(configurationPackResponseReference, "configuration pack response")];
+  const alertSchemaNames = ["AlertRecord", "AlertThreshold", "AlertDeliveryHealth", schemaNameFromReference(alertsResponseReference, "alerts response"), schemaNameFromReference(alertActionRequestReference, "alert action request")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -438,6 +456,7 @@ function validateContract(contract, productVersion) {
     ...historySchemaNames,
     ...handoffSchemaNames,
     ...configurationSchemaNames,
+    ...alertSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
@@ -555,6 +574,12 @@ function validateContract(contract, productVersion) {
   const collectionSettingsResponseFields = schemaFields(contract.$defs[collectionSettingsResponseType], collectionSettingsResponseType);
 
   return {
+    alertsPath,
+    alertsGetOperationId: getAlertsOperation.operationId,
+    alertsManageOperationId: manageAlertsOperation.operationId,
+    alertsRequestType: schemaNameFromReference(alertActionRequestReference, "alert action request"),
+    alertsResponseType: schemaNameFromReference(alertsResponseReference, "alerts response"),
+    alertSchemas: alertSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     collectionSettingsPath,
     collectionSettingsGetOperationId: getCollectionSettingsOperation.operationId,
     collectionSettingsSetOperationId: setCollectionSettingsOperation.operationId,
@@ -852,6 +877,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const usageLatestMethod = goIdentifier(usageLatestOperationId);
   const usageMethod = goIdentifier(usageOperationId);
   const types = [
+    ...contractShape.alertSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
@@ -911,6 +937,7 @@ import (
 const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
+\tAlertsPath           = "${contractShape.alertsPath}"
 \tAnalyticsPath        = "${analyticsPath}"
 \tHistoryPath          = "${contractShape.historyPath}"
 \tHandoffPath          = "${contractShape.handoffPath}"
@@ -1536,6 +1563,9 @@ export const CONTRACT_VERSION = "${productVersion}" as const;
 export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
 export const HandoffPath = "${handoffPath}" as const;
+export const AlertsPath = "${contractShape.alertsPath}" as const;
+
+${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1676,6 +1706,23 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${contractShape.alertsPath}": {
+    get: {
+      operationId: "${contractShape.alertsGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${contractShape.alertsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${contractShape.alertsManageOperationId}";
+      requestBody: ${contractShape.alertsRequestType};
+      responses: {
+        200: { content: { "application/json": ${contractShape.alertsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${configurationPacksPath}": {
     get: {
       operationId: "${configurationPackGetOperationId}";
@@ -1859,6 +1906,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${contractShape.alertsGetOperationId}(init?: RequestInit): Promise<${contractShape.alertsResponseType}>;
+  ${contractShape.alertsManageOperationId}(request: ${contractShape.alertsRequestType}, init?: RequestInit): Promise<${contractShape.alertsResponseType}>;
   ${configurationPackGetOperationId}(init?: RequestInit): Promise<${configurationPackResponseType}>;
   ${configurationPackManageOperationId}(
     request: ${configurationPackRequestType},
@@ -1903,6 +1952,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${contractShape.alertsGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.alertsPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.alertsResponseType};
+    },
+    async ${contractShape.alertsManageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.alertsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.alertsResponseType};
+    },
     async ${configurationPackGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

@@ -20,6 +20,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
@@ -514,6 +515,11 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
+	alertService, err := alertfeature.NewService(stateStore, usageClock{})
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	usageCommands.alerts = alertService
 	launches, err := newLaunchCommandService(stateStore, configurationPacks, codexadapter.NewAuthenticator(), projects, usageCommands)
 	if err != nil {
 		return httpapi.OperationalServices{}, err
@@ -542,6 +548,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
 		Checkpoints:       checkpoints,
 		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
+		Alerts:            alertService,
 	}
 	if len(enrolled) > 0 && enrolled[0] {
 		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
@@ -581,6 +588,7 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		CollectionSettings: services.CollectionSettings,
 		Projects:           services.Projects, Activities: services.Activities, History: services.History,
 		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
+		Alerts:       services.Alerts,
 		CommandToken: commandToken,
 	}
 }

@@ -912,6 +912,56 @@
       },
       "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity", "recent"],
       "type": "object"
+    },
+    "AlertRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "alert_id": {"type": "string"}, "profile_id": {"type": "string"}, "profile_alias": {"type": "string"},
+        "category": {"type": "string"}, "kind": {"type": "string"}, "severity": {"enum": ["info", "warning", "error"], "type": "string"},
+        "state": {"enum": ["open", "acknowledged", "resolved"], "type": "string"}, "title": {"type": "string"}, "guidance": {"type": "string"},
+        "metric_key": {"type": "string"}, "window_start": {"type": "string"}, "window_end": {"type": "string"}, "remaining_percent": {"type": "number"},
+        "source": {"type": "string"}, "source_version": {"type": "string"}, "provenance": {"type": "string"}, "scope": {"type": "string"}, "freshness": {"type": "string"}, "availability_reason": {"type": "string"},
+        "evidence_captured_at": {"type": "string"}, "observed_at": {"type": "string"},
+        "first_seen_at": {"type": "string"}, "last_seen_at": {"type": "string"}, "acknowledged_at": {"type": "string"}, "resolved_at": {"type": "string"},
+        "occurrence_count": {"type": "integer"}
+      },
+      "required": ["alert_id", "profile_id", "profile_alias", "category", "kind", "severity", "state", "title", "guidance", "metric_key", "window_start", "window_end", "source", "source_version", "provenance", "scope", "freshness", "availability_reason", "evidence_captured_at", "observed_at", "first_seen_at", "last_seen_at", "acknowledged_at", "resolved_at", "occurrence_count"],
+      "type": "object"
+    },
+    "AlertThreshold": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {"type": "string"}, "metric_key": {"enum": ["codex.primary.used_percent", "codex.secondary.used_percent"], "type": "string"},
+        "warning_percent": {"type": "number"}, "critical_percent": {"type": "number"}
+      },
+      "required": ["profile_id", "metric_key", "warning_percent", "critical_percent"],
+      "type": "object"
+    },
+    "AlertDeliveryHealth": {
+      "additionalProperties": false,
+      "properties": {"dashboard": {"type": "string"}, "native_notifications": {"type": "string"}, "detail": {"type": "string"}},
+      "required": ["dashboard", "native_notifications", "detail"],
+      "type": "object"
+    },
+    "AlertsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {"type": "array", "items": {"$ref": "#/$defs/AlertRecord"}},
+        "history": {"type": "array", "items": {"$ref": "#/$defs/AlertRecord"}},
+        "thresholds": {"type": "array", "items": {"$ref": "#/$defs/AlertThreshold"}},
+        "delivery_health": {"$ref": "#/$defs/AlertDeliveryHealth"}
+      },
+      "required": ["active", "history", "thresholds", "delivery_health"],
+      "type": "object"
+    },
+    "AlertActionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {"enum": ["acknowledge", "set_threshold"], "type": "string"}, "alert_id": {"type": "string"},
+        "profile_id": {"type": "string"}, "metric_key": {"type": "string"}, "warning_percent": {"type": "number"}, "critical_percent": {"type": "number"}
+      },
+      "required": ["action"],
+      "type": "object"
     }
   },
   "info": {
@@ -921,6 +971,23 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/alerts": {
+      "get": {
+        "operationId": "getAlerts",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertsResponse"}}}, "description": "Evaluates and returns browser-safe active conditions, bounded history, thresholds, and delivery health."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "manageAlerts",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertActionRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/AlertsResponse"}}}, "description": "Acknowledges one alert or updates one bounded per-profile/per-window threshold."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      }
+    },
     "/api/v1/collection-settings": {
       "get": {
         "operationId": "getCollectionSettings",

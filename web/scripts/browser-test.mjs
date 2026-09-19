@@ -614,6 +614,55 @@ try {
         /Primary window[\s\S]*65%[\s\S]*Secondary window[\s\S]*50%/,
       );
       await capture("overview-narrow", 390, 844);
+      await page
+        .getByRole("button", { name: "Alerts", exact: true })
+        .filter({ visible: true })
+        .click();
+      await assertFocusedHeading("Operational alerts");
+      assert.match(await page.locator("main").innerText(), /No active operational conditions/);
+      const thresholdDetails = page.locator("details").filter({ hasText: "Capacity thresholds" });
+      await thresholdDetails.locator("summary").click();
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("details")].some(
+          (details) => details.open && details.textContent?.includes("Capacity thresholds"),
+        ),
+      );
+      const thresholdSelects = thresholdDetails.locator("select");
+      const thresholdInputs = thresholdDetails.locator('input[type="number"]');
+      await thresholdSelects.first().selectOption({ label: "Work" });
+      await thresholdInputs.first().fill("70");
+      await thresholdInputs.nth(1).fill("60");
+      const thresholdSaved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/alerts") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "set_threshold",
+      );
+      await page.getByRole("button", { name: "Save thresholds", exact: true }).click();
+      assert.equal((await thresholdSaved).status(), 200);
+      await page.getByRole("heading", { name: "Capacity at warning threshold" }).waitFor();
+      assert.match(await page.locator("main").innerText(), /65% remaining/);
+      const acknowledged = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/alerts") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "acknowledge",
+      );
+      await page.getByRole("button", { name: "Acknowledge", exact: true }).click();
+      assert.equal((await acknowledged).status(), 200);
+      await page.getByText("acknowledged", { exact: true }).waitFor();
+      await page.getByRole("tab", { name: "History", exact: true }).click();
+      assert.equal(
+        await page.getByRole("heading", { name: "Capacity at warning threshold" }).count(),
+        1,
+      );
+      assert.match(
+        await page.locator("main").innerText(),
+        /Dashboard delivery: available[\s\S]*Native notification delivery: not configured/,
+      );
+      await scanAccessibility("alerts");
+      await capture("alerts-narrow", 390, 844);
+      check("Alerts evaluates thresholds, deduplicates, acknowledges and retains bounded history");
       await page.getByText("More", { exact: true }).click();
       await page
         .getByRole("button", { name: "Settings", exact: true })
@@ -760,6 +809,7 @@ try {
         .getByRole("button", { name: "Overview", exact: true })
         .filter({ visible: true })
         .click();
+      assert.match(await page.locator("main").innerText(), /Decision-relevant alerts/);
       await capture("overview-forced", 390, 844);
       assert.equal(
         await page.getByRole("button", { name: "Launch Codex", exact: true }).evaluate((button) => {

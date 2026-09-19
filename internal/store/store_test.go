@@ -29,6 +29,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 
 	gotTables := queryObjectNames(t, foundation.db, "table")
 	wantTables := []string{
+		"alert_thresholds",
 		"alerts",
 		"checkpoints",
 		"cli_aliases",

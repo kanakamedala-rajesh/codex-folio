@@ -3,6 +3,8 @@ import {
   createCodexFolioApiClient,
   UsageRefreshError,
   type AnalyticsResponse,
+  type AlertActionRequest,
+  type AlertsResponse,
   type ActivityRecord,
   type ConfigurationPackRequest,
   type ConfigurationPackResponse,
@@ -21,7 +23,7 @@ import {
   type SelectionResponse,
   type UsageSnapshotResponse,
 } from "./generated/openapi";
-import { copy as c, serviceHealthCopy, stateCopy, provenanceCopy } from "./copy";
+import { alertsCopy, copy as c, serviceHealthCopy, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
 import { Sessions, type SessionFilters } from "./Sessions";
 import { Launch, type LaunchTarget } from "./Launch";
@@ -29,6 +31,7 @@ import { Analytics } from "./Analytics";
 import { Handoff } from "./Handoff";
 import { CheckpointManagement } from "./CheckpointManagement";
 import { ServiceHealth } from "./ServiceHealth";
+import { Alerts } from "./Alerts";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -451,6 +454,7 @@ export function App() {
   const [serviceHealth, setServiceHealth] = useState<MetadataResponse | null>(null);
   const serviceState = serviceHealth?.service_state;
   const [data, setData] = useState<AnalyticsResponse | null>(null);
+  const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [packs, setPacks] = useState<ConfigurationPackSummary[]>([]);
@@ -530,12 +534,13 @@ export function App() {
   const editAnalyticsProject = (request: { project_id: string; alias: string }) =>
     api.editProject(request, { headers: { "X-CodexFolio-CSRF": csrf.current } });
   async function load(includeProfiles = false) {
-    const [next, selected, inventory] = await Promise.all([
+    const [next, selected, alertData, inventory] = await Promise.all([
       api.getAnalytics("combined_identity"),
       api.getSelection().catch((e) => {
         if (e instanceof UsageRefreshError && e.status === 409) return null;
         throw e;
       }),
+      api.getAlerts(),
       includeProfiles
         ? Promise.all([
             api.getProfiles(),
@@ -547,6 +552,7 @@ export function App() {
     ]);
     setNow(Date.now());
     setData(next);
+    setAlerts(alertData);
     setSelection(selected);
     if (inventory) {
       setProfiles(inventory[0].profiles);
@@ -557,6 +563,26 @@ export function App() {
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
     return next;
+  }
+  async function manageAlerts(request: AlertActionRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageAlerts(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      setAlerts(result);
+      setMessage(request.action === "acknowledge" ? alertsCopy.acknowledged : alertsCopy.saved);
+      return result;
+    } catch (error) {
+      failure(error);
+      setMessage(alertsCopy.failed);
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
   }
   async function refresh(trigger: string, current: AnalyticsResponse) {
     if (operation.current) return;
@@ -1051,6 +1077,14 @@ export function App() {
         ["running", "pending"].includes(a.lifecycle) &&
         a.profile_id !== selection?.profile_id,
     ) ?? [];
+  const overviewAlerts =
+    alerts?.active
+      .filter(
+        (item) =>
+          item.severity !== "info" &&
+          (combined || !selection?.profile_id || item.profile_id === selection.profile_id),
+      )
+      .slice(0, 3) ?? [];
   const selector = (
     <label className="grid min-w-0 gap-[0.4rem]">
       {c.scope}
@@ -1277,6 +1311,14 @@ export function App() {
                 editProject={editAnalyticsProject}
                 expired={failure}
               />
+            ) : route === "Alerts" && alerts ? (
+              <Alerts
+                data={alerts}
+                profiles={profiles}
+                busy={busy}
+                heading={heading}
+                manage={manageAlerts}
+              />
             ) : (
               <>
                 <header className="mb-7 border-b border-rule pb-5 [&_p]:mb-0">
@@ -1317,6 +1359,39 @@ export function App() {
                     <p className="mb-4 max-w-[75ch]">{c.runningDetail}</p>
                   </section>
                 )}
+                {route === "Overview" && overviewAlerts.length > 0 ? (
+                  <section
+                    className="my-4 border-y border-rule py-4"
+                    aria-labelledby="overview-alerts"
+                  >
+                    <h2
+                      id="overview-alerts"
+                      className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                    >
+                      {alertsCopy.notices}
+                    </h2>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {overviewAlerts.map((item) => (
+                        <article
+                          key={item.alert_id}
+                          className="border-l-3 border-warning pl-4 forced-colors:border-[CanvasText]"
+                        >
+                          <h3 className="mb-2 text-[1.05rem] font-bold">{item.title}</h3>
+                          <p className="mb-2 max-w-[75ch]">
+                            {item.profile_alias} · {item.guidance}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate("Alerts")}
+                      className="mt-4 min-h-11 rounded border border-rule bg-panel px-3 py-2 font-semibold hover:border-accent"
+                    >
+                      {alertsCopy.openAlerts}
+                    </button>
+                  </section>
+                ) : null}
                 {route === "Settings" ? (
                   <section>
                     <section className="border-b border-rule pb-6">

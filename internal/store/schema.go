@@ -408,6 +408,64 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 20,
+			name:    "bounded-operational-alerts",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE alerts_v20 (
+						alert_id TEXT PRIMARY KEY NOT NULL,
+						condition_key TEXT NOT NULL UNIQUE,
+						profile_id TEXT,
+						category TEXT NOT NULL CHECK (category IN ('capacity', 'reauthentication', 'stale_data', 'collection_failure', 'compatibility')),
+						kind TEXT NOT NULL,
+						severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error')),
+						state TEXT NOT NULL CHECK (state IN ('open', 'acknowledged', 'resolved')),
+						title TEXT NOT NULL,
+						guidance TEXT NOT NULL,
+						metric_key TEXT NOT NULL DEFAULT '',
+						window_start TEXT,
+						window_end TEXT,
+						remaining_percent REAL CHECK (remaining_percent IS NULL OR (remaining_percent >= 0 AND remaining_percent <= 100)),
+						source TEXT NOT NULL DEFAULT '',
+						source_version TEXT NOT NULL DEFAULT '',
+						provenance TEXT NOT NULL DEFAULT '',
+						scope TEXT NOT NULL DEFAULT '',
+						freshness TEXT NOT NULL DEFAULT '',
+						availability_reason TEXT NOT NULL DEFAULT '',
+						evidence_captured_at TEXT,
+						observed_at TEXT NOT NULL,
+						first_seen_at TEXT NOT NULL,
+						last_seen_at TEXT NOT NULL,
+						acknowledged_at TEXT,
+						resolved_at TEXT,
+						occurrence_count INTEGER NOT NULL CHECK (occurrence_count > 0),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`INSERT INTO alerts_v20 (alert_id, condition_key, profile_id, category, kind, severity, state, title, guidance, observed_at, first_seen_at, last_seen_at, acknowledged_at, occurrence_count)
+						SELECT alert_id, alert_id, profile_id, category, category, severity, state, category, '', created_at, created_at, created_at, acknowledged_at, 1 FROM alerts`,
+					`DROP TABLE alerts`,
+					`ALTER TABLE alerts_v20 RENAME TO alerts`,
+					`CREATE INDEX idx_alerts_profile_state ON alerts (profile_id, state)`,
+					`CREATE INDEX idx_alerts_last_seen ON alerts (last_seen_at)`,
+					`CREATE TABLE alert_thresholds (
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL CHECK (metric_key IN ('codex.primary.used_percent', 'codex.secondary.used_percent')),
+						warning_percent REAL NOT NULL CHECK (warning_percent > 0 AND warning_percent <= 100),
+						critical_percent REAL NOT NULL CHECK (critical_percent >= 0 AND critical_percent < warning_percent),
+						updated_at TEXT NOT NULL,
+						PRIMARY KEY (profile_id, metric_key),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`CREATE INDEX idx_alert_thresholds_profile ON alert_thresholds (profile_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -651,7 +709,8 @@ var foundationSchemaStatements = []string{
 }
 
 var expectedTables = map[string][]string{
-	"alerts":                         {"alert_id", "profile_id", "category", "severity", "state", "created_at", "acknowledged_at"},
+	"alerts":                         {"alert_id", "condition_key", "profile_id", "category", "kind", "severity", "state", "title", "guidance", "metric_key", "window_start", "window_end", "remaining_percent", "source", "source_version", "provenance", "scope", "freshness", "availability_reason", "evidence_captured_at", "observed_at", "first_seen_at", "last_seen_at", "acknowledged_at", "resolved_at", "occurrence_count"},
+	"alert_thresholds":               {"profile_id", "metric_key", "warning_percent", "critical_percent", "updated_at"},
 	"checkpoints":                    {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
 	"cli_aliases":                    {"alias_id", "profile_id", "alias", "created_at"},
 	"collection_schedule_state":      {"profile_id", "last_attempt_at", "next_attempt_at", "consecutive_failures", "last_outcome", "updated_at"},
@@ -684,6 +743,8 @@ var expectedTables = map[string][]string{
 }
 
 var expectedIndexes = []string{
+	"idx_alert_thresholds_profile",
+	"idx_alerts_last_seen",
 	"idx_collection_schedule_next",
 	"idx_usage_aggregates_group",
 	"idx_usage_aggregates_profile_time",

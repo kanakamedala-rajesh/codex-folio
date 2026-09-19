@@ -542,7 +542,7 @@ func TestReferencedProfileRemovalDeregistersWithoutTouchingExternalHome(t *testi
 		`INSERT INTO usage_snapshots (snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason) VALUES ('snapshot-1', 'profile-external', 'codex_app_server', '', '2026-09-01T00:00:00Z', 'available', 'explicit_refresh')`,
 		`INSERT INTO metric_availability (metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id) VALUES ('availability-1', 'profile-external', 'requests', 'available', '2026-09-01T00:00:00Z', 'source-1')`,
 		`INSERT INTO usage_observations (observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, observed_at, snapshot_id) VALUES ('observation-1', 'profile-external', 'requests', 'source-1', 'availability-1', 1, 'count', '2026-09-01T00:00:00Z', 'snapshot-1')`,
-		`INSERT INTO alerts (alert_id, profile_id, category, severity, state, created_at) VALUES ('alert-1', 'profile-external', 'capacity', 'warning', 'open', '2026-09-01T00:00:00Z')`,
+		`INSERT INTO alerts (alert_id, condition_key, profile_id, category, kind, severity, state, title, guidance, observed_at, first_seen_at, last_seen_at, occurrence_count) VALUES ('alert-1', 'profile-external|capacity', 'profile-external', 'capacity', 'capacity_warning', 'warning', 'open', 'Capacity warning', '', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', 1)`,
 	} {
 		if _, err := stateStore.db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("seed analytics: %v", err)
