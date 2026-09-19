@@ -26,6 +26,11 @@ test("persisted checkout credentials are rejected", () => {
 test("a larger runner is rejected", () => {
   assert.ok(workflowFindings(".github/workflows/verify.yml", verify.replace("runner: macos-15", "runner: macos-15-large")).some((s) => s.includes("standard-runner")));
 });
+test("the shared web job retains its reviewed runner", () => {
+  for (const replacement of ["runs-on: self-hosted", ""]) {
+    assert.ok(workflowFindings(".github/workflows/verify.yml", verify.replace("runs-on: ubuntu-24.04", replacement)).some((s) => s.includes("runner selection")));
+  }
+});
 test("write permissions and privileged events are rejected", () => {
   const changed = verify.replace("contents: read", "contents: write").replace("  pull_request:", "  pull_request_target:");
   const errors = workflowFindings(".github/workflows/verify.yml", changed);

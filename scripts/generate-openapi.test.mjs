@@ -38,6 +38,42 @@ test("the generated usage client exposes safe error identifiers", async () => {
   );
 });
 
+test("the generated analytics readers preserve expired-session status", async () => {
+  const { createCodexFolioApiClient, UsageRefreshError } = await import("../web/src/generated/openapi.ts");
+  const client = createCodexFolioApiClient("", async () => new Response(
+    JSON.stringify({ code: "CF_HTTPAPI_FORBIDDEN", message: "Browser authorization expired." }),
+    { status: 403, headers: { "Content-Type": "application/json" } },
+  ));
+
+  for (const read of [() => client.getActivity(), () => client.getProjects()]) {
+    await assert.rejects(
+      read(),
+      (error) => error instanceof UsageRefreshError
+        && error.code === "CF_HTTPAPI_FORBIDDEN"
+        && error.status === 403,
+    );
+  }
+});
+
+test("the generated browser client exposes the safe handoff contract", async () => {
+  const { HandoffPath, createCodexFolioApiClient } = await import("../web/src/generated/openapi.ts");
+  let captured;
+  const client = createCodexFolioApiClient("", async (path, init) => {
+    captured = { path, init };
+    return new Response(JSON.stringify({ kind: "handoff", handoff: { checkpoint_id: "checkpoint-1" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const result = await client.manageHandoff({ action: "show", target_alias: "Personal", checkpoint_id: "checkpoint-1" });
+  assert.equal(HandoffPath, "/api/v1/handoff");
+  assert.equal(result.kind, "handoff");
+  assert.equal(result.handoff.checkpoint_id, "checkpoint-1");
+  assert.equal(captured.path, HandoffPath);
+  assert.equal(captured.init.method, "POST");
+});
+
 test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const fixtureDirectory = mkdtempSync(join(tmpdir(), "codex-folio-openapi-"));
   t.after(() => rmSync(fixtureDirectory, { force: true, recursive: true }));
@@ -47,7 +83,10 @@ test("the OpenAPI check rejects a generated artifact that drifted", (t) => {
   const generatedGo = readFileSync(generatedGoPath, "utf8");
   writeFileSync(
     generatedGoPath,
-    generatedGo.replace("ContractSourceSHA256 = \"", "ContractSourceSHA256 = \"tampered-")
+    generatedGo.replace(
+      /(ContractSourceSHA256\s+= ")/,
+      "$1tampered-",
+    ),
   );
 
   assert.throws(() => checkOpenAPI(fixtureDirectory), /drift/i);

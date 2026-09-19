@@ -79,6 +79,13 @@ func TestAnalyticsCLIComposesRetentionAndConfirmedPurge(t *testing.T) {
 	if code != 0 || !strings.Contains(output, `"applied":true`) || !strings.Contains(output, `"count":4`) {
 		t.Fatalf("confirmed automation: %d/%s/%s", code, output, diagnostic)
 	}
+	code, output, diagnostic = run(append(append([]string{}, args...), "--dry-run"), "")
+	if code != 0 || diagnostic != "" {
+		t.Fatalf("second preview: %d/%s/%s", code, output, diagnostic)
+	}
+	if err := json.Unmarshal([]byte(output), &preview); err != nil {
+		t.Fatal(err)
+	}
 	code, output, diagnostic = run(args, preview.Purge.Confirmation+"\r\n")
 	if code != 0 || !strings.Contains(output, `"applied":true`) || !strings.Contains(diagnostic, "Type purge-") {
 		t.Fatalf("typed confirmation: %d/%s/%s", code, output, diagnostic)
@@ -166,6 +173,15 @@ func TestGeneratedHistoryAPIUsesAuthorizedServiceAndRealStore(t *testing.T) {
 	preview, _, err := generated.ManageAnalyticsHistory(ctx, request)
 	if err != nil || preview.Purge.Applied {
 		t.Fatal("API dry run failed")
+	}
+	mismatched := "purge-mismatched"
+	request.Confirmation = &mismatched
+	if _, response, err := generated.ManageAnalyticsHistory(ctx, request); err == nil || response == nil || response.StatusCode != http.StatusConflict {
+		t.Fatal("API accepted mismatched purge confirmation")
+	}
+	unchanged, _, err := generated.ManageAnalyticsHistory(ctx, httpapi.HistoryRequest{Action: "export", Export: &exportRequest})
+	if err != nil || unchanged.Export == nil || unchanged.Export.Records.Usage == nil || len(*unchanged.Export.Records.Usage) != 1 {
+		t.Fatal("mismatched purge changed analytics data")
 	}
 	request.Confirmation = &preview.Purge.Confirmation
 	if result, _, err := generated.ManageAnalyticsHistory(ctx, request); err != nil || !result.Purge.Applied {

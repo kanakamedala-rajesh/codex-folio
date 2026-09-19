@@ -54,6 +54,8 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runVersion(args, stdout, stderr, metadata)
 	case "service":
 		return runServiceWithPathResolver(args[1:], stdout, stderr, resolvePaths)
+	case "vault":
+		return runVault(args[1:], os.Stdin, stdout, stderr, resolvePaths)
 	case "codex":
 		return runCodex(args[1:], stdout, stderr, resolver)
 	case "profile":
@@ -72,6 +74,12 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		return runActivity(args[1:], stdout, stderr, resolvePaths)
 	case "analytics":
 		return runAnalyticsWithDependencies(args[1:], os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, newServiceDiagnosticSink())
+	case "settings":
+		return runSettings(args[1:], stdout, stderr, resolvePaths)
+	case "diagnostics":
+		return runDiagnostics(args[1:], os.Stdin, stdout, stderr, resolvePaths)
+	case "updates":
+		return runUpdates(args[1:], stdout, stderr, resolvePaths)
 	case "checkpoint":
 		return runCheckpoint(args[1:], stdout, stderr, resolvePaths)
 	case "handoff":
@@ -119,7 +127,8 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
-	fmt.Fprintln(stdout, "  codex-folio service {status|start|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio service {install|start|status|uninstall|recovery} [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio vault unlock [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio codex discover [--codex-bin PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile add ALIAS [--identity-home PATH] [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile reauthenticate ALIAS [--browser|--device-code] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
@@ -128,7 +137,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio profile remove ALIAS [--replacement ALIAS] [--confirm ALIAS] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile restore ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio profile purge ALIAS [--confirm ALIAS] [--state-root PATH] [--vault-mode MODE] [--non-interactive] [--json]")
-	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
+	fmt.Fprintln(stdout, "  codex-folio launch ALIAS [--project ID] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE] -- [CODEX ARGS ...]")
 	fmt.Fprintln(stdout, "  codex-folio select ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio configuration-pack {create|approve|assign|override|preview|project|promotion-preview|promote} ...")
 	fmt.Fprintln(stdout, "  codex-folio usage refresh ALIAS [--state-root PATH] [--vault-mode MODE] [--json]")
@@ -136,6 +145,9 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "  codex-folio project {resolve|list|edit|reconcile} ...")
 	fmt.Fprintln(stdout, "  codex-folio activity {refresh ALIAS|list [--profile ALIAS] [--project ID]} ...")
 	fmt.Fprintln(stdout, "  codex-folio analytics {retention|purge|aggregates} ...")
+	fmt.Fprintln(stdout, "  codex-folio settings collection [--active-minutes N] [--idle-minutes N] [--state-root PATH] [--vault-mode MODE] [--json]")
+	fmt.Fprintln(stdout, "  codex-folio diagnostics {settings|export} ...")
+	fmt.Fprintln(stdout, "  codex-folio updates {status|check|settings} ...")
 	fmt.Fprintln(stdout, "  codex-folio checkpoint {retention|capture|show|review|export} ...")
 	fmt.Fprintln(stdout, "  codex-folio handoff TARGET [PATH] [checkpoint capture options] [--codex-bin PATH] [--state-root PATH] [--vault-mode MODE]")
 	fmt.Fprintln(stdout, "  codex-folio shell {generate|remove} [--shell bash|zsh|powershell] [--wrapper] [--state-root PATH] [--json]")

@@ -3,7 +3,158 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "0731b4d0b30c9a0a6d3af72d42c81f8fbabed614f57b92e2dbfc5ffe3aa9f580" as const;
+  "1414d85efc156a5829e666bbd6b4001260190380c86015589c525d10dec1d5de" as const;
+export const HandoffPath = "/api/v1/handoff" as const;
+export const AlertsPath = "/api/v1/alerts" as const;
+export const DiagnosticsPath = "/api/v1/diagnostics" as const;
+export const UpdatesPath = "/api/v1/updates" as const;
+
+export interface AlertRecord {
+  alert_id: string;
+  profile_id: string;
+  profile_alias: string;
+  category: string;
+  kind: string;
+  severity: string;
+  state: string;
+  title: string;
+  guidance: string;
+  metric_key: string;
+  window_start: string;
+  window_end: string;
+  remaining_percent?: number;
+  source: string;
+  source_version: string;
+  provenance: string;
+  scope: string;
+  freshness: string;
+  availability_reason: string;
+  evidence_captured_at: string;
+  observed_at: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  acknowledged_at: string;
+  resolved_at: string;
+  occurrence_count: number;
+}
+
+export interface AlertThreshold {
+  profile_id: string;
+  metric_key: string;
+  warning_percent: number;
+  critical_percent: number;
+}
+
+export interface AlertDeliveryHealth {
+  dashboard: string;
+  native_notifications: string;
+  mechanism: string;
+  detail: string;
+  detailed_content_enabled: boolean;
+}
+
+export interface AlertsResponse {
+  active: AlertRecord[];
+  history: AlertRecord[];
+  thresholds: AlertThreshold[];
+  delivery_health: AlertDeliveryHealth;
+}
+
+export interface AlertActionRequest {
+  action: string;
+  alert_id?: string;
+  profile_id?: string;
+  metric_key?: string;
+  warning_percent?: number;
+  critical_percent?: number;
+  detailed_content_enabled?: boolean;
+}
+
+export interface DiagnosticSettings {
+  enabled: boolean;
+  minimum_level: string;
+  retention_days: number;
+}
+
+export interface DiagnosticFeatureStates {
+  service: boolean;
+  detailed_alerts: boolean;
+  automatic_updates: boolean;
+  telemetry: boolean;
+}
+
+export interface DiagnosticHealth {
+  service: string;
+  database: string;
+  vault: string;
+  error_code?: string;
+}
+
+export interface DiagnosticEnvironment {
+  application_version: string;
+  database_schema_version: number;
+  os_family: string;
+  architecture: string;
+  features: DiagnosticFeatureStates;
+  health: DiagnosticHealth;
+}
+
+export interface DiagnosticRecord {
+  id: string;
+  component: string;
+  error_code: string;
+  severity: string;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface DiagnosticBundle {
+  schema_version: number;
+  generated_at: string;
+  settings: DiagnosticSettings;
+  environment: DiagnosticEnvironment;
+  diagnostics: DiagnosticRecord[];
+}
+
+export interface DiagnosticPreview {
+  fields: string[];
+  diagnostic_count: number;
+  encoded_bytes: number;
+  confirmation_digest: string;
+  bundle: DiagnosticBundle;
+}
+
+export interface DiagnosticsRequest {
+  action: string;
+  settings?: DiagnosticSettings;
+  confirmation?: string;
+}
+
+export interface DiagnosticsResponse {
+  settings: DiagnosticSettings;
+  maximum_encoded_bytes: number;
+  preview?: DiagnosticPreview;
+  bundle?: DiagnosticBundle;
+}
+
+export interface UpdateRequest {
+  action: string;
+  automatic_checks?: boolean;
+}
+
+export interface UpdateResponse {
+  automatic_checks: boolean;
+  status: string;
+  current_version: string;
+  available_version: string;
+  release_notes: string;
+  download_url: string;
+  installer_guidance: string;
+  checked_at: string;
+  next_check_at: string;
+  error_code: string;
+}
 
 export interface HistoryScope {
   profile_id: string;
@@ -196,6 +347,213 @@ export interface ActivityCorrelation {
   confidence?: string;
 }
 
+export interface HandoffFields {
+  goal: string;
+  completed_work: string;
+  pending_work: string;
+  known_validation: string;
+  risks: string;
+  next_action: string;
+}
+
+export interface HandoffFieldEvidence {
+  value: string;
+  provenance: string;
+  completeness: string;
+}
+
+export interface HandoffValidationEvidence {
+  command: string;
+  timestamp?: string;
+  exit_status?: number;
+  source: string;
+  freshness: string;
+}
+
+export interface HandoffCheckpointFields {
+  goal: HandoffFieldEvidence;
+  completed_work: HandoffFieldEvidence;
+  pending_work: HandoffFieldEvidence;
+  known_validation: HandoffValidationEvidence[];
+  validation_provenance: string;
+  validation_completeness: string;
+  risks: HandoffFieldEvidence;
+  next_action: HandoffFieldEvidence;
+}
+
+export interface HandoffRepository {
+  branch: string;
+  head: string;
+  staged: string[];
+  modified: string[];
+  untracked: string[];
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  binary_files: number;
+  provenance: string;
+  completeness: string;
+}
+
+export interface HandoffCheckpointSummary {
+  checkpoint_id: string;
+  status: string;
+  state: string;
+  source: string;
+  project_alias: string;
+  project_basename: string;
+  revision: string;
+  created_at: string;
+  expires_at: string;
+  exportable: boolean;
+  purgeable: boolean;
+}
+
+export interface HandoffRetentionPolicy {
+  repository_first: string;
+  transcript_assisted: string;
+}
+
+export interface HandoffOperationPreview {
+  kind: string;
+  confirmation: string;
+  filename: string;
+  included_fields: string[];
+  excluded_fields: string[];
+}
+
+export interface HandoffDownload {
+  filename: string;
+  media_type: string;
+  content_base64: string;
+}
+
+export interface HandoffResponse {
+  checkpoint_id: string;
+  status: string;
+  revision: string;
+  source: string;
+  project_id: string;
+  project_alias: string;
+  project_basename: string;
+  fields: HandoffCheckpointFields;
+  repository: HandoffRepository;
+  retention: string;
+  created_at: string;
+  expires_at: string;
+  size_bytes: number;
+  source_profile_id: string;
+  source_alias: string;
+  source_state: string;
+  target_profile_id: string;
+  target_alias: string;
+  target_eligible: boolean;
+  target_caution: string;
+  terminal_command: string;
+}
+
+export interface CheckpointManagementResponse {
+  checkpoints?: HandoffCheckpointSummary[];
+  retention_policy?: HandoffRetentionPolicy;
+  operation_preview?: HandoffOperationPreview;
+  download?: HandoffDownload;
+  applied?: boolean;
+}
+
+export interface HandoffRequest {
+  action: string;
+  project_id?: string;
+  target_alias?: string;
+  checkpoint_id?: string;
+  revision?: string;
+  preview_revision?: string;
+  thread_id?: string;
+  history_consent?: boolean;
+  fields?: HandoffFields;
+  source?: string;
+  setting?: string;
+  confirmation?: string;
+  passphrase?: string;
+  plaintext_acknowledgement?: boolean;
+  redact_paths?: string[];
+  redact_text?: string[];
+}
+
+export interface HandoffResult {
+  kind: string;
+  handoff?: HandoffResponse;
+  management?: CheckpointManagementResponse;
+}
+
+export interface ConfigurationDocument {
+  kind: string;
+  content: string;
+}
+
+export interface ConfigurationPackSummary {
+  id: string;
+  version: string;
+  state: string;
+  digest: string;
+  files: string[];
+  created_at: string;
+}
+
+export interface ConfigurationChange {
+  path: string;
+  kind: string;
+}
+
+export interface ConfigurationAssignment {
+  profile_id: string;
+  alias: string;
+  pack_id: string;
+  version: string;
+  digest: string;
+}
+
+export interface ConfigurationProjectionPlan {
+  assignment: ConfigurationAssignment;
+  digest: string;
+  files: string[];
+  conflicts: ConfigurationChange[];
+}
+
+export interface ConfigurationProjectionResult {
+  pack_id: string;
+  version: string;
+  digest: string;
+  files: string[];
+}
+
+export interface ConfigurationPromotionPreview {
+  profile_alias: string;
+  pack_id: string;
+  from_version: string;
+  to_version: string;
+  changes: ConfigurationChange[];
+  digest: string;
+}
+
+export interface ConfigurationPackRequest {
+  action: string;
+  pack_id?: string;
+  version?: string;
+  alias?: string;
+  documents?: ConfigurationDocument[];
+  reviewed?: boolean;
+  expected_digest?: string;
+}
+
+export interface ConfigurationPackResponse {
+  packs: ConfigurationPackSummary[];
+  pack?: ConfigurationPackSummary;
+  assignment?: ConfigurationAssignment;
+  plan?: ConfigurationProjectionPlan;
+  projection?: ConfigurationProjectionResult;
+  promotion_preview?: ConfigurationPromotionPreview;
+}
+
 export interface ActivityRecord {
   record_type: string;
   id: string;
@@ -211,6 +569,8 @@ export interface ActivityRecord {
   started_at: string;
   last_observed_at: string;
   lifecycle: string;
+  continuation_checkpoint_id?: string;
+  continuation_revision?: string;
   exit_status: string;
   model: string;
   tokens_used: string;
@@ -234,6 +594,7 @@ export interface AnalyticsResponse {
   aggregates: UsageAggregate[];
   ambiguities: UsageMetricAmbiguity[];
   activity: ActivityRecord[];
+  recent: UsageSnapshotResponse[];
 }
 
 export interface BootstrapRequest {
@@ -248,6 +609,105 @@ export interface MetadataResponse {
   api_version: string;
   contract_version: string;
   product: string;
+  service_state: string;
+  vault_state: string;
+  database_state: string;
+  error_code: string;
+  guidance_commands: string[];
+  terminal_command_base: string;
+  terminal_command_suffix: string;
+  enrollment_state: string;
+  enrollment_mechanism: string;
+  enrollment_available: boolean;
+  enrollment_guidance: string[];
+}
+
+export interface CollectionSettingsRequest {
+  active_interval_seconds: number;
+  idle_interval_seconds: number;
+}
+
+export interface CollectionSettingsResponse {
+  active_interval_seconds: number;
+  idle_interval_seconds: number;
+  provider_minimum_seconds: number;
+  scheduler_enabled: boolean;
+  provider_floor_basis: string;
+}
+
+export interface ProfileSetupStages {
+  discovery: boolean;
+  home: boolean;
+  authentication: boolean;
+  validation: boolean;
+  selection: boolean;
+}
+
+export interface ProfileSummary {
+  profile_id: string;
+  alias: string;
+  display_name: string;
+  login_identity: string;
+  workspace: string;
+  status: string;
+  identity_home_mode: string;
+  authentication_method: string;
+  selected: boolean;
+  configuration_pack: string;
+  last_successful_refresh: string;
+}
+
+export interface ProfilesResponse {
+  profiles: ProfileSummary[];
+  updated?: ProfileSummary;
+}
+
+export interface ProfileEditRequest {
+  alias: string;
+  new_alias?: string;
+  display_name?: string;
+  login_identity?: string;
+  workspace?: string;
+}
+
+export interface ProfileAuthenticationRequest {
+  action: string;
+  alias: string;
+  display_name?: string;
+  codex_override?: string;
+  identity_home_mode: string;
+  referenced_home_path?: string;
+  auth_method: string;
+}
+
+export interface ProfileAuthenticationResponse {
+  profile: ProfileSummary;
+  stages: ProfileSetupStages;
+  codex_found: boolean;
+  codex_version: string;
+  outcome: string;
+  terminal_command: string;
+  warnings: string[];
+}
+
+export interface ProfileLifecycleRecord {
+  profile: ProfileSummary;
+  action: string;
+  state: string;
+  quarantined_at: string;
+  purge_after: string;
+  remote_identity_affected: boolean;
+}
+
+export interface ProfileLifecycleListResponse {
+  quarantined: ProfileLifecycleRecord[];
+}
+
+export interface ProfileLifecycleRequest {
+  action: string;
+  alias: string;
+  replacement?: string;
+  confirmation?: string;
 }
 
 export interface ProjectIdentity {
@@ -256,6 +716,11 @@ export interface ProjectIdentity {
   basename: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectEditRequest {
+  project_id: string;
+  alias: string;
 }
 
 export interface ProjectsResponse {
@@ -365,12 +830,90 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/updates": {
+    get: {
+      operationId: "getUpdates";
+      responses: {
+        200: { content: { "application/json": UpdateResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageUpdates";
+      requestBody: UpdateRequest;
+      responses: {
+        200: { content: { "application/json": UpdateResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/diagnostics": {
+    get: {
+      operationId: "getDiagnostics";
+      responses: {
+        200: { content: { "application/json": DiagnosticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageDiagnostics";
+      requestBody: DiagnosticsRequest;
+      responses: {
+        200: { content: { "application/json": DiagnosticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/alerts": {
+    get: {
+      operationId: "getAlerts";
+      responses: {
+        200: { content: { "application/json": AlertsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageAlerts";
+      requestBody: AlertActionRequest;
+      responses: {
+        200: { content: { "application/json": AlertsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/configuration-packs": {
+    get: {
+      operationId: "getConfigurationPacks";
+      responses: {
+        200: { content: { "application/json": ConfigurationPackResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageConfigurationPack";
+      requestBody: ConfigurationPackRequest;
+      responses: {
+        200: { content: { "application/json": ConfigurationPackResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/analytics/history": {
     post: {
       operationId: "manageAnalyticsHistory";
       requestBody: HistoryRequest;
       responses: {
         200: { content: { "application/json": HistoryResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/handoff": {
+    post: {
+      operationId: "manageHandoff";
+      requestBody: HandoffRequest;
+      responses: {
+        200: { content: { "application/json": HandoffResult } };
         default: { content: { "application/json": UsageErrorResponse } };
       };
     };
@@ -415,6 +958,65 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/collection-settings": {
+    get: {
+      operationId: "getCollectionSettings";
+      responses: {
+        200: { content: { "application/json": CollectionSettingsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    put: {
+      operationId: "setCollectionSettings";
+      requestBody: CollectionSettingsRequest;
+      responses: {
+        200: { content: { "application/json": CollectionSettingsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/profiles": {
+    get: {
+      operationId: "getProfiles";
+      responses: {
+        200: { content: { "application/json": ProfilesResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    put: {
+      operationId: "editProfile";
+      requestBody: ProfileEditRequest;
+      responses: {
+        200: { content: { "application/json": ProfilesResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "authenticateProfile";
+      requestBody: ProfileAuthenticationRequest;
+      responses: {
+        200: { content: { "application/json": ProfileAuthenticationResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
+  "/api/v1/profile-lifecycle": {
+    get: {
+      operationId: "listProfileQuarantine";
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleListResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageProfileLifecycle";
+      requestBody: ProfileLifecycleRequest;
+      responses: {
+        200: { content: { "application/json": ProfileLifecycleRecord } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/selection": {
     get: {
       operationId: "getSelection";
@@ -430,6 +1032,14 @@ export interface ApiPaths {
     get: {
       operationId: "getProjects";
       responses: { 200: { content: { "application/json": ProjectsResponse } } };
+    };
+    put: {
+      operationId: "editProject";
+      requestBody: ProjectEditRequest;
+      responses: {
+        200: { content: { "application/json": ProjectsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
     };
   };
   "/api/v1/usage/refresh": {
@@ -454,7 +1064,19 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getUpdates(init?: RequestInit): Promise<UpdateResponse>;
+  manageUpdates(request: UpdateRequest, init?: RequestInit): Promise<UpdateResponse>;
+  getDiagnostics(init?: RequestInit): Promise<DiagnosticsResponse>;
+  manageDiagnostics(request: DiagnosticsRequest, init?: RequestInit): Promise<DiagnosticsResponse>;
+  getAlerts(init?: RequestInit): Promise<AlertsResponse>;
+  manageAlerts(request: AlertActionRequest, init?: RequestInit): Promise<AlertsResponse>;
+  getConfigurationPacks(init?: RequestInit): Promise<ConfigurationPackResponse>;
+  manageConfigurationPack(
+    request: ConfigurationPackRequest,
+    init?: RequestInit,
+  ): Promise<ConfigurationPackResponse>;
   manageAnalyticsHistory(request: HistoryRequest, init?: RequestInit): Promise<HistoryResponse>;
+  manageHandoff(request: HandoffRequest, init?: RequestInit): Promise<HandoffResult>;
   getAnalytics(scope?: string, init?: RequestInit): Promise<AnalyticsResponse>;
   getActivity(
     profileAlias?: string,
@@ -463,7 +1085,24 @@ export interface CodexFolioApiClient {
   ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
+  getCollectionSettings(init?: RequestInit): Promise<CollectionSettingsResponse>;
+  setCollectionSettings(
+    request: CollectionSettingsRequest,
+    init?: RequestInit,
+  ): Promise<CollectionSettingsResponse>;
+  getProfiles(init?: RequestInit): Promise<ProfilesResponse>;
+  editProfile(request: ProfileEditRequest, init?: RequestInit): Promise<ProfilesResponse>;
+  authenticateProfile(
+    request: ProfileAuthenticationRequest,
+    init?: RequestInit,
+  ): Promise<ProfileAuthenticationResponse>;
+  listProfileQuarantine(init?: RequestInit): Promise<ProfileLifecycleListResponse>;
+  manageProfileLifecycle(
+    request: ProfileLifecycleRequest,
+    init?: RequestInit,
+  ): Promise<ProfileLifecycleRecord>;
   getProjects(init?: RequestInit): Promise<ProjectsResponse>;
+  editProject(request: ProjectEditRequest, init?: RequestInit): Promise<ProjectsResponse>;
   getSelection(init?: RequestInit): Promise<SelectionResponse>;
   setSelection(request: SelectionRequest, init?: RequestInit): Promise<SelectionResponse>;
   getLatestUsage(alias: string, init?: RequestInit): Promise<UsageSnapshotResponse>;
@@ -475,6 +1114,134 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getUpdates(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/updates", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UpdateResponse;
+    },
+    async manageUpdates(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/updates", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UpdateResponse;
+    },
+    async getDiagnostics(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/diagnostics", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as DiagnosticsResponse;
+    },
+    async manageDiagnostics(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/diagnostics", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as DiagnosticsResponse;
+    },
+    async getAlerts(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/alerts", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AlertsResponse;
+    },
+    async manageAlerts(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/alerts", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as AlertsResponse;
+    },
+    async getConfigurationPacks(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration-packs", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ConfigurationPackResponse;
+    },
+    async manageConfigurationPack(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration-packs", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ConfigurationPackResponse;
+    },
     async manageAnalyticsHistory(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -491,6 +1258,23 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as HistoryResponse;
+    },
+    async manageHandoff(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/handoff", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as HandoffResult;
     },
     async getAnalytics(scope = "", init = {}) {
       const headers = new Headers(init.headers);
@@ -524,7 +1308,8 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET /api/v1/activity failed with HTTP " + response.status);
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ActivityResponse;
     },
@@ -558,6 +1343,119 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as MetadataResponse;
     },
+    async getCollectionSettings(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/collection-settings", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as CollectionSettingsResponse;
+    },
+    async setCollectionSettings(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/collection-settings", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as CollectionSettingsResponse;
+    },
+    async getProfiles(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfilesResponse;
+    },
+    async editProfile(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfilesResponse;
+    },
+    async authenticateProfile(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profiles", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileAuthenticationResponse;
+    },
+    async listProfileQuarantine(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profile-lifecycle", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleListResponse;
+    },
+    async manageProfileLifecycle(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/profile-lifecycle", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProfileLifecycleRecord;
+    },
     async getProjects(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -568,7 +1466,25 @@ export function createCodexFolioApiClient(
         method: "GET",
       });
       if (!response.ok) {
-        throw new Error("GET /api/v1/projects failed with HTTP " + response.status);
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ProjectsResponse;
+    },
+    async editProject(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/projects", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "PUT",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ProjectsResponse;
     },

@@ -14,12 +14,12 @@ CodexFolio is independent and is not affiliated with or endorsed by OpenAI.
 | --- | --- |
 | Isolated identity profiles and installed-Codex launch | Implemented; real-account platform qualification has documented exceptions |
 | Read-only usage evidence and local analytics | Implemented; provider-reported, derived, estimated, stale, and unavailable values must remain distinguishable |
-| Repository-first Safe Continuation | Implemented checkpoint workflow; not a guarantee of exact conversation or hidden-state transfer |
-| Local dashboard and background operations | In development; design concepts are not working screenshots |
+| Safe Continuation | Repository-first and explicitly consented transcript-assisted checkpoint review, retention, export, recovery state, and fresh foreground start are implemented; not a guarantee of exact conversation or hidden-state transfer |
+| Local dashboard and background operations | Authorized Overview, Profiles onboarding/lifecycle recovery, Shared Configuration Pack management, Sessions, analytics, bounded operational Alerts, terminal-owned launches, Safe Continuation, bounded periodic usage collection, preview-before-download local diagnostic support bundles, and separately consented update checks are implemented; update checks remain unconfigured in production until a project-controlled release endpoint is approved; explicitly enrolled services can use privacy-preserving native notifications with generic text by default and separate per-device detail consent; passphrase-backed headless service sessions start locked; explicit per-user Task Scheduler, LaunchAgent, and systemd-user enrollment is implemented with Settings/CLI cadence controls and on-demand fallback; native Tier 1 qualification remains limited as documented |
 | Exact Continuation and Shared Work Home | Experimental scope; not prerequisites for stable-core delivery |
 | Signed, supported end-user release | Not available yet |
 
-This summary reflects the milestone record reviewed on 2026-09-10. Follow the
+This summary reflects the implementation frontier on 2026-09-19. Follow the
 [MVP roadmap](ROADMAP.md) and [issue #9](https://github.com/kanakamedala-rajesh/codex-folio/issues/9)
 for live status. Read the [compatibility qualifications](docs/user/COMPATIBILITY.md)
 before using development builds with real accounts.
@@ -39,6 +39,11 @@ On Windows, use `.\build\bin\codex-folio.exe` for the executable commands.
 The [getting-started guide](docs/user/GETTING-STARTED.md) explains prerequisites,
 profile setup, expected boundaries, and how to avoid changing existing Codex
 state accidentally. A source build is for evaluation, not production assurance.
+
+New testers could follow the short [Usage guide](docs/user/USAGE-GUIDE.md) as a
+first-run tutorial. The [Comprehensive usage guide](docs/user/COMPREHENSIVE-USAGE-GUIDE.md)
+covers the complete implemented command set, dashboard behavior, lifecycle
+rules, technical boundaries, and troubleshooting.
 
 ## Safety and privacy
 

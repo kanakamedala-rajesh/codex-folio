@@ -28,6 +28,10 @@ After the reviewed candidate is committed, the primary agent must run the canoni
 
 See `docs/development/BUILDING.md` for focused checks, expected output, and qualification limits.
 
+### Usage guide maintenance
+
+When a major change alters shipped capabilities, first-run onboarding, commands, prerequisites, safety boundaries, or qualification status, update both `docs/user/USAGE-GUIDE.md` and `docs/user/COMPREHENSIVE-USAGE-GUIDE.md` in the same ticket. Keep the short guide limited to the clearest first-success path and put technical behavior, advanced workflows, and troubleshooting in the comprehensive guide. Update the README capability summary when project progress changes it, and verify documented commands against the implementation and `--help` output.
+
 ### Cross-platform compatibility
 
 Write portable-by-default code for Windows and Unix-like systems.

@@ -25,6 +25,7 @@ type CommandProjectRequest struct {
 type CommandProjectResponse struct {
 	Project  *activity.ProjectIdentity  `json:"project,omitempty"`
 	Projects []activity.ProjectIdentity `json:"projects,omitempty"`
+	Path     string                     `json:"path,omitempty"`
 }
 
 func (client *CommandClient) Project(ctx context.Context, input CommandProjectRequest) (CommandProjectResponse, error) {
@@ -100,6 +101,8 @@ func (server *Server) commandProjects(response http.ResponseWriter, request *htt
 	case "reconcile":
 		project, callErr := server.projects.Reconcile(request.Context(), input.ID, input.Path)
 		result.Project, err = &project, callErr
+	case "locate":
+		result.Path, err = server.projects.CanonicalLocation(request.Context(), input.ID)
 	default:
 		err = apperrors.New(apperrors.ProjectIdentityInvalid, activity.ErrProjectInvalid)
 	}
@@ -129,4 +132,29 @@ func (server *Server) getProjects(response http.ResponseWriter, request *http.Re
 		})
 	}
 	writeJSON(response, http.StatusOK, result)
+}
+
+func (server *Server) editProject(response http.ResponseWriter, request *http.Request) {
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProjectIdentityInvalid)
+		return
+	}
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	var input ProjectEditRequest
+	if err := decoder.Decode(&input); err != nil {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProjectIdentityInvalid)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProjectIdentityInvalid)
+		return
+	}
+	if _, err := server.projects.EditAlias(request.Context(), input.ProjectId, input.Alias); err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProjectIdentityInvalid))
+		return
+	}
+	server.getProjects(response, request)
 }

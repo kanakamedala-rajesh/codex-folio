@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -17,14 +18,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
+	"venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
@@ -43,17 +47,22 @@ const (
 	CommandLaunchPath                = "/api/v1/command/launch"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
+	CommandCollectionSettingsPath    = "/api/v1/command/collection-settings"
+	CommandDiagnosticsPath           = "/api/v1/command/diagnostics"
+	CommandUpdatesPath               = "/api/v1/command/updates"
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
 	CommandHistoryPath               = "/api/v1/command/analytics-history"
 	CommandCheckpointPath            = "/api/v1/command/checkpoint"
+	CommandVaultPath                 = "/api/v1/command/vault"
 	BootstrapPathName                = "/bootstrap"
 	BootstrapQueryName               = "bootstrap"
 	maxBootstrapBodySize             = 4096
 	maxSelectionBodySize             = 4096
 	maxConfigPackBodySize            = 9 * 1024 * 1024
 	maxCheckpointBodySize            = 64 * 1024
+	maxVaultUnlockBodySize           = 4096
 	randomTokenSize                  = 32
 )
 
@@ -69,6 +78,63 @@ var embeddedAssets embed.FS
 // Clock is the time seam for session and bootstrap expiry tests.
 type Clock interface {
 	Now() time.Time
+}
+
+const (
+	ServiceStateLocked            = "locked"
+	ServiceStateReady             = "ready"
+	ServiceStateRecoveryRequired  = "recovery_required"
+	VaultStateLocked              = "locked"
+	VaultStateUnlocked            = "unlocked"
+	DatabaseStateNotChecked       = "not_checked"
+	DatabaseStateReady            = "ready"
+	DatabaseStateRecoveryRequired = "recovery_required"
+)
+
+// ServiceHealth is the browser-safe operational projection. It deliberately
+// excludes vault mode, paths, key generations, recovery contents, and errors.
+type ServiceHealth struct {
+	ServiceState        string   `json:"service_state"`
+	VaultState          string   `json:"vault_state"`
+	DatabaseState       string   `json:"database_state"`
+	ErrorCode           string   `json:"error_code"`
+	GuidanceCommands    []string `json:"guidance_commands"`
+	EnrollmentState     string   `json:"enrollment_state"`
+	EnrollmentMechanism string   `json:"enrollment_mechanism"`
+	EnrollmentAvailable bool     `json:"enrollment_available"`
+	EnrollmentGuidance  []string `json:"enrollment_guidance"`
+}
+
+type ServiceEnrollmentHealth func() (state, mechanism string, available bool)
+
+// ServiceLifecycle owns the process-local locked/unlocked transition. Unlock
+// is reachable only through the command-token transport, never the browser API.
+type ServiceLifecycle interface {
+	Health() ServiceHealth
+	Unlock(context.Context, string) error
+}
+
+// OperationalServices contains the state-owning workflows installed exactly
+// once after the vault and database have opened successfully.
+type OperationalServices struct {
+	Background            io.Closer
+	Selection             *profile.Selector
+	Profiles              *profile.Registry
+	ProfileLifecycle      *profile.Lifecycle
+	ProfileAuthentication CommandProfileAuthenticationService
+	ConfigurationPacks    *configpack.Service
+	Launches              CommandLaunchService
+	Usage                 CommandUsageService
+	CollectionSettings    CollectionSettingsService
+	Projects              *activity.ProjectService
+	Activities            CommandActivityService
+	History               *usage.HistoryService
+	Exports               *activity.ExportService
+	Checkpoints           CommandCheckpointService
+	CheckpointHistory     BrowserCheckpointHistory
+	Alerts                *alerts.Service
+	DiagnosticService     *diagnostics.Service
+	Updates               *updates.Service
 }
 
 // Options configures the local browser service. Random is used only for
@@ -88,12 +154,22 @@ type Options struct {
 	ConfigurationPacks    *configpack.Service
 	Launches              CommandLaunchService
 	Usage                 CommandUsageService
+	CollectionSettings    CollectionSettingsService
 	Projects              *activity.ProjectService
 	Activities            CommandActivityService
 	History               *usage.HistoryService
 	Exports               *activity.ExportService
 	Checkpoints           CommandCheckpointService
+	CheckpointHistory     BrowserCheckpointHistory
+	Alerts                *alerts.Service
+	DiagnosticService     *diagnostics.Service
+	Updates               *updates.Service
 	CommandToken          string
+	ServiceLifecycle      ServiceLifecycle
+	StartLocked           bool
+	ServiceEnrollment     ServiceEnrollmentHealth
+	TerminalCommandBase   []string
+	TerminalCommandSuffix []string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -119,17 +195,29 @@ type Server struct {
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
 	usage                 CommandUsageService
+	collectionSettings    CollectionSettingsService
 	projects              *activity.ProjectService
 	activities            CommandActivityService
 	historyService        *usage.HistoryService
 	exportService         *activity.ExportService
 	checkpoints           CommandCheckpointService
+	checkpointHistory     BrowserCheckpointHistory
+	alerts                *alerts.Service
+	diagnosticService     *diagnostics.Service
+	updates               *updates.Service
 	commandToken          [sha256.Size]byte
+	serviceLifecycle      ServiceLifecycle
+	serviceEnrollment     ServiceEnrollmentHealth
+	terminalCommandBase   []string
+	terminalCommandSuffix []string
+	operational           atomic.Bool
+	activationMu          sync.Mutex
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte
 	bootstrapExpiresAt time.Time
 	bootstrapAvailable bool
+	bootstrapTokens    map[[sha256.Size]byte]time.Time
 	sessions           map[[sha256.Size]byte]session
 
 	listener    net.Listener
@@ -183,7 +271,7 @@ func NewServer(options Options) (*Server, error) {
 	encodedToken := base64.RawURLEncoding.EncodeToString(token)
 	now := clock.Now().UTC()
 	commandToken := sha256.Sum256([]byte(options.CommandToken))
-	return &Server{
+	server := &Server{
 		product:               product,
 		bootstrapTTL:          bootstrapTTL,
 		sessionTTL:            sessionTTL,
@@ -197,18 +285,72 @@ func NewServer(options Options) (*Server, error) {
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
 		usage:                 options.Usage,
+		collectionSettings:    options.CollectionSettings,
 		projects:              options.Projects,
 		activities:            options.Activities,
 		historyService:        options.History,
 		exportService:         options.Exports,
 		checkpoints:           options.Checkpoints,
+		checkpointHistory:     options.CheckpointHistory,
+		alerts:                options.Alerts,
+		diagnosticService:     options.DiagnosticService,
+		updates:               options.Updates,
 		commandToken:          commandToken,
+		serviceLifecycle:      options.ServiceLifecycle,
+		serviceEnrollment:     options.ServiceEnrollment,
+		terminalCommandBase:   append([]string(nil), options.TerminalCommandBase...),
+		terminalCommandSuffix: append([]string(nil), options.TerminalCommandSuffix...),
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt:    now.Add(bootstrapTTL),
 		bootstrapAvailable:    true,
+		bootstrapTokens:       map[[sha256.Size]byte]time.Time{sha256.Sum256([]byte(encodedToken)): now.Add(bootstrapTTL)},
 		sessions:              make(map[[sha256.Size]byte]session),
-	}, nil
+	}
+	server.operational.Store(!options.StartLocked)
+	if len(server.terminalCommandBase) == 0 {
+		server.terminalCommandBase = []string{"codex-folio"}
+	}
+	return server, nil
+}
+
+func (server *Server) terminalCommand(arguments ...string) string {
+	base := []string{"codex-folio"}
+	if server != nil && len(server.terminalCommandBase) > 0 {
+		base = server.terminalCommandBase
+	}
+	all := append(append([]string(nil), base...), arguments...)
+	if server != nil {
+		all = append(all, server.terminalCommandSuffix...)
+	}
+	parts := make([]string, 0, len(all))
+	for _, argument := range all {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (server *Server) terminalCommandBaseString() string {
+	base := []string{"codex-folio"}
+	if server != nil && len(server.terminalCommandBase) > 0 {
+		base = server.terminalCommandBase
+	}
+	parts := make([]string, 0, len(base))
+	for _, argument := range base {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (server *Server) terminalCommandSuffixString() string {
+	if server == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(server.terminalCommandSuffix))
+	for _, argument := range server.terminalCommandSuffix {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
 }
 
 // Listen binds exclusively to an IPv4 loopback address. It deliberately does
@@ -388,8 +530,32 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
 		return
 	}
+	if requiresOperationalState(request.URL.Path) && !server.operational.Load() {
+		if strings.HasPrefix(request.URL.Path, "/api/v1/command/") {
+			if !server.authorizeCommand(response, request) {
+				return
+			}
+		} else if !server.authorize(response, request) {
+			return
+		} else if requiresBrowserCSRF(request.URL.Path, request.Method) && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.writeAPIError(response, http.StatusLocked, apperrors.VaultLocked)
+		return
+	}
 
 	switch request.URL.Path {
+	case CommandDashboardPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandDashboard(response, request)
+	case CommandVaultPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandVault(response, request)
 	case CommandCheckpointPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -454,6 +620,21 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.usageLatest(response, request)
+	case CommandCollectionSettingsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.collectionSettingsHandler(response, request)
+	case CommandDiagnosticsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.diagnosticsHandler(response, request)
+	case CommandUpdatesPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.updatesHandler(response, request)
 	case CommandAnalyticsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -501,6 +682,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.writeMetadata(response, request)
+	case HandoffPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserHandoff(response, request)
 	case SelectionPath:
 		if !server.authorize(response, request) {
 			return
@@ -537,15 +727,86 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.analytics(response, request)
+	case AlertsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.alertsHandler(response, request)
+	case CollectionSettingsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.collectionSettingsHandler(response, request)
+	case DiagnosticsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.diagnosticsHandler(response, request)
+	case UpdatesPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.updatesHandler(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
 		}
-		if !isReadMethod(request.Method) {
-			server.writeMethodError(response, http.MethodGet)
+		if request.Method == http.MethodGet {
+			server.getProjects(response, request)
 			return
 		}
-		server.getProjects(response, request)
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		if request.Method != http.MethodPut {
+			server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
+			return
+		}
+		server.editProject(response, request)
+	case ProfilesPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserProfiles(response, request)
+	case ConfigurationPacksPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserConfigurationPacks(response, request)
+	case ProfileLifecyclePath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.browserProfileLifecycle(response, request)
 	case ActivityPath:
 		if !server.authorize(response, request) {
 			return
@@ -848,10 +1109,18 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 		server.bootstrapAvailable = false
 		server.bootstrapToken = nil
 	}
-	valid := server.bootstrapAvailable && subtle.ConstantTimeCompare(digest[:], server.bootstrapDigest[:]) == 1
+	for candidate, expiresAt := range server.bootstrapTokens {
+		if !now.Before(expiresAt) {
+			delete(server.bootstrapTokens, candidate)
+		}
+	}
+	_, valid := server.bootstrapTokens[digest]
 	if valid {
-		server.bootstrapAvailable = false
-		server.bootstrapToken = nil
+		delete(server.bootstrapTokens, digest)
+		if subtle.ConstantTimeCompare(digest[:], server.bootstrapDigest[:]) == 1 {
+			server.bootstrapAvailable = false
+			server.bootstrapToken = nil
+		}
 	}
 	server.mu.Unlock()
 	if !valid {
@@ -956,11 +1225,135 @@ func (server *Server) validCSRF(request *http.Request) bool {
 }
 
 func (server *Server) writeMetadata(response http.ResponseWriter, request *http.Request) {
+	health := server.health()
 	writeJSON(response, http.StatusOK, MetadataResponse{
-		APIVersion:      APIVersion,
-		ContractVersion: ContractVersion,
-		Product:         server.product,
+		APIVersion:            APIVersion,
+		ContractVersion:       ContractVersion,
+		Product:               server.product,
+		ServiceState:          health.ServiceState,
+		VaultState:            health.VaultState,
+		DatabaseState:         health.DatabaseState,
+		ErrorCode:             health.ErrorCode,
+		GuidanceCommands:      health.GuidanceCommands,
+		TerminalCommandBase:   server.terminalCommandBaseString(),
+		TerminalCommandSuffix: server.terminalCommandSuffixString(),
+		EnrollmentState:       health.EnrollmentState,
+		EnrollmentMechanism:   health.EnrollmentMechanism,
+		EnrollmentAvailable:   health.EnrollmentAvailable,
+		EnrollmentGuidance:    health.EnrollmentGuidance,
 	})
+}
+
+// Activate installs the already-composed state-owning workflows exactly once.
+// Assignments happen before the atomic ready transition observed by handlers.
+func (server *Server) Activate(services OperationalServices) error {
+	if server == nil {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("service is unavailable"))
+	}
+	server.activationMu.Lock()
+	defer server.activationMu.Unlock()
+	if server.operational.Load() {
+		return nil
+	}
+	if services.Selection == nil || services.Profiles == nil || services.Usage == nil {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("operational services are incomplete"))
+	}
+	server.selection = services.Selection
+	server.profiles = services.Profiles
+	server.profileLifecycle = services.ProfileLifecycle
+	server.profileAuthentication = services.ProfileAuthentication
+	server.configurationPacks = services.ConfigurationPacks
+	server.launches = services.Launches
+	server.usage = services.Usage
+	server.collectionSettings = services.CollectionSettings
+	server.projects = services.Projects
+	server.activities = services.Activities
+	server.historyService = services.History
+	server.exportService = services.Exports
+	server.checkpoints = services.Checkpoints
+	server.checkpointHistory = services.CheckpointHistory
+	server.alerts = services.Alerts
+	server.diagnosticService = services.DiagnosticService
+	server.updates = services.Updates
+	server.operational.Store(true)
+	return nil
+}
+
+func (server *Server) health() ServiceHealth {
+	var health ServiceHealth
+	if server != nil && server.serviceLifecycle != nil {
+		health = server.serviceLifecycle.Health()
+		if health.GuidanceCommands == nil {
+			health.GuidanceCommands = []string{}
+		}
+	} else if server != nil && server.operational.Load() {
+		health = ServiceHealth{
+			ServiceState:     ServiceStateReady,
+			VaultState:       VaultStateUnlocked,
+			DatabaseState:    DatabaseStateReady,
+			GuidanceCommands: []string{},
+		}
+	} else {
+		health = ServiceHealth{
+			ServiceState:     ServiceStateLocked,
+			VaultState:       VaultStateLocked,
+			DatabaseState:    DatabaseStateNotChecked,
+			GuidanceCommands: []string{"codex-folio vault unlock"},
+		}
+	}
+	if server != nil {
+		switch health.ServiceState {
+		case ServiceStateLocked:
+			health.GuidanceCommands = []string{server.terminalCommand("vault", "unlock")}
+		case ServiceStateRecoveryRequired:
+			health.GuidanceCommands = []string{
+				server.terminalCommand("service", "recovery", "verify"),
+				server.terminalCommand("service", "recovery", "list"),
+			}
+		}
+	}
+	health.EnrollmentState = "unavailable"
+	health.EnrollmentGuidance = []string{server.terminalCommand("service", "status")}
+	if server != nil && server.serviceEnrollment != nil {
+		health.EnrollmentState, health.EnrollmentMechanism, health.EnrollmentAvailable = server.serviceEnrollment()
+	}
+	if health.EnrollmentAvailable {
+		switch health.EnrollmentState {
+		case "installed", "active":
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, server.terminalCommand("service", "uninstall"))
+		case "not_installed":
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, server.terminalCommand("service", "install"))
+		}
+	}
+	return health
+}
+
+// Health returns the same safe projection exposed to authenticated browser
+// and command clients.
+func (server *Server) Health() ServiceHealth {
+	return server.health()
+}
+
+func requiresOperationalState(path string) bool {
+	switch path {
+	case CommandDashboardPath, CommandVaultPath, BootstrapPathName, "/", "/index.html", "/assets/app.js", "/assets/styles.css", BootstrapPath, MetadataPath:
+		return false
+	default:
+		return strings.HasPrefix(path, "/api/")
+	}
+}
+
+func requiresBrowserCSRF(path, method string) bool {
+	switch path {
+	case HistoryPath, HandoffPath, UsageRefreshPath:
+		return true
+	case SelectionPath, ProjectsPath, ProfilesPath, ConfigurationPacksPath, ProfileLifecyclePath:
+		return method != http.MethodGet
+	case UsageLatestPath, AnalyticsPath, ActivityPath:
+		return false
+	default:
+		return strings.HasPrefix(path, "/api/") && !isReadMethod(method)
+	}
 }
 
 func (server *Server) getSelection(response http.ResponseWriter, request *http.Request) {
@@ -1094,6 +1487,7 @@ func (server *Server) invalidateLocked() {
 	server.sessions = make(map[[sha256.Size]byte]session)
 	server.bootstrapAvailable = false
 	server.bootstrapToken = nil
+	server.bootstrapTokens = make(map[[sha256.Size]byte]time.Time)
 }
 
 func setSecurityHeaders(response http.ResponseWriter) {

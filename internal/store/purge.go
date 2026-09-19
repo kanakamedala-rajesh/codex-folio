@@ -18,10 +18,7 @@ func (store *Store) PurgeAnalytics(ctx context.Context, scope usage.HistoryScope
 	if err := scope.Validate(); err != nil {
 		return usage.PurgeResult{}, apperrors.New(apperrors.AnalyticsRequestInvalid, err)
 	}
-	result := usage.PurgeResult{Scope: scope, Counts: []usage.RecordCount{}, Confirmation: scope.Confirmation(), RecordLimit: usage.PurgeRecordLimit, Executable: true}
-	if confirmation != "" && confirmation != result.Confirmation {
-		return result, apperrors.New(apperrors.AnalyticsConfirmationInvalid, usage.ErrInvalid)
-	}
+	result := usage.PurgeResult{Scope: scope, Counts: []usage.RecordCount{}, RecordLimit: usage.PurgeRecordLimit, Executable: true}
 	ctx = contextOrBackground(ctx)
 	store.operationMu.Lock()
 	defer store.operationMu.Unlock()
@@ -31,30 +28,31 @@ func (store *Store) PurgeAnalytics(ctx context.Context, scope usage.HistoryScope
 	}
 	defer tx.Rollback()
 	selections := purgeSelections(scope)
+	ids := make([][]string, len(selections))
+	identities := make([]usage.PurgeSelectionIdentity, len(selections))
 	var total int64
-	for _, selection := range selections {
-		var count int64
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM ("+selection.query+")", selection.args...).Scan(&count); err != nil {
+	for index, selection := range selections {
+		ids[index], err = historyIDs(ctx, tx, selection.query, selection.args)
+		if err != nil {
 			return result, coded(apperrors.StoreReadFailed, err)
 		}
+		count := int64(len(ids[index]))
 		result.Counts = append(result.Counts, usage.RecordCount{RecordClass: selection.table, Count: count})
+		identities[index] = usage.PurgeSelectionIdentity{RecordClass: selection.table, RecordIDs: ids[index]}
 		total += count
 	}
+	result.Confirmation = scope.ConfirmationFor(identities)
 	result.Executable = total <= usage.PurgeRecordLimit
 	if confirmation == "" {
 		return result, nil
+	}
+	if confirmation != result.Confirmation {
+		return result, apperrors.New(apperrors.AnalyticsConfirmationInvalid, usage.ErrInvalid)
 	}
 	// ponytail: cap the entire atomic purge at 1000 affected records; add a
 	// durable resumable job only if users need scopes that cannot be narrowed.
 	if !result.Executable {
 		return result, apperrors.New(apperrors.AnalyticsScopeTooLarge, usage.ErrInvalid)
-	}
-	ids := make([][]string, len(selections))
-	for i, selection := range selections {
-		ids[i], err = historyIDs(ctx, tx, selection.query, selection.args)
-		if err != nil {
-			return result, coded(apperrors.StoreReadFailed, err)
-		}
 	}
 	// Materialize every selected ID before mutation so deletion cannot broaden
 	// or shrink a dependent query. All classes commit or roll back together.

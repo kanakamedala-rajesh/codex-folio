@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -142,6 +143,44 @@ func TestContinuationCheckpointMetadataUsesEncryptedCheckpointStorage(t *testing
 	}
 	if bytes.Contains(database, []byte("checkpoint metadata sentinel")) || bytes.Contains(database, []byte(edited)) {
 		t.Fatal("database contains continuation metadata in plaintext")
+	}
+}
+
+func TestCheckpointInventoryIsNewestFirstAndExactPurgePreservesUnmatchedData(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "checkpoint-inventory.sqlite3")
+	secureVault, err := vault.NewMemoryVault(vault.MemoryVaultOptions{Key: bytes.Repeat([]byte{0x3c}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundation, err := OpenWithOptions(Options{Path: databasePath, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foundation.Close()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	for _, record := range []continuation.CheckpointRecord{
+		{ID: "older", Status: continuation.StatusCompleted, Metadata: `{"revision":"revision-1"}`, CreatedAt: now.Add(-time.Hour)},
+		{ID: "newer", Status: continuation.StatusApproved, Metadata: `{"revision":"revision-2"}`, Goal: stringPointer("sanitized goal"), CreatedAt: now},
+	} {
+		if err := foundation.SaveCheckpoint(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := foundation.ListCheckpoints(context.Background())
+	if err != nil || len(listed) != 2 || listed[0].ID != "newer" || listed[1].ID != "older" || listed[0].Goal == nil || *listed[0].Goal != "sanitized goal" {
+		t.Fatalf("ListCheckpoints() = %#v, %v", listed, err)
+	}
+	if err := foundation.PurgeCheckpoint(context.Background(), "newer", "stale"); !errors.Is(err, continuation.ErrCheckpointRevisionChanged) {
+		t.Fatalf("PurgeCheckpoint(stale) error = %v", err)
+	}
+	if err := foundation.PurgeCheckpoint(context.Background(), "newer", "revision-2"); err != nil {
+		t.Fatalf("PurgeCheckpoint() error = %v", err)
+	}
+	if _, err := foundation.LoadCheckpoint(context.Background(), "newer"); !errors.Is(err, continuation.ErrCheckpointNotFound) {
+		t.Fatalf("LoadCheckpoint(purged) error = %v", err)
+	}
+	if older, err := foundation.LoadCheckpoint(context.Background(), "older"); err != nil || older.ID != "older" {
+		t.Fatalf("unmatched checkpoint = %#v, %v", older, err)
 	}
 }
 

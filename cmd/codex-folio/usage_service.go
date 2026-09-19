@@ -6,6 +6,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/store"
 	usagefeature "venkatasudha.com/codex-folio/internal/usage"
@@ -15,6 +16,22 @@ type usageCommandService struct {
 	workflow *usagefeature.Service
 	resolver launch.ExecutableResolver
 	store    *store.Store
+	alerts   *alertfeature.Service
+}
+
+type collectionSettingsCommandService struct {
+	store   *store.Store
+	enabled bool
+}
+
+func (service *collectionSettingsCommandService) CollectionSettings(ctx context.Context) (usagefeature.CollectionSettings, bool, error) {
+	settings, err := service.store.CollectionSettings(ctx)
+	return settings, service.enabled, err
+}
+
+func (service *collectionSettingsCommandService) SetCollectionSettings(ctx context.Context, settings usagefeature.CollectionSettings) (usagefeature.CollectionSettings, bool, error) {
+	result, err := service.store.SetCollectionSettings(ctx, settings)
+	return result, service.enabled, err
 }
 
 func newUsageCommandService(stateStore *store.Store, resolver launch.ExecutableResolver) (*usageCommandService, error) {
@@ -44,6 +61,12 @@ func (service *usageCommandService) RefreshWithCandidate(ctx context.Context, al
 			err = retentionErr
 		}
 	}
+	if service.alerts != nil && snapshot.ProfileID != "" {
+		_, alertErr := service.alerts.Evaluate(ctx, snapshot.ProfileID)
+		if err == nil {
+			err = alertErr
+		}
+	}
 	return snapshot, err
 }
 
@@ -71,3 +94,7 @@ func (service *usageCommandService) View(ctx context.Context, scope string) (usa
 type usageClock struct{}
 
 func (usageClock) Now() time.Time { return time.Now() }
+
+func (service *usageCommandService) Recent(ctx context.Context, target usagefeature.ProfileTarget) ([]usagefeature.Snapshot, error) {
+	return service.store.RecentUsageSnapshots(ctx, target)
+}

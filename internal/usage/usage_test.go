@@ -28,7 +28,7 @@ func TestServiceRefreshUsesResolvedIdentityHomeAndPersistsNormalizedSnapshot(t *
 	}
 }
 
-func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
+func TestServiceRefreshCoalescesConcurrentAliasVariantsForOneProfile(t *testing.T) {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	collector := &serialCollector{started: started, release: release}
@@ -39,10 +39,13 @@ func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
 
 	var group sync.WaitGroup
 	group.Add(2)
-	for _, trigger := range []string{TriggerDashboardOpen, TriggerDashboardRefresh} {
+	for _, request := range []struct{ alias, trigger string }{
+		{alias: "Work", trigger: TriggerDashboardOpen},
+		{alias: "work", trigger: TriggerDashboardRefresh},
+	} {
 		go func() {
 			defer group.Done()
-			_, _ = service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", trigger)
+			_, _ = service.Refresh(context.Background(), request.alias, "/usr/bin/codex", "0.153.4", request.trigger)
 		}()
 	}
 	<-started
@@ -55,6 +58,9 @@ func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
 	group.Wait()
 	if collector.maxActive != 1 {
 		t.Fatalf("maximum concurrent collections = %d, want 1", collector.maxActive)
+	}
+	if collector.calls != 1 {
+		t.Fatalf("collection calls = %d, want one coalesced refresh", collector.calls)
 	}
 }
 
@@ -331,6 +337,7 @@ type serialCollector struct {
 	mu        sync.Mutex
 	active    int
 	maxActive int
+	calls     int
 	started   chan struct{}
 	release   chan struct{}
 }
@@ -338,6 +345,7 @@ type serialCollector struct {
 func (collector *serialCollector) Collect(_ context.Context, request CollectionRequest) (Snapshot, error) {
 	collector.mu.Lock()
 	collector.active++
+	collector.calls++
 	if collector.active > collector.maxActive {
 		collector.maxActive = collector.active
 	}

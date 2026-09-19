@@ -69,7 +69,89 @@ type priorFile struct {
 	preserve  bool
 }
 
+func (projector *filesystemProjector) Preview(ctx context.Context, home string, files map[string]string) (ProjectionPlan, error) {
+	if projector == nil || projector.fs == nil {
+		return ProjectionPlan{}, projectionError(errors.New("projector is unavailable"))
+	}
+	if err := contextError(ctx); err != nil {
+		return ProjectionPlan{}, projectionError(err)
+	}
+	if err := validateHome(home); err != nil {
+		return ProjectionPlan{}, err
+	}
+	if err := validateFiles(files); err != nil {
+		return ProjectionPlan{}, err
+	}
+	info, err := projector.fs.Stat(home)
+	if err != nil || !info.IsDir() {
+		return ProjectionPlan{}, projectionError(errors.Join(err, errors.New("Identity Home is not a directory")))
+	}
+	homeInfo, err := projector.fs.Lstat(home)
+	if err != nil || homeInfo.Mode()&os.ModeSymlink != 0 {
+		return ProjectionPlan{}, projectionError(errors.New("Identity Home must not be a symbolic link"))
+	}
+	previous, err := projector.previousProjection(home)
+	if err != nil {
+		return ProjectionPlan{}, err
+	}
+	affected := make(map[string]struct{}, len(files)+len(previous))
+	for path := range files {
+		affected[path] = struct{}{}
+	}
+	for path := range previous {
+		affected[path] = struct{}{}
+	}
+	paths := make([]string, 0, len(affected))
+	for path := range affected {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	conflicts := make([]Change, 0)
+	for _, path := range paths {
+		if err := contextError(ctx); err != nil {
+			return ProjectionPlan{}, projectionError(err)
+		}
+		if err := projector.rejectSymlinkParents(home, path); err != nil {
+			return ProjectionPlan{}, err
+		}
+		target := filepath.Join(home, filepath.FromSlash(path))
+		info, statErr := projector.fs.Stat(target)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			return ProjectionPlan{}, projectionError(statErr)
+		}
+		if info.IsDir() {
+			return ProjectionPlan{}, projectionError(errors.New("projection target is a directory"))
+		}
+		content, err := projector.fs.ReadFile(target)
+		if err != nil {
+			return ProjectionPlan{}, projectionError(err)
+		}
+		desired, installing := files[path]
+		previousDigest, tracked := previous[path]
+		if installing && string(content) == desired || tracked && previousDigest != "" && contentDigest(string(content)) == previousDigest {
+			continue
+		}
+		kind := ChangeModified
+		if !installing {
+			kind = ChangeRemoved
+		}
+		conflicts = append(conflicts, Change{Path: path, Kind: kind})
+	}
+	return ProjectionPlan{Digest: DigestFiles(files), Files: sortedPaths(files), Conflicts: conflicts}, nil
+}
+
 func (projector *filesystemProjector) Project(ctx context.Context, home string, files map[string]string) (ProjectionResult, error) {
+	return projector.project(ctx, home, files, nil, false)
+}
+
+func (projector *filesystemProjector) ProjectReviewed(ctx context.Context, home string, files map[string]string, expectedConflicts []Change) (ProjectionResult, error) {
+	return projector.project(ctx, home, files, expectedConflicts, true)
+}
+
+func (projector *filesystemProjector) project(ctx context.Context, home string, files map[string]string, expectedConflicts []Change, enforceReview bool) (ProjectionResult, error) {
 	if projector == nil || projector.fs == nil {
 		return ProjectionResult{}, projectionError(errors.New("projector is unavailable"))
 	}
@@ -113,30 +195,8 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 	}
 	sort.Strings(affectedPaths)
 
-	stage, err := projector.fs.MkdirTemp(home, ".codex-folio-projection-")
-	if err != nil {
-		return ProjectionResult{}, projectionError(err)
-	}
-	keepStage := false
-	defer func() {
-		if !keepStage {
-			_ = projector.fs.RemoveAll(stage)
-		}
-	}()
-
-	for _, path := range paths {
-		if err := contextError(ctx); err != nil {
-			return ProjectionResult{}, projectionError(err)
-		}
-		stagedPath := filepath.Join(stage, "next", filepath.FromSlash(path))
-		if err := projector.fs.MkdirAll(filepath.Dir(stagedPath), 0o700); err != nil {
-			return ProjectionResult{}, projectionError(err)
-		}
-		if err := projector.fs.WriteFile(stagedPath, []byte(files[path]), 0o600); err != nil {
-			return ProjectionResult{}, projectionError(err)
-		}
-	}
 	prior := make([]priorFile, len(affectedPaths))
+	actualConflicts := make([]Change, 0)
 	manifestEntries := make(map[string]string, len(paths))
 	for path, content := range files {
 		manifestEntries[path] = contentDigest(content)
@@ -147,7 +207,6 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 			return ProjectionResult{}, err
 		}
 		prior[index].path = target
-		prior[index].backup = filepath.Join(stage, "prior", filepath.FromSlash(path))
 		prior[index].install = affected[path]
 		info, statErr := projector.fs.Stat(target)
 		switch {
@@ -167,7 +226,41 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 			if path != projectionManifest && (!tracked || previousDigest == "" || contentDigest(string(content)) != previousDigest) && (!installing || string(content) != desired) {
 				prior[index].preserve = true
 				delete(manifestEntries, path)
+				kind := ChangeModified
+				if !installing {
+					kind = ChangeRemoved
+				}
+				actualConflicts = append(actualConflicts, Change{Path: path, Kind: kind})
 			}
+		}
+	}
+	if enforceReview && !sameChanges(actualConflicts, expectedConflicts) {
+		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+	}
+
+	stage, err := projector.fs.MkdirTemp(home, ".codex-folio-projection-")
+	if err != nil {
+		return ProjectionResult{}, projectionError(err)
+	}
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			_ = projector.fs.RemoveAll(stage)
+		}
+	}()
+	for index := range prior {
+		prior[index].backup = filepath.Join(stage, "prior", filepath.FromSlash(affectedPaths[index]))
+	}
+	for _, path := range paths {
+		if err := contextError(ctx); err != nil {
+			return ProjectionResult{}, projectionError(err)
+		}
+		stagedPath := filepath.Join(stage, "next", filepath.FromSlash(path))
+		if err := projector.fs.MkdirAll(filepath.Dir(stagedPath), 0o700); err != nil {
+			return ProjectionResult{}, projectionError(err)
+		}
+		if err := projector.fs.WriteFile(stagedPath, []byte(files[path]), 0o600); err != nil {
+			return ProjectionResult{}, projectionError(err)
 		}
 	}
 	manifest, err := json.Marshal(manifestEntries)
@@ -219,6 +312,20 @@ func (projector *filesystemProjector) Project(ctx context.Context, home string, 
 	}
 
 	return ProjectionResult{Digest: DigestFiles(files), Files: paths}, nil
+}
+
+func sameChanges(left, right []Change) bool {
+	left = sortedChanges(left)
+	right = sortedChanges(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (projector *filesystemProjector) previousProjection(home string) (map[string]string, error) {

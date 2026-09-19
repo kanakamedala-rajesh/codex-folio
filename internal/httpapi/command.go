@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
 )
 
@@ -254,4 +257,137 @@ func (client *CommandClient) httpDoer() HTTPDoer {
 		return client.doer
 	}
 	return http.DefaultClient
+}
+
+const CommandDashboardPath = "/api/v1/command/dashboard"
+
+type vaultUnlockRequest struct {
+	Passphrase string `json:"passphrase"`
+}
+
+type dashboardLink struct {
+	URL string `json:"dashboard_url"`
+}
+
+// Dashboard issues a fresh one-time browser entry without restarting the owner.
+func (client *CommandClient) Dashboard(ctx context.Context) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.origin+CommandDashboardPath, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("dashboard entry unavailable"))
+	}
+	var result dashboardLink
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result.URL, err
+}
+
+// ServiceHealth returns only the safe operational projection from the
+// command-authorized service channel.
+func (client *CommandClient) ServiceHealth(ctx context.Context) (ServiceHealth, error) {
+	return client.vault(ctx, http.MethodGet, "")
+}
+
+// UnlockVault supplies a passphrase to the already-running owner for this
+// process session. The passphrase is never accepted by the browser contract.
+func (client *CommandClient) UnlockVault(ctx context.Context, passphrase string) (ServiceHealth, error) {
+	return client.vault(ctx, http.MethodPost, passphrase)
+}
+
+func (client *CommandClient) vault(ctx context.Context, method, passphrase string) (ServiceHealth, error) {
+	var result ServiceHealth
+	var body io.Reader
+	var encoded []byte
+	if method == http.MethodPost {
+		var err error
+		encoded, err = json.Marshal(vaultUnlockRequest{Passphrase: passphrase})
+		if err != nil {
+			return result, err
+		}
+		defer clear(encoded)
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, client.origin+CommandVaultPath, body)
+	if err != nil {
+		return result, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Origin", client.origin)
+	request.Header.Set(CommandTokenHeader, client.token)
+	if method == http.MethodPost {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.httpDoer().Do(request)
+	if err != nil {
+		return result, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure struct {
+			Code string `json:"code"`
+		}
+		if json.NewDecoder(response.Body).Decode(&failure) == nil && failure.Code != "" {
+			return result, apperrors.New(failure.Code, fmt.Errorf("%s %s returned HTTP %d", method, CommandVaultPath, response.StatusCode))
+		}
+		return result, fmt.Errorf("%s %s returned HTTP %d", method, CommandVaultPath, response.StatusCode)
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, err
+}
+
+func (server *Server) commandDashboard(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodPost)
+		return
+	}
+	token, err := server.randomBytes(randomTokenSize)
+	if err != nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(token)
+	server.mu.Lock()
+	digest := sha256.Sum256([]byte(encoded))
+	server.bootstrapTokens[digest] = server.clock.Now().UTC().Add(server.bootstrapTTL)
+	link := server.origin + BootstrapPathName + "?" + BootstrapQueryName + "=" + encoded
+	server.mu.Unlock()
+	writeJSON(response, http.StatusOK, dashboardLink{URL: link})
+}
+
+func (server *Server) commandVault(response http.ResponseWriter, request *http.Request) {
+	if request.Method == http.MethodGet {
+		writeJSON(response, http.StatusOK, server.health())
+		return
+	}
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodGet+", "+http.MethodPost)
+		return
+	}
+	if server.serviceLifecycle == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, maxVaultUnlockBodySize)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input vaultUnlockRequest
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Passphrase) == "" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.CLIUsage)
+		return
+	}
+	if err := server.serviceLifecycle.Unlock(request.Context(), input.Passphrase); err != nil {
+		input.Passphrase = ""
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.VaultLocked))
+		return
+	}
+	input.Passphrase = ""
+	writeJSON(response, http.StatusOK, server.health())
 }

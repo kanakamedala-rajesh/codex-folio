@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -100,6 +101,7 @@ type ProjectionPlan struct {
 	Assignment Assignment `json:"assignment"`
 	Digest     string     `json:"digest"`
 	Files      []string   `json:"files"`
+	Conflicts  []Change   `json:"conflicts"`
 }
 
 type ProjectionResult struct {
@@ -112,6 +114,7 @@ type ProjectionResult struct {
 type Repository interface {
 	CreateConfigurationPack(context.Context, Pack) error
 	GetConfigurationPack(context.Context, string, string) (Pack, error)
+	ListConfigurationPacks(context.Context) ([]Pack, error)
 	ApproveConfigurationPack(context.Context, string, string) (Pack, error)
 	PromoteConfigurationPack(context.Context, Pack, string) error
 	AssignConfigurationPack(context.Context, string, string, string) (Assignment, error)
@@ -123,12 +126,15 @@ type Repository interface {
 }
 
 type Projector interface {
+	Preview(context.Context, string, map[string]string) (ProjectionPlan, error)
 	Project(context.Context, string, map[string]string) (ProjectionResult, error)
+	ProjectReviewed(context.Context, string, map[string]string, []Change) (ProjectionResult, error)
 }
 
 type Service struct {
-	repository Repository
-	projector  Projector
+	repository  Repository
+	projector   Projector
+	operationMu sync.Mutex
 }
 
 func NewService(repository Repository, projector Projector) (*Service, error) {
@@ -303,6 +309,9 @@ func (service *Service) Approve(ctx context.Context, id, version string) (Pack, 
 }
 
 func (service *Service) Assign(ctx context.Context, alias, id, version string) (Assignment, error) {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+
 	ctx = contextOrBackground(ctx)
 	if err := service.ValidateAssignment(ctx, id, version); err != nil {
 		return Assignment{}, err
@@ -328,7 +337,28 @@ func (service *Service) ValidateAssignment(ctx context.Context, id, version stri
 	return nil
 }
 
+func (service *Service) Assignment(ctx context.Context, alias string) (Assignment, error) {
+	return service.repository.GetConfigurationPackAssignment(contextOrBackground(ctx), alias)
+}
+
+func (service *Service) Packs(ctx context.Context) ([]Pack, error) {
+	packs, err := service.repository.ListConfigurationPacks(contextOrBackground(ctx))
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(packs, func(i, j int) bool {
+		if packs[i].ID == packs[j].ID {
+			return packs[i].Version < packs[j].Version
+		}
+		return packs[i].ID < packs[j].ID
+	})
+	return packs, nil
+}
+
 func (service *Service) SetOverride(ctx context.Context, alias, path, content string) error {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+
 	if err := validateFiles(map[string]string{path: content}); err != nil {
 		return err
 	}
@@ -345,15 +375,47 @@ func (service *Service) SetOverride(ctx context.Context, alias, path, content st
 }
 
 func (service *Service) Preview(ctx context.Context, alias string) (ProjectionPlan, error) {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+	return service.preview(ctx, alias)
+}
+
+func (service *Service) preview(ctx context.Context, alias string) (ProjectionPlan, error) {
+	if service.projector == nil {
+		return ProjectionPlan{}, apperrors.New(apperrors.ConfigurationPackProjectionFailed, ErrProjectionFailed)
+	}
 	ctx = contextOrBackground(ctx)
 	assignment, _, merged, err := service.effective(ctx, alias)
 	if err != nil {
 		return ProjectionPlan{}, err
 	}
-	return ProjectionPlan{Assignment: assignment, Digest: DigestFiles(merged), Files: sortedPaths(merged)}, nil
+	target, err := service.repository.GetConfigurationProfile(ctx, alias)
+	if err != nil {
+		return ProjectionPlan{}, err
+	}
+	if target.Status != TargetStatusReady || target.HomeOwnership != TargetHomeOwnershipManaged || strings.TrimSpace(target.IdentityHome) == "" {
+		return ProjectionPlan{}, apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, ErrAssignmentInvalid)
+	}
+	plan, err := service.projector.Preview(ctx, target.IdentityHome, merged)
+	if err != nil {
+		return ProjectionPlan{}, err
+	}
+	plan.Assignment = assignment
+	plan.Files = sortedPaths(merged)
+	if plan.Conflicts == nil {
+		plan.Conflicts = []Change{}
+	}
+	plan.Digest = projectionReviewDigest(assignment, target, DigestFiles(merged), plan.Conflicts)
+	return plan, nil
 }
 
 func (service *Service) Project(ctx context.Context, alias string) (ProjectionResult, error) {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+	return service.project(ctx, alias)
+}
+
+func (service *Service) project(ctx context.Context, alias string) (ProjectionResult, error) {
 	if service.projector == nil {
 		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackProjectionFailed, ErrProjectionFailed)
 	}
@@ -384,25 +446,82 @@ func (service *Service) Project(ctx context.Context, alias string) (ProjectionRe
 	return result, nil
 }
 
-func (service *Service) PreviewPromotion(ctx context.Context, alias, version string) (PromotionPreview, error) {
+// ApplyReviewed projects only the effective configuration and conflict state
+// represented by the reviewed preview digest.
+func (service *Service) ApplyReviewed(ctx context.Context, alias, expectedDigest string, reviewed bool) (ProjectionResult, error) {
+	if !reviewed || strings.TrimSpace(expectedDigest) == "" {
+		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+	}
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+
+	if service.projector == nil {
+		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackProjectionFailed, ErrProjectionFailed)
+	}
 	ctx = contextOrBackground(ctx)
-	assignment, pack, _, err := service.effective(ctx, alias)
+	assignment, pack, merged, err := service.effective(ctx, alias)
+	if err != nil {
+		return ProjectionResult{}, err
+	}
+	var result ProjectionResult
+	err = service.repository.WithStoppedConfigurationProfile(ctx, alias, func(target ProfileTarget) error {
+		if target.Status != TargetStatusReady || target.HomeOwnership != TargetHomeOwnershipManaged || strings.TrimSpace(target.IdentityHome) == "" || target.ActiveLaunch {
+			return apperrors.New(apperrors.ConfigurationPackAssignmentInvalid, ErrAssignmentInvalid)
+		}
+		plan, previewErr := service.projector.Preview(ctx, target.IdentityHome, merged)
+		if previewErr != nil {
+			return previewErr
+		}
+		if projectionReviewDigest(assignment, target, DigestFiles(merged), plan.Conflicts) != expectedDigest {
+			return apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+		}
+		result, previewErr = service.projector.ProjectReviewed(ctx, target.IdentityHome, merged, plan.Conflicts)
+		return previewErr
+	})
+	if err != nil {
+		if apperrors.Code(err) == apperrors.ConfigurationPackInvalid {
+			return ProjectionResult{}, err
+		}
+		if apperrors.Code(err) == apperrors.ConfigurationPackProjectionFailed {
+			return ProjectionResult{}, err
+		}
+		return ProjectionResult{}, apperrors.New(apperrors.ConfigurationPackProjectionFailed, errors.Join(ErrProjectionFailed, err))
+	}
+	result.PackID = assignment.PackID
+	result.Version = pack.Version
+	result.Digest = DigestFiles(merged)
+	result.Files = sortedPaths(merged)
+	return result, nil
+}
+
+func (service *Service) PreviewPromotion(ctx context.Context, alias, version string) (PromotionPreview, error) {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+	return service.previewPromotion(ctx, alias, version)
+}
+
+func (service *Service) previewPromotion(ctx context.Context, alias, version string) (PromotionPreview, error) {
+	ctx = contextOrBackground(ctx)
+	assignment, pack, merged, err := service.effective(ctx, alias)
 	if err != nil {
 		return PromotionPreview{}, err
 	}
-	overrides, err := service.repository.GetConfigurationOverrides(ctx, alias)
-	if err != nil {
-		return PromotionPreview{}, err
-	}
-	preview, err := PreviewPromotion(pack, overrides, version)
+	preview, err := previewPromotionFromMerged(pack, merged, version)
 	if err != nil {
 		return PromotionPreview{}, err
 	}
 	preview.ProfileAlias = assignment.Alias
+	preview.Digest = promotionReviewDigest(assignment, pack, version, DigestFiles(merged), preview.Changes)
 	return preview, nil
 }
 
 func (service *Service) Promote(ctx context.Context, alias, version string, reviewed bool) (Pack, error) {
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+	return service.promote(ctx, alias, version, reviewed)
+}
+
+func (service *Service) promote(ctx context.Context, alias, version string, reviewed bool) (Pack, error) {
 	ctx = contextOrBackground(ctx)
 	_, pack, _, err := service.effective(ctx, alias)
 	if err != nil {
@@ -420,6 +539,87 @@ func (service *Service) Promote(ctx context.Context, alias, version string, revi
 		return Pack{}, err
 	}
 	return next, nil
+}
+
+// PromoteReviewed publishes only the assignment, source version, and local
+// overrides represented by the reviewed promotion digest.
+func (service *Service) PromoteReviewed(ctx context.Context, alias, version, expectedDigest string, reviewed bool) (Pack, error) {
+	if !reviewed || strings.TrimSpace(expectedDigest) == "" {
+		return Pack{}, apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+	}
+	service.operationMu.Lock()
+	defer service.operationMu.Unlock()
+
+	ctx = contextOrBackground(ctx)
+	assignment, pack, merged, err := service.effective(ctx, alias)
+	if err != nil {
+		return Pack{}, err
+	}
+	preview, err := previewPromotionFromMerged(pack, merged, version)
+	if err != nil {
+		return Pack{}, err
+	}
+	if promotionReviewDigest(assignment, pack, version, DigestFiles(merged), preview.Changes) != expectedDigest {
+		return Pack{}, apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+	}
+	next := Pack{ID: pack.ID, Version: version, State: StateApproved, Digest: DigestFiles(merged), Files: cloneFiles(merged)}
+	if err := service.repository.PromoteConfigurationPack(ctx, next, pack.Version); err != nil {
+		return Pack{}, err
+	}
+	return next, nil
+}
+
+func previewPromotionFromMerged(pack Pack, merged map[string]string, version string) (PromotionPreview, error) {
+	if err := pack.validate(true); err != nil {
+		return PromotionPreview{}, err
+	}
+	if pack.State != StateApproved {
+		return PromotionPreview{}, apperrors.New(apperrors.ConfigurationPackNotApproved, ErrNotApproved)
+	}
+	if !validIdentifier(version, maxPackVersion) || version == pack.Version {
+		return PromotionPreview{}, apperrors.New(apperrors.ConfigurationPackInvalid, ErrInvalid)
+	}
+	if err := validateFiles(merged); err != nil {
+		return PromotionPreview{}, err
+	}
+	return PromotionPreview{PackID: pack.ID, FromVersion: pack.Version, ToVersion: version, Changes: changes(pack.Files, merged)}, nil
+}
+
+func projectionReviewDigest(assignment Assignment, target ProfileTarget, filesDigest string, conflicts []Change) string {
+	return reviewedRevisionDigest(struct {
+		Assignment  Assignment `json:"assignment"`
+		TargetID    string     `json:"target_id"`
+		TargetHome  string     `json:"target_home"`
+		FilesDigest string     `json:"files_digest"`
+		Conflicts   []Change   `json:"conflicts"`
+	}{assignment, target.ID, target.IdentityHome, filesDigest, sortedChanges(conflicts)})
+}
+
+func promotionReviewDigest(assignment Assignment, pack Pack, version, filesDigest string, changes []Change) string {
+	return reviewedRevisionDigest(struct {
+		Assignment  Assignment `json:"assignment"`
+		PackDigest  string     `json:"pack_digest"`
+		ToVersion   string     `json:"to_version"`
+		FilesDigest string     `json:"files_digest"`
+		Changes     []Change   `json:"changes"`
+	}{assignment, pack.Digest, version, filesDigest, sortedChanges(changes)})
+}
+
+func reviewedRevisionDigest(value any) string {
+	encoded, _ := json.Marshal(value)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func sortedChanges(input []Change) []Change {
+	result := append([]Change(nil), input...)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Path == result[j].Path {
+			return result[i].Kind < result[j].Kind
+		}
+		return result[i].Path < result[j].Path
+	})
+	return result
 }
 
 func (service *Service) effective(ctx context.Context, alias string) (Assignment, Pack, map[string]string, error) {

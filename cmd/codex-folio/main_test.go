@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
+	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
 )
@@ -208,6 +210,19 @@ func TestServiceStartReusesExistingOwner(t *testing.T) {
 	}
 	defer func() { _ = owner.Close() }()
 
+	server, err := httpapi.NewServer(httpapi.Options{CommandToken: "reuse-fixture-command"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "reuse-fixture-command"}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
 	var stdout, stderr bytes.Buffer
 	if exitCode := runWithServicePathResolver([]string{"service", "start", "--state-root", stateRoot, "--json"}, &stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home)); exitCode != exitSuccess {
 		t.Fatalf("run() exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
@@ -216,15 +231,20 @@ func TestServiceStartReusesExistingOwner(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 	var status struct {
-		Status string `json:"status"`
-		Reused bool   `json:"reused"`
-		PID    int    `json:"pid"`
+		Status    string `json:"status"`
+		Reused    bool   `json:"reused"`
+		PID       int    `json:"pid"`
+		Dashboard string `json:"dashboard_url"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
 		t.Fatalf("start output is not JSON: %v\noutput: %s", err, stdout.String())
 	}
 	if status.Status != "running" || !status.Reused || status.PID != 7777 {
 		t.Fatalf("status = %#v, want running/reused/PID 7777", status)
+	}
+	link, err := url.Parse(status.Dashboard)
+	if err != nil || link.Host != server.Address() || link.Query().Get("bootstrap") == "" {
+		t.Fatal("reused owner did not publish a fresh dashboard entry")
 	}
 }
 

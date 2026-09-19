@@ -1,0 +1,113 @@
+{
+  "browser": "149.0.7827.55",
+  "platform": "linux",
+  "architecture": "x64",
+  "kernel": "6.6.87.2-microsoft-standard-WSL2",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) Ultra 7 155H",
+    "logicalCPUs": 12,
+    "memoryBytes": 8329052160
+  },
+  "viewports": [
+    {
+      "name": "stale-wide",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "running-wide",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "overview-wide",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "overview-medium",
+      "width": 900,
+      "height": 1000
+    },
+    {
+      "name": "overview-narrow",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "name": "settings-light",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "name": "overview-forced",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "name": "overview-reflow",
+      "width": 720,
+      "height": 500
+    },
+    {
+      "name": "partial",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "missing",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "future",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "contradictory",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "zero",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "offline",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "name": "reauth",
+      "width": 1440,
+      "height": 1000
+    }
+  ],
+  "checks": [
+    "one-time bootstrap stripped; stale cached evidence under one second; failed open refresh retains ages",
+    "single profile persists; explicit combined scope preserves Selected Profile",
+    "provider capacity and raw trace/table values agree; keyboard sample inspection",
+    "foreground terminal guidance and progressive evidence disclosure",
+    "wide/medium/narrow navigation, system/light/forced colors, reduced motion and 720px reflow",
+    "automated WCAG checks",
+    "partial provider fixture remains explicit",
+    "missing provider fixture remains explicit",
+    "future provider fixture remains explicit",
+    "contradictory provider fixture remains explicit",
+    "zero provider fixture remains explicit",
+    "offline provider fixture remains explicit",
+    "reauth provider fixture remains explicit",
+    "expired authorization hides protected evidence and offers local relaunch",
+    "missing bootstrap has actionable terminal guidance; CSRF-less mutation rejected",
+    "bootstrap replay rejected; no runtime errors or remote assets"
+  ],
+  "limitations": [
+    "Fake Codex, not live provider",
+    "Headless browser accessibility tree and axe are not spoken screen-reader evidence",
+    "Native OS contrast and Firefox/Safari unqualified"
+  ],
+  "cachedEvidenceMs": 114.38028600000001,
+  "axeViolations": 0
+}

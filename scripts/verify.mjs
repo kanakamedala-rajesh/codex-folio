@@ -16,6 +16,27 @@ const skippedQualifications = [
 ];
 
 try {
+  const args = process.argv.slice(2);
+  const suite =
+    args.length === 0
+      ? "all"
+      : args.length === 2 && args[0] === "--suite"
+        ? args[1]
+        : "";
+  if (!["all", "native", "web"].includes(suite)) {
+    throw new Error("usage: node scripts/verify.mjs [--suite all|native|web]");
+  }
+  const native = suite !== "web";
+  const web = suite !== "native";
+  console.log(`Verification suite: ${suite}`);
+  if (!native)
+    skippedQualifications.push(
+      "native checks belong to the separate native suite",
+    );
+  if (!web)
+    skippedQualifications.push(
+      "deep UI and startup budget belong to the separate web suite",
+    );
   const initialStatus = gitStatus();
   const initialTrackedFiles = trackedFileSnapshot();
 
@@ -45,49 +66,119 @@ try {
     run("node", ["scripts/check-error-codes.mjs"]);
     run("node", ["--test", "scripts/check-error-codes.test.mjs"]);
   });
-  gate("Go formatting, linting, and unit tests", () => {
-    const goFiles = findGoFiles(rootDirectory);
-    const formattedGoFiles =
-      goFiles.length === 0 ? "" : capture("gofmt", ["-l", ...goFiles]);
-    if (formattedGoFiles.trim() !== "") {
-      throw new Error(
-        `gofmt found unformatted Go files:\n${formattedGoFiles.trim()}`,
-      );
-    }
-    run("go", ["vet", ...goPackages]);
-    run("go", ["test", ...goPackages]);
-  });
-  gate("native executable build identity", () => {
-    run("node", ["scripts/build.mjs", "--build-class", "development"]);
-    checkBuiltExecutableIdentity(initialStatus);
-  });
-  gate("Tier 1 compile-only target builds", () => {
-    run("node", ["--test", "scripts/build-targets.test.mjs"]);
-  });
-  gate("unsigned archive and supply-chain dry run", () => {
-    run("node", ["--test", "scripts/release.test.mjs"]);
-    run("node", [
-      "scripts/release.mjs",
-      "--dry-run",
-      "--build-class",
-      "development",
-    ]);
-  });
+  if (native) {
+    gate("Go formatting, linting, and unit tests", () => {
+      const goFiles = findGoFiles(rootDirectory);
+      const formattedGoFiles =
+        goFiles.length === 0 ? "" : capture("gofmt", ["-l", ...goFiles]);
+      if (formattedGoFiles.trim() !== "") {
+        throw new Error(
+          `gofmt found unformatted Go files:\n${formattedGoFiles.trim()}`,
+        );
+      }
+      run("go", ["vet", ...goPackages]);
+      run("go", ["test", ...goPackages]);
+    });
+    gate("native executable build identity", () => {
+      run("node", ["scripts/build.mjs", "--build-class", "development"]);
+      checkBuiltExecutableIdentity(initialStatus);
+    });
+    gate("Tier 1 compile-only target builds", () => {
+      run("node", ["--test", "scripts/build-targets.test.mjs"]);
+    });
+    gate("unsigned archive and supply-chain dry run", () => {
+      run("node", ["--test", "scripts/release.test.mjs"]);
+      run("node", [
+        "scripts/release.mjs",
+        "--dry-run",
+        "--build-class",
+        "development",
+      ]);
+    });
+  }
   gate("governance and DCO policy", () => {
     run("node", ["--test", "scripts/check-dco.test.mjs"]);
     run("node", ["scripts/check-governance.mjs"]);
   });
-  gate(
-    "frontend format, lint, type-check, test, build, and offline assets",
-    () => {
-      runNpm(["--prefix", "web", "run", "format:check"]);
-      runNpm(["--prefix", "web", "run", "lint"]);
-      runNpm(["--prefix", "web", "run", "typecheck"]);
-      runNpm(["--prefix", "web", "run", "test"]);
-      runNpm(["--prefix", "web", "run", "build"]);
-      run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
-    },
-  );
+  if (web) {
+    gate(
+      "frontend format, lint, type-check, test, build, and offline assets",
+      () => {
+        runNpm(["--prefix", "web", "run", "format:check"]);
+        runNpm(["--prefix", "web", "run", "lint"]);
+        runNpm(["--prefix", "web", "run", "typecheck"]);
+        runNpm(["--prefix", "web", "run", "test"]);
+        run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
+      },
+    );
+  } else {
+    gate(
+      "embedded frontend build and offline assets for native integration",
+      () => {
+        runNpm(["--prefix", "web", "run", "build"]);
+        run("node", ["web/scripts/smoke.mjs", "internal/httpapi/assets"]);
+      },
+    );
+  }
+  gate("pinned browser installation", () => {
+    if (!process.env.CODEX_FOLIO_CHROMIUM) {
+      run("node", [
+        "web/node_modules/playwright/cli.js",
+        "install",
+        "chromium",
+        ...(process.env.CI ? ["--with-deps"] : []),
+      ]);
+    }
+  });
+  if (native) {
+    gate("native browser-to-service smoke", () => {
+      run(
+        "go",
+        [
+          "test",
+          "./cmd/codex-folio",
+          "-run",
+          "^TestOverviewBrowser$",
+          "-count=1",
+          "-v",
+          "-timeout=5m",
+        ],
+        { CODEX_FOLIO_BROWSER_TEST: "1", CODEX_FOLIO_BROWSER_SUITE: "smoke" },
+      );
+    });
+  }
+  if (web) {
+    gate("deep authenticated Overview journeys and accessibility", () => {
+      run(
+        "go",
+        [
+          "test",
+          "./cmd/codex-folio",
+          "-run",
+          "^TestOverviewBrowser$",
+          "-count=1",
+          "-v",
+          "-timeout=5m",
+        ],
+        { CODEX_FOLIO_BROWSER_TEST: "1", CODEX_FOLIO_BROWSER_SUITE: "deep" },
+      );
+    });
+    gate("isolated repeated startup benchmark", () => {
+      run(
+        "go",
+        [
+          "test",
+          "./cmd/codex-folio",
+          "-run",
+          "^TestOverviewStartupBenchmark$",
+          "-count=1",
+          "-v",
+          "-timeout=5m",
+        ],
+        { CODEX_FOLIO_BROWSER_TEST: "1" },
+      );
+    });
+  }
   gate("tracked source and lockfile immutability", () => {
     const finalStatus = gitStatus();
     const finalTrackedFiles = trackedFileSnapshot();
@@ -107,7 +198,7 @@ try {
   for (const name of passedGates) console.log(`[PASS] ${name}`);
   for (const name of skippedQualifications) console.log(`[SKIP] ${name}`);
   console.log(
-    "verification passed: repository gates completed without remote mutation",
+    `verification passed: ${suite} suite completed without remote mutation`,
   );
 } catch (error) {
   console.error(
@@ -195,10 +286,10 @@ function checkBuiltExecutableIdentity(initialStatus) {
   );
 }
 
-function run(command, args) {
+function run(command, args, environment = {}) {
   const result = spawnSync(command, args, {
     cwd: rootDirectory,
-    env: taskEnvironment(),
+    env: { ...taskEnvironment(), ...environment },
     stdio: "inherit",
   });
   if (result.error) {
@@ -213,7 +304,13 @@ function run(command, args) {
 
 function runNpm(args) {
   if (process.platform === "win32") {
-    run(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm.cmd", ...args]);
+    run(process.env.ComSpec ?? "cmd.exe", [
+      "/d",
+      "/s",
+      "/c",
+      "npm.cmd",
+      ...args,
+    ]);
     return;
   }
 

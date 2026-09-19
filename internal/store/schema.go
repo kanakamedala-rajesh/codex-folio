@@ -337,6 +337,232 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 19,
+			name:    "periodic-collection-schedule",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN collection_active_interval_seconds INTEGER NOT NULL DEFAULT 300 CHECK (collection_active_interval_seconds BETWEEN 300 AND 86400)`,
+					`ALTER TABLE settings ADD COLUMN collection_idle_interval_seconds INTEGER NOT NULL DEFAULT 1800 CHECK (collection_idle_interval_seconds BETWEEN 300 AND 86400)`,
+					`CREATE TABLE collection_schedule_state (
+						profile_id TEXT PRIMARY KEY NOT NULL,
+						last_attempt_at TEXT,
+						next_attempt_at TEXT NOT NULL,
+						consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+						last_outcome TEXT NOT NULL DEFAULT '' CHECK (last_outcome IN ('', 'succeeded', 'failed')),
+						updated_at TEXT NOT NULL,
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id) ON DELETE CASCADE
+					)`,
+					`CREATE INDEX idx_collection_schedule_next ON collection_schedule_state(next_attempt_at)`,
+					`PRAGMA defer_foreign_keys = ON`,
+					`CREATE TABLE usage_snapshots_v19 (
+						snapshot_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						source TEXT NOT NULL CHECK (source IN ('codex_app_server')),
+						source_version TEXT NOT NULL,
+						captured_at TEXT NOT NULL,
+						status TEXT NOT NULL DEFAULT 'available',
+						trigger_reason TEXT NOT NULL DEFAULT 'explicit_refresh' CHECK (trigger_reason IN ('explicit_refresh', 'dashboard_open', 'dashboard_refresh', 'pre_launch', 'post_exit', 'periodic_active', 'periodic_idle', 'periodic_reset')),
+						login_identity_ciphertext BLOB CHECK (login_identity_ciphertext IS NULL OR typeof(login_identity_ciphertext) = 'blob'),
+						workspace_ciphertext BLOB CHECK (workspace_ciphertext IS NULL OR typeof(workspace_ciphertext) = 'blob'),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`INSERT INTO usage_snapshots_v19 SELECT snapshot_id, profile_id, source, source_version, captured_at, status, trigger_reason, login_identity_ciphertext, workspace_ciphertext FROM usage_snapshots`,
+					`CREATE TABLE usage_observations_v19 (
+						observation_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL,
+						provenance_id TEXT,
+						metric_availability_id TEXT,
+						value REAL NOT NULL,
+						unit TEXT NOT NULL,
+						window_start TEXT,
+						window_end TEXT,
+						observed_at TEXT NOT NULL,
+						snapshot_id TEXT,
+						window_timezone TEXT NOT NULL DEFAULT '',
+						assumptions TEXT NOT NULL DEFAULT '',
+						uncertainty TEXT NOT NULL DEFAULT '',
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id),
+						FOREIGN KEY (metric_key) REFERENCES usage_metrics (metric_key),
+						FOREIGN KEY (provenance_id) REFERENCES metric_provenance (provenance_id),
+						FOREIGN KEY (metric_availability_id) REFERENCES metric_availability (metric_availability_id),
+						FOREIGN KEY (snapshot_id) REFERENCES usage_snapshots_v19 (snapshot_id)
+					)`,
+					`INSERT INTO usage_observations_v19 SELECT observation_id, profile_id, metric_key, provenance_id, metric_availability_id, value, unit, window_start, window_end, observed_at, snapshot_id, window_timezone, assumptions, uncertainty FROM usage_observations`,
+					`DROP TABLE usage_observations`,
+					`DROP TABLE usage_snapshots`,
+					`ALTER TABLE usage_snapshots_v19 RENAME TO usage_snapshots`,
+					`ALTER TABLE usage_observations_v19 RENAME TO usage_observations`,
+					`CREATE INDEX idx_usage_snapshots_profile_time ON usage_snapshots (profile_id, captured_at)`,
+					`CREATE INDEX idx_usage_observations_profile_time ON usage_observations (profile_id, observed_at)`,
+					`CREATE INDEX idx_usage_observations_snapshot ON usage_observations (snapshot_id)`,
+					`CREATE INDEX idx_usage_observations_expiry ON usage_observations(rtrim(observed_at, 'Z'))`,
+					`CREATE INDEX idx_usage_observations_availability ON usage_observations(metric_availability_id)`,
+					`CREATE INDEX idx_usage_observations_provenance ON usage_observations(provenance_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 20,
+			name:    "bounded-operational-alerts",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE alerts_v20 (
+						alert_id TEXT PRIMARY KEY NOT NULL,
+						condition_key TEXT NOT NULL UNIQUE,
+						profile_id TEXT,
+						category TEXT NOT NULL CHECK (category IN ('capacity', 'reauthentication', 'stale_data', 'collection_failure', 'compatibility')),
+						kind TEXT NOT NULL,
+						severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error')),
+						state TEXT NOT NULL CHECK (state IN ('open', 'acknowledged', 'resolved')),
+						title TEXT NOT NULL,
+						guidance TEXT NOT NULL,
+						metric_key TEXT NOT NULL DEFAULT '',
+						window_start TEXT,
+						window_end TEXT,
+						remaining_percent REAL CHECK (remaining_percent IS NULL OR (remaining_percent >= 0 AND remaining_percent <= 100)),
+						source TEXT NOT NULL DEFAULT '',
+						source_version TEXT NOT NULL DEFAULT '',
+						provenance TEXT NOT NULL DEFAULT '',
+						scope TEXT NOT NULL DEFAULT '',
+						freshness TEXT NOT NULL DEFAULT '',
+						availability_reason TEXT NOT NULL DEFAULT '',
+						evidence_captured_at TEXT,
+						observed_at TEXT NOT NULL,
+						first_seen_at TEXT NOT NULL,
+						last_seen_at TEXT NOT NULL,
+						acknowledged_at TEXT,
+						resolved_at TEXT,
+						occurrence_count INTEGER NOT NULL CHECK (occurrence_count > 0),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`INSERT INTO alerts_v20 (alert_id, condition_key, profile_id, category, kind, severity, state, title, guidance, observed_at, first_seen_at, last_seen_at, acknowledged_at, occurrence_count)
+						SELECT alert_id, alert_id, profile_id, category, category, severity, state, category, '', created_at, created_at, created_at, acknowledged_at, 1 FROM alerts`,
+					`DROP TABLE alerts`,
+					`ALTER TABLE alerts_v20 RENAME TO alerts`,
+					`CREATE INDEX idx_alerts_profile_state ON alerts (profile_id, state)`,
+					`CREATE INDEX idx_alerts_last_seen ON alerts (last_seen_at)`,
+					`CREATE TABLE alert_thresholds (
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL CHECK (metric_key IN ('codex.primary.used_percent', 'codex.secondary.used_percent')),
+						warning_percent REAL NOT NULL CHECK (warning_percent > 0 AND warning_percent <= 100),
+						critical_percent REAL NOT NULL CHECK (critical_percent >= 0 AND critical_percent < warning_percent),
+						updated_at TEXT NOT NULL,
+						PRIMARY KEY (profile_id, metric_key),
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id)
+					)`,
+					`CREATE INDEX idx_alert_thresholds_profile ON alert_thresholds (profile_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 21,
+			name:    "native-alert-delivery",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN notification_detail_enabled INTEGER NOT NULL DEFAULT 0 CHECK (notification_detail_enabled IN (0, 1))`,
+					`ALTER TABLE alerts ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'attempting', 'delivered', 'failed', 'unavailable'))`,
+					`ALTER TABLE alerts ADD COLUMN delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0 AND delivery_attempts <= 3)`,
+					`ALTER TABLE alerts ADD COLUMN last_delivery_attempt_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN next_delivery_attempt_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN delivered_at TEXT`,
+					`ALTER TABLE alerts ADD COLUMN delivery_error_code TEXT NOT NULL DEFAULT ''`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 22,
+			name:    "bounded-local-diagnostics",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE settings_v22 (
+						settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+						analytics_retention_mode TEXT NOT NULL DEFAULT 'default' CHECK (analytics_retention_mode IN ('default', 'days', 'unlimited')),
+						analytics_retention_days INTEGER CHECK (analytics_retention_days IS NULL OR analytics_retention_days >= 30),
+						diagnostics_retention_days INTEGER NOT NULL DEFAULT 14 CHECK (diagnostics_retention_days BETWEEN 1 AND 30),
+						locale TEXT,
+						appearance TEXT CHECK (appearance IS NULL OR appearance IN ('system', 'light', 'dark')),
+						service_enabled INTEGER CHECK (service_enabled IS NULL OR service_enabled IN (0, 1)),
+						experimental_features_enabled INTEGER CHECK (experimental_features_enabled IS NULL OR experimental_features_enabled IN (0, 1)),
+						updated_at TEXT NOT NULL,
+						checkpoint_repository_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_repository_retention_mode IN ('days', 'unlimited')),
+						checkpoint_repository_retention_days INTEGER DEFAULT 30 CHECK (checkpoint_repository_retention_days IS NULL OR checkpoint_repository_retention_days >= 1),
+						checkpoint_transcript_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_transcript_retention_mode IN ('days', 'unlimited')),
+						checkpoint_transcript_retention_days INTEGER DEFAULT 7 CHECK (checkpoint_transcript_retention_days IS NULL OR checkpoint_transcript_retention_days >= 1),
+						collection_active_interval_seconds INTEGER NOT NULL DEFAULT 300 CHECK (collection_active_interval_seconds BETWEEN 300 AND 86400),
+						collection_idle_interval_seconds INTEGER NOT NULL DEFAULT 1800 CHECK (collection_idle_interval_seconds BETWEEN 300 AND 86400),
+						notification_detail_enabled INTEGER NOT NULL DEFAULT 0 CHECK (notification_detail_enabled IN (0, 1)),
+						diagnostics_enabled INTEGER NOT NULL DEFAULT 1 CHECK (diagnostics_enabled IN (0, 1)),
+						diagnostics_level TEXT NOT NULL DEFAULT 'info' CHECK (diagnostics_level IN ('info', 'warning', 'error'))
+					)`,
+					`INSERT INTO settings_v22 (
+						settings_id, analytics_retention_mode, analytics_retention_days, diagnostics_retention_days, locale, appearance,
+						service_enabled, experimental_features_enabled, updated_at, checkpoint_repository_retention_mode,
+						checkpoint_repository_retention_days, checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days,
+						collection_active_interval_seconds, collection_idle_interval_seconds, notification_detail_enabled
+					) SELECT settings_id, analytics_retention_mode, analytics_retention_days,
+						CASE WHEN diagnostics_retention_days IS NULL THEN 14 WHEN diagnostics_retention_days > 30 THEN 30 ELSE diagnostics_retention_days END, locale,
+						appearance, service_enabled, experimental_features_enabled, updated_at, checkpoint_repository_retention_mode,
+						checkpoint_repository_retention_days, checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days,
+						collection_active_interval_seconds, collection_idle_interval_seconds, notification_detail_enabled FROM settings`,
+					`DROP TABLE settings`,
+					`ALTER TABLE settings_v22 RENAME TO settings`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 23,
+			name:    "opt-in-update-checks",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN automatic_update_checks_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_update_checks_enabled IN (0, 1))`,
+					`CREATE TABLE update_check_state (
+						update_check_state_id INTEGER PRIMARY KEY CHECK (update_check_state_id = 1),
+						status TEXT NOT NULL CHECK (status IN ('never_checked', 'unconfigured', 'offline', 'malformed', 'unavailable', 'up_to_date', 'update_available')),
+						current_version TEXT NOT NULL CHECK (length(current_version) <= 64),
+						available_version TEXT NOT NULL DEFAULT '' CHECK (length(available_version) <= 64),
+						release_notes TEXT NOT NULL DEFAULT '' CHECK (length(release_notes) <= 8192),
+						download_url TEXT NOT NULL DEFAULT '' CHECK (length(download_url) <= 2048),
+						installer_guidance TEXT NOT NULL DEFAULT '' CHECK (length(installer_guidance) <= 4096),
+						checked_at TEXT,
+						next_check_at TEXT,
+						error_code TEXT NOT NULL DEFAULT '' CHECK (error_code IN ('', 'UPDATE_SOURCE_UNCONFIGURED', 'UPDATE_SOURCE_OFFLINE', 'UPDATE_SOURCE_MALFORMED', 'UPDATE_SOURCE_UNAVAILABLE')),
+						CHECK (
+							(status = 'never_checked' AND current_version = '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NULL AND next_check_at IS NULL AND error_code = '') OR
+							(status = 'up_to_date' AND current_version <> '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code = '') OR
+							(status = 'update_available' AND current_version <> '' AND available_version <> '' AND release_notes <> '' AND download_url <> '' AND installer_guidance <> '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code = '') OR
+							(status IN ('unconfigured', 'offline', 'malformed', 'unavailable') AND current_version <> '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code <> '')
+						)
+					)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -580,9 +806,11 @@ var foundationSchemaStatements = []string{
 }
 
 var expectedTables = map[string][]string{
-	"alerts":                         {"alert_id", "profile_id", "category", "severity", "state", "created_at", "acknowledged_at"},
+	"alerts":                         {"alert_id", "condition_key", "profile_id", "category", "kind", "severity", "state", "title", "guidance", "metric_key", "window_start", "window_end", "remaining_percent", "source", "source_version", "provenance", "scope", "freshness", "availability_reason", "evidence_captured_at", "observed_at", "first_seen_at", "last_seen_at", "acknowledged_at", "resolved_at", "occurrence_count", "delivery_state", "delivery_attempts", "last_delivery_attempt_at", "next_delivery_attempt_at", "delivered_at", "delivery_error_code"},
+	"alert_thresholds":               {"profile_id", "metric_key", "warning_percent", "critical_percent", "updated_at"},
 	"checkpoints":                    {"checkpoint_id", "project_identity_id", "status", "goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext", "created_at", "expires_at"},
 	"cli_aliases":                    {"alias_id", "profile_id", "alias", "created_at"},
+	"collection_schedule_state":      {"profile_id", "last_attempt_at", "next_attempt_at", "consecutive_failures", "last_outcome", "updated_at"},
 	"configuration_packs":            {"configuration_pack_id", "pack_version", "state", "content_digest", "created_at"},
 	"configuration_pack_assignments": {"profile_id", "configuration_pack_id", "pack_version", "assigned_at"},
 	"configuration_pack_overrides":   {"profile_id", "path", "content", "updated_at"},
@@ -604,7 +832,8 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
+	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},
@@ -612,6 +841,9 @@ var expectedTables = map[string][]string{
 }
 
 var expectedIndexes = []string{
+	"idx_alert_thresholds_profile",
+	"idx_alerts_last_seen",
+	"idx_collection_schedule_next",
 	"idx_usage_aggregates_group",
 	"idx_usage_aggregates_profile_time",
 	"idx_usage_observations_expiry",

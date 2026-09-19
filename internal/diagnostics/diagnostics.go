@@ -478,6 +478,22 @@ type Aggregate struct {
 	LastSeenAt      time.Time `json:"last_seen_at"`
 }
 
+// Validate proves that a persisted aggregate still matches the fixed event
+// vocabulary before it can enter a support bundle.
+func (aggregate Aggregate) Validate() error {
+	if !validComponent(aggregate.Component) || !apperrors.IsRegistered(aggregate.ErrorCode) || !validSeverity(aggregate.Severity) {
+		return invalidEvent("diagnostic aggregate vocabulary is invalid")
+	}
+	if aggregate.OccurrenceCount < 1 || aggregate.OccurrenceCount > MaxOccurrenceCount || aggregate.FirstSeenAt.IsZero() || aggregate.LastSeenAt.IsZero() || aggregate.LastSeenAt.Before(aggregate.FirstSeenAt) {
+		return invalidEvent("diagnostic aggregate bounds are invalid")
+	}
+	expected := AggregateID(Event{Component: aggregate.Component, ErrorCode: aggregate.ErrorCode, Severity: aggregate.Severity})
+	if aggregate.ID != expected {
+		return invalidEvent("diagnostic aggregate identifier is invalid")
+	}
+	return nil
+}
+
 // DiagnosticAggregate is a descriptive alias for callers that prefer the
 // complete domain name.
 type DiagnosticAggregate = Aggregate

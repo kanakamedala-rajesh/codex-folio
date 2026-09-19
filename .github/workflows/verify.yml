@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # setup-go and every verifier/build subprocess must cache the same directory.
+  GOCACHE: ${{ github.workspace }}/build/go-cache
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -42,6 +46,7 @@ jobs:
             go.mod
             go.sum
             .tool-versions
+            .github/workflows/verify.yml
       - name: Install the pinned Node.js toolchain
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -73,5 +78,48 @@ jobs:
           # The file-based Keychain's default/search-list preferences are
           # shared by the macOS test processes. Keep native packages from
           # overwriting one another's test Keychain configuration.
-          GOFLAGS: ${{ matrix.runner == 'macos-15' && '-p=1' || '' }}
-        run: node scripts/verify.mjs
+          # Windows SQLite durability tests also share the runner's filesystem
+          # flush capacity, so serialize packages there to avoid flush
+          # saturation without weakening durability assertions or timeouts.
+          GOFLAGS: ${{ (matrix.runner == 'macos-15' || matrix.runner == 'windows-latest') && '-p=1' || '' }}
+        run: node scripts/verify.mjs --suite native
+
+  web:
+    name: Web UI and startup benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CODEX_FOLIO_BROWSER_OUTPUT: ${{ github.workspace }}/build/browser-evidence
+    steps:
+      - name: Check out the source revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            web/package-lock.json
+            .github/workflows/verify.yml
+      - name: Install the pinned Node.js toolchain
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Run shared web verification and serial startup benchmark
+        run: node scripts/verify.mjs --suite web
+      - name: Record startup benchmark evidence
+        if: always()
+        run: |
+          node --input-type=module -e '
+            import { existsSync, readFileSync, appendFileSync } from "node:fs";
+            import { join } from "node:path";
+            const result = join(process.env.CODEX_FOLIO_BROWSER_OUTPUT, "startup-benchmark.json");
+            if (existsSync(result)) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+              "### Startup benchmark\n\n```json\n" + readFileSync(result, "utf8") + "\n```\n");
+          '
