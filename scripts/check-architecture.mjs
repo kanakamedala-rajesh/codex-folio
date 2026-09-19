@@ -24,6 +24,7 @@ const featureModules = new Set([
   "internal/settings",
   "internal/sharedhome",
   "internal/usage",
+  "internal/updates",
 ]);
 const supportPackages = new Set(["internal/buildinfo", "internal/vault"]);
 

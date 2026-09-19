@@ -747,6 +747,89 @@ try {
         "45",
       );
       check("Settings persists bounded collection intervals without enrolling the service");
+      const automaticUpdates = page.getByLabel("Check automatically", { exact: true });
+      assert.equal(await automaticUpdates.isChecked(), false);
+      assert.match(
+        await page.locator("main").innerText(),
+        /Updates[\s\S]*Automatic checks are off[\s\S]*Check for updates/,
+      );
+      const updateChecked = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/updates") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "check",
+      );
+      await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+      const updatePayload = await (await updateChecked).json();
+      assert.equal(updatePayload.status, "update_available");
+      assert.equal(updatePayload.automatic_checks, false);
+      assert.match(updatePayload.download_url, /\/downloads\/0\.0\.2-alpha\/$/);
+      assert.match(
+        await page.locator("main").innerText(),
+        /A newer CodexFolio version is available[\s\S]*0\.0\.2-alpha[\s\S]*Recording fixture release notes[\s\S]*Verified download location[\s\S]*Download and run the platform installer/,
+      );
+      for (const [mode, expectedStatus, expectedCopy] of [
+        ["update-up-to-date", "up_to_date", "This CodexFolio version is up to date."],
+        [
+          "update-malformed",
+          "malformed",
+          "The update service returned invalid evidence. No download location is shown.",
+        ],
+        [
+          "update-offline",
+          "offline",
+          "The update service could not be reached. Local features remain available.",
+        ],
+        [
+          "update-unavailable",
+          "unavailable",
+          "The update service is unavailable. Local features remain available.",
+        ],
+      ]) {
+        writeFileSync(control, mode);
+        const checked = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/api/v1/updates") &&
+            response.request().method() === "POST" &&
+            response.request().postDataJSON().action === "check",
+        );
+        await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+        const response = await checked;
+        assert.equal(response.status(), 200);
+        assert.equal((await response.json()).status, expectedStatus);
+        await page.getByText(expectedCopy, { exact: true }).waitFor();
+        assert.equal(await automaticUpdates.isChecked(), false);
+      }
+      writeFileSync(control, "supported");
+      check("Update checks isolate up-to-date and fixture failure states without changing consent");
+      await automaticUpdates.check();
+      const updatesEnabled = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/updates") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "configure" &&
+          response.request().postDataJSON().automatic_checks === true,
+      );
+      await page
+        .getByRole("button", { name: "Save automatic-check preference", exact: true })
+        .click();
+      assert.equal((await updatesEnabled).status(), 200);
+      const persistedUpdates = await page.request.get(new URL("/api/v1/updates", link).href);
+      assert.equal(persistedUpdates.status(), 200);
+      assert.equal((await persistedUpdates.json()).automatic_checks, true);
+      await automaticUpdates.uncheck();
+      const updatesRevoked = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/updates") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "configure" &&
+          response.request().postDataJSON().automatic_checks === false,
+      );
+      await page
+        .getByRole("button", { name: "Save automatic-check preference", exact: true })
+        .click();
+      assert.equal((await updatesRevoked).status(), 200);
+      check("Settings keeps explicit and automatic update consent separate and revocable");
       assert.match(
         await page.locator("main").innerText(),
         /Local diagnostics[\s\S]*Enabled · 14 days · 50 MB/,

@@ -964,6 +964,28 @@
       "required": ["action"],
       "type": "object"
     },
+    "UpdateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {"enum": ["configure", "check"], "type": "string"},
+        "automatic_checks": {"type": "boolean"}
+      },
+      "required": ["action"],
+      "type": "object"
+    },
+    "UpdateResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic_checks": {"type": "boolean"},
+        "status": {"enum": ["disabled", "never_checked", "unconfigured", "offline", "malformed", "unavailable", "up_to_date", "update_available"], "type": "string"},
+        "current_version": {"type": "string"}, "available_version": {"type": "string"},
+        "release_notes": {"type": "string"}, "download_url": {"type": "string"},
+        "installer_guidance": {"type": "string"}, "checked_at": {"type": "string"},
+        "next_check_at": {"type": "string"}, "error_code": {"type": "string"}
+      },
+      "required": ["automatic_checks", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"],
+      "type": "object"
+    },
     "DiagnosticSettings": {
       "additionalProperties": false,
       "properties": {
@@ -1109,6 +1131,23 @@
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/DiagnosticsRequest"}}}, "required": true},
         "responses": {
           "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/DiagnosticsResponse"}}}, "description": "Persists bounded controls, previews an exact redacted bundle, or confirms that preview for local download."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      }
+    },
+    "/api/v1/updates": {
+      "get": {
+        "operationId": "getUpdates",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UpdateResponse"}}}, "description": "Returns persisted update consent and the last safe check result without contacting a network endpoint."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "manageUpdates",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UpdateRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UpdateResponse"}}}, "description": "Persists separate automatic-check consent or performs one explicit bounded update check."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }

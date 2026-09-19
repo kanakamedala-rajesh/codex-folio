@@ -21,10 +21,11 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "f3dd219c7eba170ef40c50b184dc209bed83ffe72077f1220e7d05f25f0964d2"
+	ContractSourceSHA256   = "1414d85efc156a5829e666bbd6b4001260190380c86015589c525d10dec1d5de"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
 	DiagnosticsPath        = "/api/v1/diagnostics"
+	UpdatesPath            = "/api/v1/updates"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
 	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
@@ -162,6 +163,24 @@ type DiagnosticsResponse struct {
 	MaximumEncodedBytes int64              `json:"maximum_encoded_bytes"`
 	Preview             *DiagnosticPreview `json:"preview,omitempty"`
 	Bundle              *DiagnosticBundle  `json:"bundle,omitempty"`
+}
+
+type UpdateRequest struct {
+	Action          string `json:"action"`
+	AutomaticChecks *bool  `json:"automatic_checks,omitempty"`
+}
+
+type UpdateResponse struct {
+	AutomaticChecks   bool   `json:"automatic_checks"`
+	Status            string `json:"status"`
+	CurrentVersion    string `json:"current_version"`
+	AvailableVersion  string `json:"available_version"`
+	ReleaseNotes      string `json:"release_notes"`
+	DownloadUrl       string `json:"download_url"`
+	InstallerGuidance string `json:"installer_guidance"`
+	CheckedAt         string `json:"checked_at"`
+	NextCheckAt       string `json:"next_check_at"`
+	ErrorCode         string `json:"error_code"`
 }
 
 type ConfigurationDocument struct {
@@ -877,6 +896,65 @@ func (client *Client) manageDiagnostics(ctx context.Context, input DiagnosticsRe
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+DiagnosticsPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) getUpdates(ctx context.Context) (UpdateResponse, *http.Response, error) {
+	var result UpdateResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+UpdatesPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) manageUpdates(ctx context.Context, input UpdateRequest) (UpdateResponse, *http.Response, error) {
+	var result UpdateResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+UpdatesPath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}

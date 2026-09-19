@@ -987,3 +987,29 @@ export const alertsCopy = {
   notices: "Decision-relevant alerts",
   openAlerts: "Open Alerts",
 } as const;
+
+export const updatesCopy = {
+  title: "Updates",
+  automatic: "Check automatically",
+  automaticDetail:
+    "When enabled, CodexFolio may contact its project-controlled release endpoint at most once per day. This consent is separate from service enrollment and telemetry.",
+  save: "Save automatic-check preference",
+  check: "Check for updates",
+  checking: "Checking…",
+  saved: "Update preference saved.",
+  disabled: "Automatic checks are off. No network request is made until you check explicitly.",
+  never_checked: "No update check has been made.",
+  unconfigured:
+    "Update checks are unavailable because no production release endpoint is configured.",
+  offline: "The update service could not be reached. Local features remain available.",
+  malformed: "The update service returned invalid evidence. No download location is shown.",
+  unavailable: "The update service is unavailable. Local features remain available.",
+  up_to_date: "This CodexFolio version is up to date.",
+  update_available: "A newer CodexFolio version is available.",
+  available: "Available version",
+  notes: "Release notes",
+  download: "Verified download location",
+  guidance: "Installer guidance",
+  checked: "Last checked",
+  failed: "The update setting or check could not be completed.",
+} as const;

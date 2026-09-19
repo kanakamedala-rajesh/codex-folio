@@ -24,6 +24,8 @@ import {
   type ProjectIdentity,
   type SelectionResponse,
   type UsageSnapshotResponse,
+  type UpdateRequest,
+  type UpdateResponse,
 } from "./generated/openapi";
 import { alertsCopy, copy as c, serviceHealthCopy, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
@@ -35,6 +37,7 @@ import { CheckpointManagement } from "./CheckpointManagement";
 import { ServiceHealth } from "./ServiceHealth";
 import { Alerts, NotificationPrivacy } from "./Alerts";
 import { Diagnostics } from "./Diagnostics";
+import { Updates } from "./Updates";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -466,6 +469,7 @@ export function App() {
     null,
   );
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
+  const [updates, setUpdates] = useState<UpdateResponse | null>(null);
   const [activeMinutes, setActiveMinutes] = useState(5);
   const [idleMinutes, setIdleMinutes] = useState(30);
   const [combined, setCombined] = useState(false);
@@ -552,6 +556,7 @@ export function App() {
             api.getConfigurationPacks(),
             api.getCollectionSettings(),
             api.getDiagnostics(),
+            api.getUpdates(),
           ])
         : null,
     ]);
@@ -565,6 +570,7 @@ export function App() {
       setPacks(inventory[2].packs);
       setCollectionSettings(inventory[3]);
       setDiagnostics(inventory[4]);
+      setUpdates(inventory[5]);
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
@@ -599,6 +605,24 @@ export function App() {
         headers: { "X-CodexFolio-CSRF": csrf.current },
       });
       setDiagnostics(result);
+      return result;
+    } catch (error) {
+      failure(error);
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function manageUpdates(request: UpdateRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageUpdates(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      setUpdates(result);
       return result;
     } catch (error) {
       failure(error);
@@ -1434,6 +1458,7 @@ export function App() {
                     {diagnostics ? (
                       <Diagnostics data={diagnostics} busy={busy} manage={manageDiagnostics} />
                     ) : null}
+                    {updates ? <Updates data={updates} busy={busy} manage={manageUpdates} /> : null}
                     <section className="border-b border-rule py-6">
                       <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                         {c.backgroundService}

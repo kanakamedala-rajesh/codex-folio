@@ -531,6 +531,38 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 23,
+			name:    "opt-in-update-checks",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE settings ADD COLUMN automatic_update_checks_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_update_checks_enabled IN (0, 1))`,
+					`CREATE TABLE update_check_state (
+						update_check_state_id INTEGER PRIMARY KEY CHECK (update_check_state_id = 1),
+						status TEXT NOT NULL CHECK (status IN ('never_checked', 'unconfigured', 'offline', 'malformed', 'unavailable', 'up_to_date', 'update_available')),
+						current_version TEXT NOT NULL CHECK (length(current_version) <= 64),
+						available_version TEXT NOT NULL DEFAULT '' CHECK (length(available_version) <= 64),
+						release_notes TEXT NOT NULL DEFAULT '' CHECK (length(release_notes) <= 8192),
+						download_url TEXT NOT NULL DEFAULT '' CHECK (length(download_url) <= 2048),
+						installer_guidance TEXT NOT NULL DEFAULT '' CHECK (length(installer_guidance) <= 4096),
+						checked_at TEXT,
+						next_check_at TEXT,
+						error_code TEXT NOT NULL DEFAULT '' CHECK (error_code IN ('', 'UPDATE_SOURCE_UNCONFIGURED', 'UPDATE_SOURCE_OFFLINE', 'UPDATE_SOURCE_MALFORMED', 'UPDATE_SOURCE_UNAVAILABLE')),
+						CHECK (
+							(status = 'never_checked' AND current_version = '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NULL AND next_check_at IS NULL AND error_code = '') OR
+							(status = 'up_to_date' AND current_version <> '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code = '') OR
+							(status = 'update_available' AND current_version <> '' AND available_version <> '' AND release_notes <> '' AND download_url <> '' AND installer_guidance <> '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code = '') OR
+							(status IN ('unconfigured', 'offline', 'malformed', 'unavailable') AND current_version <> '' AND available_version = '' AND release_notes = '' AND download_url = '' AND installer_guidance = '' AND checked_at IS NOT NULL AND next_check_at IS NOT NULL AND error_code <> '')
+						)
+					)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -800,7 +832,8 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
+	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},

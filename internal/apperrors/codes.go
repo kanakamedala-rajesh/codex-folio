@@ -65,6 +65,7 @@ const (
 	DiagnosticsRequestInvalid                = "CF_DIAGNOSTICS_REQUEST_INVALID"
 	DiagnosticsConfirmationInvalid           = "CF_DIAGNOSTICS_CONFIRMATION_INVALID"
 	DiagnosticsExportFailed                  = "CF_DIAGNOSTICS_EXPORT_FAILED"
+	UpdateRequestInvalid                     = "CF_UPDATES_REQUEST_INVALID"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
 	PlatformStatePathUnsafe                  = "CF_PLATFORM_STATE_PATH_UNSAFE"
 	PlatformPermissionDenied                 = "CF_PLATFORM_PERMISSION_DENIED"
@@ -197,6 +198,7 @@ func IsRegistered(code string) bool {
 		DiagnosticsRequestInvalid,
 		DiagnosticsConfirmationInvalid,
 		DiagnosticsExportFailed,
+		UpdateRequestInvalid,
 		PlatformStatePathInvalid,
 		PlatformStatePathUnsafe,
 		PlatformPermissionDenied,

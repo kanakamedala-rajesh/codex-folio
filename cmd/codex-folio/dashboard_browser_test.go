@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,14 +20,17 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	updatesadapter "venkatasudha.com/codex-folio/internal/adapters/updates"
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/continuation"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
@@ -36,6 +41,21 @@ type dashboardProfileAuthenticator struct{ control string }
 type dashboardCheckpointHistory struct{ calls *atomic.Int64 }
 
 type dashboardProcessInspector struct{ bootSessionID string }
+
+type dashboardUpdateTransport struct {
+	control  string
+	attempts *atomic.Int64
+	next     http.RoundTripper
+}
+
+func (transport dashboardUpdateTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.attempts.Add(1)
+	mode, _ := os.ReadFile(transport.control)
+	if string(mode) == "update-offline" {
+		return nil, fmt.Errorf("recording update fixture is offline")
+	}
+	return transport.next.RoundTrip(request)
+}
 
 func (inspector dashboardProcessInspector) BootSessionID() (string, error) {
 	return inspector.bootSessionID, nil
@@ -427,7 +447,37 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	var updateRequests atomic.Int64
+	updateFixture := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		mode, _ := os.ReadFile(control)
+		switch string(mode) {
+		case "update-malformed":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{malformed`)
+			return
+		case "update-unavailable":
+			http.Error(response, "fixture unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		version := "0.0.2-alpha"
+		if string(mode) == "update-up-to-date" {
+			version = buildinfo.Version
+		}
+		_, _ = fmt.Fprintf(response, `{"schema_version":1,"version":%q,"release_notes":"Recording fixture release notes.","download_url":%q,"installer_guidance":"Download and run the platform installer."}`, version, "https://"+request.Host+"/downloads/"+version+"/")
+	}))
+	defer updateFixture.Close()
+	updateClient := updateFixture.Client()
+	updateClient.Transport = dashboardUpdateTransport{control: control, attempts: &updateRequests, next: updateClient.Transport}
+	updateSource, err := updatesadapter.NewHTTPSSource(updatesadapter.HTTPSOptions{ManifestURL: updateFixture.URL + "/manifest.json", AllowedDownloadPrefix: updateFixture.URL + "/downloads/", Client: updateClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateService, err := updates.NewService(updates.ServiceOptions{Repository: state, Source: updateSource, Clock: clock, CurrentVersion: buildinfo.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
 	}})
 	if err != nil {
@@ -691,6 +741,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	runner.Stderr = os.Stderr
 	runnerErr := runner.Run()
 	if suite == "deep" {
+		if got := updateRequests.Load(); got != 5 {
+			t.Fatalf("update manifest requests = %d, want exactly five explicit fixture requests", got)
+		}
 		select {
 		case elapsed := <-warmLaunchOverhead:
 			t.Logf("warm managed-launch overhead %s: warm loopback service and CLI entry through persisted successful process-start reporting on native %s/%s; canonical non-host checks remain compile-only", elapsed, runtime.GOOS, runtime.GOARCH)

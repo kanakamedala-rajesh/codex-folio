@@ -78,7 +78,10 @@ jobs:
           # The file-based Keychain's default/search-list preferences are
           # shared by the macOS test processes. Keep native packages from
           # overwriting one another's test Keychain configuration.
-          GOFLAGS: ${{ matrix.runner == 'macos-15' && '-p=1' || '' }}
+          # Windows SQLite durability tests also share the runner's filesystem
+          # flush capacity, so serialize packages there to avoid flush
+          # saturation without weakening durability assertions or timeouts.
+          GOFLAGS: ${{ (matrix.runner == 'macos-15' || matrix.runner == 'windows-latest') && '-p=1' || '' }}
         run: node scripts/verify.mjs --suite native
 
   web:

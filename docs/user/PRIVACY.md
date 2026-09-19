@@ -13,10 +13,13 @@ or issue reports. The local browser service is designed for loopback access,
 not exposure through a public tunnel or a router port-forward.
 
 Local-first does not mean offline-only. Installed Codex may contact OpenAI and
-consume account usage. Product plans describe opt-in CodexFolio remote telemetry,
-but that is not a statement that telemetry is already shipped. Any later telemetry
-or update feature must document actual endpoints, payload fields, consent,
-retention, and deletion behavior before it is enabled.
+consume account usage. CodexFolio update checks are separately consented: an
+explicit check authorizes one request, while automatic checks require a
+persisted opt-in that can be revoked. They request only a bounded version,
+release-note, verified-download-location, and installer-guidance manifest from
+a compiled project-controlled HTTPS endpoint. The development build has no
+production endpoint configured. Telemetry is not shipped, and update consent
+does not enable it.
 
 ## Data classes and retention
 
@@ -33,6 +36,7 @@ retention, and deletion behavior before it is enabled.
 | Native notifications | Generic text by default. A separate per-device preference may allow Identity Profile aliases, capacity, and guidance on OS-managed notification surfaces, including shared or locked screens |
 | Local diagnostics | Enabled by default; stable component/error aggregates retain 14 days by default, with a configurable 1–30 day limit and independent disable/severity controls |
 | Diagnostic support bundles | Created only after local preview and confirmation; written to a destination the user chooses and never uploaded automatically |
+| Update checks | Off by default; explicit checks are one-shot, automatic checks require separate revocable consent, and only bounded release metadata is retained |
 
 The analytics implementation processes bounded maintenance batches; it does not
 promise that every expired row disappears immediately. No periodic scheduler is

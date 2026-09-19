@@ -774,6 +774,35 @@ sessions, Codex or repository content, credentials, command arguments,
 analytics, checkpoints, and configuration payloads. CodexFolio neither uploads
 the bundle nor opens a support issue.
 
+## Consent-gated update checks
+
+Update network access is off by default. The dashboard's **Check for updates**
+action and `codex-folio updates check` perform one bounded manifest request;
+neither action enrolls future checks or enables telemetry. Automatic checks use
+a separately persisted preference:
+
+```sh
+./build/bin/codex-folio updates status --json
+./build/bin/codex-folio updates check
+./build/bin/codex-folio updates settings --automatic true
+./build/bin/codex-folio updates settings --automatic false
+```
+
+When enabled and the explicitly enrolled background service is running, a persisted due time limits
+successful checks to once per 24 hours and failed checks to a one-hour retry.
+Revocation prevents later automatic requests. The manifest contract is strict,
+bounded JSON over HTTPS. Both the manifest URL and download path must match the
+compiled project-controlled allowlist; redirects, unknown fields, malformed
+versions, and off-allowlist destinations fail closed. CodexFolio fetches only
+metadata. It never downloads or opens the reported artifact, replaces the
+running executable, runs an installer, updates Codex, or claims signing or
+deployment verification.
+
+This development build intentionally has no configured production release
+endpoint. Status and checks therefore report `unconfigured` without disrupting
+local features. Recording HTTPS fixtures qualify the adapter behavior but are
+not evidence of a live production update service.
+
 ## JSON output and stable errors
 
 Commands that support `--json` write structured data to stdout and diagnostics

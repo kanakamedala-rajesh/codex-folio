@@ -186,6 +186,13 @@ In the dashboard:
   enabled at Info level for 14 days, with a 50 MB bundle ceiling. Preview the
   exact redacted field list and record count before choosing **Download
   reviewed JSON**; canceling downloads nothing.
+- **Settings → Updates** keeps network access off by default. **Check for
+  updates** performs one check and does not enable later checks. The separate
+  **Check automatically** preference can be saved or revoked at any time.
+  Valid evidence may show only the available version, release notes, verified
+  download location, and installer guidance; CodexFolio never downloads,
+  executes, or installs the update. Development builds report the production
+  source as unconfigured until a release endpoint is approved.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
@@ -254,6 +261,19 @@ destination:
 ./build/bin/codex-folio diagnostics export --dry-run
 ./build/bin/codex-folio diagnostics export --output ./codex-folio-diagnostics.json
 ```
+
+Check update state or manage the separate network consent from the CLI:
+
+```sh
+./build/bin/codex-folio updates status
+./build/bin/codex-folio updates check
+./build/bin/codex-folio updates settings --automatic true
+./build/bin/codex-folio updates settings --automatic false
+```
+
+The explicit check never changes the automatic preference. Until a
+project-controlled production endpoint is configured, checks safely report
+`unconfigured` and local features continue normally.
 
 The export command requires the displayed confirmation and never replaces an
 existing file. It does not upload, open an issue, enable telemetry, or include

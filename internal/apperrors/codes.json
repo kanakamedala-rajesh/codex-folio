@@ -368,6 +368,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_UPDATES_REQUEST_INVALID",
+      "owner": "updates",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PLATFORM_STATE_PATH_INVALID",
       "owner": "platform",
       "lifecycle": "active",

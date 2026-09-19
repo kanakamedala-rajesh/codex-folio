@@ -3,10 +3,11 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "f3dd219c7eba170ef40c50b184dc209bed83ffe72077f1220e7d05f25f0964d2" as const;
+  "1414d85efc156a5829e666bbd6b4001260190380c86015589c525d10dec1d5de" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
+export const UpdatesPath = "/api/v1/updates" as const;
 
 export interface AlertRecord {
   alert_id: string;
@@ -135,6 +136,24 @@ export interface DiagnosticsResponse {
   maximum_encoded_bytes: number;
   preview?: DiagnosticPreview;
   bundle?: DiagnosticBundle;
+}
+
+export interface UpdateRequest {
+  action: string;
+  automatic_checks?: boolean;
+}
+
+export interface UpdateResponse {
+  automatic_checks: boolean;
+  status: string;
+  current_version: string;
+  available_version: string;
+  release_notes: string;
+  download_url: string;
+  installer_guidance: string;
+  checked_at: string;
+  next_check_at: string;
+  error_code: string;
 }
 
 export interface HistoryScope {
@@ -811,6 +830,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/updates": {
+    get: {
+      operationId: "getUpdates";
+      responses: {
+        200: { content: { "application/json": UpdateResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageUpdates";
+      requestBody: UpdateRequest;
+      responses: {
+        200: { content: { "application/json": UpdateResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/diagnostics": {
     get: {
       operationId: "getDiagnostics";
@@ -1028,6 +1064,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getUpdates(init?: RequestInit): Promise<UpdateResponse>;
+  manageUpdates(request: UpdateRequest, init?: RequestInit): Promise<UpdateResponse>;
   getDiagnostics(init?: RequestInit): Promise<DiagnosticsResponse>;
   manageDiagnostics(request: DiagnosticsRequest, init?: RequestInit): Promise<DiagnosticsResponse>;
   getAlerts(init?: RequestInit): Promise<AlertsResponse>;
@@ -1076,6 +1114,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getUpdates(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/updates", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UpdateResponse;
+    },
+    async manageUpdates(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/updates", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as UpdateResponse;
+    },
     async getDiagnostics(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

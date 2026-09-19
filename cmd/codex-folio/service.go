@@ -20,6 +20,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	updatesadapter "venkatasudha.com/codex-folio/internal/adapters/updates"
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
@@ -29,6 +30,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
@@ -561,12 +563,19 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		Alerts:            alertService,
 		DiagnosticService: diagnosticService,
 	}
+	updateService, err := updates.NewService(updates.ServiceOptions{
+		Repository: stateStore, Source: updatesadapter.DisabledSource(), Clock: usageClock{}, CurrentVersion: buildinfo.Version,
+	})
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	services.Updates = updateService
 	if deliveryEnabled {
 		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
 		if err != nil {
 			return httpapi.OperationalServices{}, err
 		}
-		services.Background = startCollectionScheduler(scheduler)
+		services.Background = &serviceCloserGroup{closers: []serviceCloser{startUpdateScheduler(updateService), startCollectionScheduler(scheduler)}}
 	}
 	return services, nil
 }
@@ -601,6 +610,7 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
 		Alerts:            services.Alerts,
 		DiagnosticService: services.DiagnosticService,
+		Updates:           services.Updates,
 		CommandToken:      commandToken,
 	}
 }
@@ -625,6 +635,10 @@ func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagno
 			if err != nil {
 				return diagnostics.BundleEnvironment{}, err
 			}
+			updateSettings, err := stateStore.UpdateSettings(ctx)
+			if err != nil {
+				return diagnostics.BundleEnvironment{}, err
+			}
 			return diagnostics.BundleEnvironment{
 				ApplicationVersion:    buildinfo.Version,
 				DatabaseSchemaVersion: stateStore.SchemaVersion(),
@@ -632,7 +646,7 @@ func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagno
 				Architecture:          diagnostics.Architecture(runtime.GOARCH),
 				Features: diagnostics.FeatureStates{
 					Service: serviceEnabled, DetailedAlerts: preference.DetailEnabled,
-					AutomaticUpdates: false, Telemetry: false,
+					AutomaticUpdates: updateSettings.AutomaticChecks, Telemetry: false,
 				},
 				Health: diagnostics.Health{
 					Service: diagnostics.HealthHealthy, Database: diagnostics.HealthHealthy, Vault: diagnostics.HealthHealthy,
