@@ -47,6 +47,7 @@ const (
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
 	CommandCollectionSettingsPath    = "/api/v1/command/collection-settings"
+	CommandDiagnosticsPath           = "/api/v1/command/diagnostics"
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
@@ -130,6 +131,7 @@ type OperationalServices struct {
 	Checkpoints           CommandCheckpointService
 	CheckpointHistory     BrowserCheckpointHistory
 	Alerts                *alerts.Service
+	DiagnosticService     *diagnostics.Service
 }
 
 // Options configures the local browser service. Random is used only for
@@ -157,6 +159,7 @@ type Options struct {
 	Checkpoints           CommandCheckpointService
 	CheckpointHistory     BrowserCheckpointHistory
 	Alerts                *alerts.Service
+	DiagnosticService     *diagnostics.Service
 	CommandToken          string
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
@@ -196,6 +199,7 @@ type Server struct {
 	checkpoints           CommandCheckpointService
 	checkpointHistory     BrowserCheckpointHistory
 	alerts                *alerts.Service
+	diagnosticService     *diagnostics.Service
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
 	serviceEnrollment     ServiceEnrollmentHealth
@@ -284,6 +288,7 @@ func NewServer(options Options) (*Server, error) {
 		checkpoints:           options.Checkpoints,
 		checkpointHistory:     options.CheckpointHistory,
 		alerts:                options.Alerts,
+		diagnosticService:     options.DiagnosticService,
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
 		serviceEnrollment:     options.ServiceEnrollment,
@@ -614,6 +619,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.collectionSettingsHandler(response, request)
+	case CommandDiagnosticsPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.diagnosticsHandler(response, request)
 	case CommandAnalyticsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -724,6 +734,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.collectionSettingsHandler(response, request)
+	case DiagnosticsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.diagnosticsHandler(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1234,6 +1253,7 @@ func (server *Server) Activate(services OperationalServices) error {
 	server.checkpoints = services.Checkpoints
 	server.checkpointHistory = services.CheckpointHistory
 	server.alerts = services.Alerts
+	server.diagnosticService = services.DiagnosticService
 	server.operational.Store(true)
 	return nil
 }

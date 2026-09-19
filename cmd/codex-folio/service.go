@@ -22,6 +22,7 @@ import (
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
@@ -545,6 +546,10 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		return httpapi.OperationalServices{}, err
 	}
 	launches.continuations = checkpoints
+	diagnosticService, err := newDiagnosticService(stateStore, deliveryEnabled)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
 	services := httpapi.OperationalServices{
 		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
@@ -554,6 +559,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		Checkpoints:       checkpoints,
 		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
 		Alerts:            alertService,
+		DiagnosticService: diagnosticService,
 	}
 	if deliveryEnabled {
 		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
@@ -593,8 +599,9 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		CollectionSettings: services.CollectionSettings,
 		Projects:           services.Projects, Activities: services.Activities, History: services.History,
 		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
-		Alerts:       services.Alerts,
-		CommandToken: commandToken,
+		Alerts:            services.Alerts,
+		DiagnosticService: services.DiagnosticService,
+		CommandToken:      commandToken,
 	}
 }
 
@@ -608,6 +615,31 @@ func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profil
 
 func newConfigurationPackService(stateStore *store.Store) (*configpack.Service, error) {
 	return configpack.NewService(stateStore, configpack.NewProjector(nil))
+}
+
+func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagnostics.Service, error) {
+	return diagnostics.NewService(diagnostics.ServiceOptions{
+		Repository: stateStore,
+		Environment: func(ctx context.Context) (diagnostics.BundleEnvironment, error) {
+			preference, err := stateStore.NotificationPreference(ctx)
+			if err != nil {
+				return diagnostics.BundleEnvironment{}, err
+			}
+			return diagnostics.BundleEnvironment{
+				ApplicationVersion:    buildinfo.Version,
+				DatabaseSchemaVersion: stateStore.SchemaVersion(),
+				OSFamily:              diagnostics.OSFamily(runtime.GOOS),
+				Architecture:          diagnostics.Architecture(runtime.GOARCH),
+				Features: diagnostics.FeatureStates{
+					Service: serviceEnabled, DetailedAlerts: preference.DetailEnabled,
+					AutomaticUpdates: false, Telemetry: false,
+				},
+				Health: diagnostics.Health{
+					Service: diagnostics.HealthHealthy, Database: diagnostics.HealthHealthy, Vault: diagnostics.HealthHealthy,
+				},
+			}, nil
+		},
+	})
 }
 
 func newCommandToken() (string, error) {
@@ -1089,6 +1121,12 @@ func serviceRemediation(code string) string {
 		return "the local diagnostics configuration is invalid"
 	case apperrors.DiagnosticsEventInvalid:
 		return "the diagnostic event was rejected"
+	case apperrors.DiagnosticsRequestInvalid:
+		return "the local diagnostics request is invalid"
+	case apperrors.DiagnosticsConfirmationInvalid:
+		return "preview the diagnostic bundle again and confirm that exact preview"
+	case apperrors.DiagnosticsExportFailed:
+		return "the local diagnostic bundle could not be exported; the destination was preserved"
 	case apperrors.PlatformStatePathInvalid:
 		return "state root must be an absolute path"
 	case apperrors.PlatformStatePathUnsafe:

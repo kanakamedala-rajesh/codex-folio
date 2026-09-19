@@ -747,6 +747,74 @@ try {
         "45",
       );
       check("Settings persists bounded collection intervals without enrolling the service");
+      assert.match(
+        await page.locator("main").innerText(),
+        /Local diagnostics[\s\S]*Enabled · 14 days · 50 MB/,
+      );
+      const diagnosticSettings = page.locator('section[aria-labelledby="diagnostics-title"]');
+      await diagnosticSettings.getByLabel("Collect local diagnostics", { exact: true }).uncheck();
+      await diagnosticSettings.locator("select").selectOption("warning");
+      await diagnosticSettings.locator('input[type="number"]').fill("7");
+      const diagnosticsSaved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/diagnostics") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "configure",
+      );
+      await page.getByRole("button", { name: "Save diagnostic settings", exact: true }).click();
+      assert.equal((await diagnosticsSaved).status(), 200);
+      await page
+        .getByText("Diagnostic settings saved. Any earlier preview was discarded.", {
+          exact: true,
+        })
+        .waitFor();
+      const diagnosticsPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/diagnostics") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "preview",
+      );
+      await page.getByRole("button", { name: "Preview diagnostic export", exact: true }).click();
+      const previewPayload = await (await diagnosticsPreviewed).json();
+      assert.equal(previewPayload.settings.enabled, false);
+      assert.equal(previewPayload.settings.minimum_level, "warning");
+      assert.equal(previewPayload.settings.retention_days, 7);
+      assert.ok(previewPayload.preview.confirmation_digest);
+      assert.match(
+        await page.locator("main").innerText(),
+        /Diagnostic export preview[\s\S]*Excluded: identities/,
+      );
+      await page.getByRole("button", { name: "Cancel preview", exact: true }).click();
+      assert.equal(
+        await page.getByRole("heading", { name: "Diagnostic export preview" }).count(),
+        0,
+      );
+      const diagnosticsPreviewedAgain = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/diagnostics") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "preview",
+      );
+      await page.getByRole("button", { name: "Preview diagnostic export", exact: true }).click();
+      const secondPreviewPayload = await (await diagnosticsPreviewedAgain).json();
+      await page.getByRole("heading", { name: "Diagnostic export preview" }).waitFor();
+      const diagnosticsExported = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/diagnostics") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "export",
+      );
+      const diagnosticDownload = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Download reviewed JSON", exact: true }).click();
+      assert.equal((await diagnosticsExported).status(), 200);
+      const downloadedDiagnostics = await diagnosticDownload;
+      assert.equal(downloadedDiagnostics.suggestedFilename(), "codex-folio-diagnostics.json");
+      const diagnosticBody = readFileSync(await downloadedDiagnostics.path(), "utf8");
+      assert.doesNotMatch(diagnosticBody, /Work|repository|arguments|analytics|checkpoint/);
+      assert.match(diagnosticBody, /"schema_version": 1/);
+      assert.deepEqual(JSON.parse(diagnosticBody), secondPreviewPayload.preview.bundle);
+      await scanAccessibility("diagnostics-settings");
+      check("Settings persists independent diagnostic controls and previews before local download");
       await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
       assert.match(await page.locator("main").innerText(), /Completed/);
       assert.match(await page.locator("main").innerText(), /Retained/);

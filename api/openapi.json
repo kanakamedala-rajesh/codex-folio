@@ -963,6 +963,96 @@
       },
       "required": ["action"],
       "type": "object"
+    },
+    "DiagnosticSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "minimum_level": {"enum": ["info", "warning", "error"], "type": "string"},
+        "retention_days": {"minimum": 1, "maximum": 30, "type": "integer"}
+      },
+      "required": ["enabled", "minimum_level", "retention_days"],
+      "type": "object"
+    },
+    "DiagnosticFeatureStates": {
+      "additionalProperties": false,
+      "properties": {
+        "service": {"type": "boolean"}, "detailed_alerts": {"type": "boolean"},
+        "automatic_updates": {"type": "boolean"}, "telemetry": {"type": "boolean"}
+      },
+      "required": ["service", "detailed_alerts", "automatic_updates", "telemetry"],
+      "type": "object"
+    },
+    "DiagnosticHealth": {
+      "additionalProperties": false,
+      "properties": {
+        "service": {"type": "string"}, "database": {"type": "string"},
+        "vault": {"type": "string"}, "error_code": {"type": "string"}
+      },
+      "required": ["service", "database", "vault"],
+      "type": "object"
+    },
+    "DiagnosticEnvironment": {
+      "additionalProperties": false,
+      "properties": {
+        "application_version": {"type": "string"}, "database_schema_version": {"type": "integer"},
+        "os_family": {"enum": ["linux", "windows", "darwin"], "type": "string"},
+        "architecture": {"enum": ["amd64", "arm64"], "type": "string"},
+        "features": {"$ref": "#/$defs/DiagnosticFeatureStates"},
+        "health": {"$ref": "#/$defs/DiagnosticHealth"}
+      },
+      "required": ["application_version", "database_schema_version", "os_family", "architecture", "features", "health"],
+      "type": "object"
+    },
+    "DiagnosticRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "component": {"type": "string"}, "error_code": {"type": "string"},
+        "severity": {"enum": ["info", "warning", "error"], "type": "string"},
+        "occurrence_count": {"type": "integer"}, "first_seen_at": {"type": "string"}, "last_seen_at": {"type": "string"}
+      },
+      "required": ["id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"],
+      "type": "object"
+    },
+    "DiagnosticBundle": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"type": "integer"}, "generated_at": {"type": "string"},
+        "settings": {"$ref": "#/$defs/DiagnosticSettings"},
+        "environment": {"$ref": "#/$defs/DiagnosticEnvironment"},
+        "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/DiagnosticRecord"}}
+      },
+      "required": ["schema_version", "generated_at", "settings", "environment", "diagnostics"],
+      "type": "object"
+    },
+    "DiagnosticPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "fields": {"type": "array", "items": {"type": "string"}},
+        "diagnostic_count": {"type": "integer"}, "encoded_bytes": {"type": "integer"},
+        "confirmation_digest": {"type": "string"}, "bundle": {"$ref": "#/$defs/DiagnosticBundle"}
+      },
+      "required": ["fields", "diagnostic_count", "encoded_bytes", "confirmation_digest", "bundle"],
+      "type": "object"
+    },
+    "DiagnosticsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {"enum": ["settings", "configure", "preview", "export"], "type": "string"},
+        "settings": {"$ref": "#/$defs/DiagnosticSettings"}, "confirmation": {"type": "string"}
+      },
+      "required": ["action"],
+      "type": "object"
+    },
+    "DiagnosticsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "settings": {"$ref": "#/$defs/DiagnosticSettings"},
+        "maximum_encoded_bytes": {"type": "integer"},
+        "preview": {"$ref": "#/$defs/DiagnosticPreview"}, "bundle": {"$ref": "#/$defs/DiagnosticBundle"}
+      },
+      "required": ["settings", "maximum_encoded_bytes"],
+      "type": "object"
     }
   },
   "info": {
@@ -1002,6 +1092,23 @@
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsRequest"}}}, "required": true},
         "responses": {
           "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsResponse"}}}, "description": "Persists bounded active and idle intervals without enrolling a service."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      }
+    },
+    "/api/v1/diagnostics": {
+      "get": {
+        "operationId": "getDiagnostics",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/DiagnosticsResponse"}}}, "description": "Returns persisted bounded local diagnostic settings."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "manageDiagnostics",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/DiagnosticsRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/DiagnosticsResponse"}}}, "description": "Persists bounded controls, previews an exact redacted bundle, or confirms that preview for local download."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }

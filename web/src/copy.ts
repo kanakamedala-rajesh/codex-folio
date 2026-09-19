@@ -156,6 +156,38 @@ export const serviceHealthCopy = {
   ready: "Unlocked for this service session · Database ready",
   locked: "Locked after reboot",
 } as const;
+
+export const diagnosticsCopy = {
+  title: "Local diagnostics",
+  enabled: "Enabled",
+  disabled: "Disabled",
+  days: "days",
+  detail:
+    "Stores bounded operational component and error-code records on this device. Preview the exact redacted support bundle before downloading it.",
+  collect: "Collect local diagnostics",
+  minimumLevel: "Minimum level",
+  info: "Info",
+  warning: "Warning",
+  error: "Error",
+  retention: "Retention days",
+  save: "Save diagnostic settings",
+  saving: "Saving diagnostic settings.",
+  saved: "Diagnostic settings saved. Any earlier preview was discarded.",
+  failed: "Diagnostics were not changed or downloaded.",
+  preview: "Preview diagnostic export",
+  preparing: "Preparing a redacted local preview.",
+  previewReady: "Preview ready. Review it before downloading.",
+  previewTitle: "Diagnostic export preview",
+  records: "records",
+  bytes: "bytes",
+  exclusions:
+    "Excluded: identities, workspaces, projects, paths, usage, sessions, Codex and repository content, credentials, arguments, analytics, checkpoints, and configuration payloads.",
+  download: "Download reviewed JSON",
+  exporting: "Confirming the reviewed preview.",
+  exported: "Reviewed diagnostic bundle downloaded locally.",
+  cancel: "Cancel preview",
+  cancelled: "Preview cancelled. Nothing was downloaded.",
+} as const;
 export const stateCopy: Record<string, string> = {
   ready: "Ready",
   pending: "Pending",

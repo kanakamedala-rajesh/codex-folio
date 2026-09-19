@@ -3,9 +3,10 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "28e741f10bb13c1f8dececc5bb1ef918d94790bb7cbfbe69961c3f17419d840f" as const;
+  "f3dd219c7eba170ef40c50b184dc209bed83ffe72077f1220e7d05f25f0964d2" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
+export const DiagnosticsPath = "/api/v1/diagnostics" as const;
 
 export interface AlertRecord {
   alert_id: string;
@@ -66,6 +67,74 @@ export interface AlertActionRequest {
   warning_percent?: number;
   critical_percent?: number;
   detailed_content_enabled?: boolean;
+}
+
+export interface DiagnosticSettings {
+  enabled: boolean;
+  minimum_level: string;
+  retention_days: number;
+}
+
+export interface DiagnosticFeatureStates {
+  service: boolean;
+  detailed_alerts: boolean;
+  automatic_updates: boolean;
+  telemetry: boolean;
+}
+
+export interface DiagnosticHealth {
+  service: string;
+  database: string;
+  vault: string;
+  error_code?: string;
+}
+
+export interface DiagnosticEnvironment {
+  application_version: string;
+  database_schema_version: number;
+  os_family: string;
+  architecture: string;
+  features: DiagnosticFeatureStates;
+  health: DiagnosticHealth;
+}
+
+export interface DiagnosticRecord {
+  id: string;
+  component: string;
+  error_code: string;
+  severity: string;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface DiagnosticBundle {
+  schema_version: number;
+  generated_at: string;
+  settings: DiagnosticSettings;
+  environment: DiagnosticEnvironment;
+  diagnostics: DiagnosticRecord[];
+}
+
+export interface DiagnosticPreview {
+  fields: string[];
+  diagnostic_count: number;
+  encoded_bytes: number;
+  confirmation_digest: string;
+  bundle: DiagnosticBundle;
+}
+
+export interface DiagnosticsRequest {
+  action: string;
+  settings?: DiagnosticSettings;
+  confirmation?: string;
+}
+
+export interface DiagnosticsResponse {
+  settings: DiagnosticSettings;
+  maximum_encoded_bytes: number;
+  preview?: DiagnosticPreview;
+  bundle?: DiagnosticBundle;
 }
 
 export interface HistoryScope {
@@ -742,6 +811,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/diagnostics": {
+    get: {
+      operationId: "getDiagnostics";
+      responses: {
+        200: { content: { "application/json": DiagnosticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageDiagnostics";
+      requestBody: DiagnosticsRequest;
+      responses: {
+        200: { content: { "application/json": DiagnosticsResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/alerts": {
     get: {
       operationId: "getAlerts";
@@ -942,6 +1028,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getDiagnostics(init?: RequestInit): Promise<DiagnosticsResponse>;
+  manageDiagnostics(request: DiagnosticsRequest, init?: RequestInit): Promise<DiagnosticsResponse>;
   getAlerts(init?: RequestInit): Promise<AlertsResponse>;
   manageAlerts(request: AlertActionRequest, init?: RequestInit): Promise<AlertsResponse>;
   getConfigurationPacks(init?: RequestInit): Promise<ConfigurationPackResponse>;
@@ -988,6 +1076,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getDiagnostics(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/diagnostics", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as DiagnosticsResponse;
+    },
+    async manageDiagnostics(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/diagnostics", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as DiagnosticsResponse;
+    },
     async getAlerts(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

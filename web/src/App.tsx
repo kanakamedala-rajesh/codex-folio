@@ -11,6 +11,8 @@ import {
   type ConfigurationPackSummary,
   type CheckpointManagementResponse,
   type CollectionSettingsResponse,
+  type DiagnosticsRequest,
+  type DiagnosticsResponse,
   type HandoffRequest,
   type HandoffResponse,
   type MetadataResponse,
@@ -32,6 +34,7 @@ import { Handoff } from "./Handoff";
 import { CheckpointManagement } from "./CheckpointManagement";
 import { ServiceHealth } from "./ServiceHealth";
 import { Alerts, NotificationPrivacy } from "./Alerts";
+import { Diagnostics } from "./Diagnostics";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -462,6 +465,7 @@ export function App() {
   const [collectionSettings, setCollectionSettings] = useState<CollectionSettingsResponse | null>(
     null,
   );
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
   const [activeMinutes, setActiveMinutes] = useState(5);
   const [idleMinutes, setIdleMinutes] = useState(30);
   const [combined, setCombined] = useState(false);
@@ -547,6 +551,7 @@ export function App() {
             api.listProfileQuarantine(),
             api.getConfigurationPacks(),
             api.getCollectionSettings(),
+            api.getDiagnostics(),
           ])
         : null,
     ]);
@@ -559,6 +564,7 @@ export function App() {
       setQuarantined(inventory[1].quarantined);
       setPacks(inventory[2].packs);
       setCollectionSettings(inventory[3]);
+      setDiagnostics(inventory[4]);
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
@@ -578,6 +584,24 @@ export function App() {
     } catch (error) {
       failure(error);
       setMessage(alertsCopy.failed);
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function manageDiagnostics(request: DiagnosticsRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageDiagnostics(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      setDiagnostics(result);
+      return result;
+    } catch (error) {
+      failure(error);
       throw error;
     } finally {
       operation.current = false;
@@ -1406,6 +1430,9 @@ export function App() {
                     </section>
                     {alerts ? (
                       <NotificationPrivacy data={alerts} busy={busy} manage={manageAlerts} />
+                    ) : null}
+                    {diagnostics ? (
+                      <Diagnostics data={diagnostics} busy={busy} manage={manageDiagnostics} />
                     ) : null}
                     <section className="border-b border-rule py-6">
                       <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">

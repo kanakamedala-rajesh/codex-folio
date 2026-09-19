@@ -60,7 +60,7 @@ to judge typography: view it at native width and scroll.
 | `capacity` | Six Analytics tabs, 13-month chart with gaps, identical semantic table and narrow disclosures |
 | `compare` | Explicit Combined Identity View; unchanged Selected Profile; separate per-profile windows and API units |
 | `alerts` | Active/history navigation, acknowledgement specimen, thresholds, generic notification default, delivery failure |
-| `settings` | System/light/dark, locale, service, retention, vault, recovery, diagnostics, updates, unavailable telemetry, portability, disabled experiments |
+| `settings` | System/light/dark, locale, service, retention, vault, recovery, local diagnostics (`Enabled · 14 days · 50 MB`) with `Preview diagnostic export`, updates, unavailable telemetry, portability, disabled experiments |
 | `handoff` | Running source blocks approval; six fields, save/cancel, separate assistance consent |
 | `handoff-ready` | Stopped source, eligible target, revision-bound approval, edit/cancel and revalidation before launch |
 | `empty` | No Selected Profile, no capacity/history or alternatives, explicit setup action |

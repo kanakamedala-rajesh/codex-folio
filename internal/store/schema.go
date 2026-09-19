@@ -486,6 +486,51 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 22,
+			name:    "bounded-local-diagnostics",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`CREATE TABLE settings_v22 (
+						settings_id INTEGER PRIMARY KEY CHECK (settings_id = 1),
+						analytics_retention_mode TEXT NOT NULL DEFAULT 'default' CHECK (analytics_retention_mode IN ('default', 'days', 'unlimited')),
+						analytics_retention_days INTEGER CHECK (analytics_retention_days IS NULL OR analytics_retention_days >= 30),
+						diagnostics_retention_days INTEGER NOT NULL DEFAULT 14 CHECK (diagnostics_retention_days BETWEEN 1 AND 30),
+						locale TEXT,
+						appearance TEXT CHECK (appearance IS NULL OR appearance IN ('system', 'light', 'dark')),
+						service_enabled INTEGER CHECK (service_enabled IS NULL OR service_enabled IN (0, 1)),
+						experimental_features_enabled INTEGER CHECK (experimental_features_enabled IS NULL OR experimental_features_enabled IN (0, 1)),
+						updated_at TEXT NOT NULL,
+						checkpoint_repository_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_repository_retention_mode IN ('days', 'unlimited')),
+						checkpoint_repository_retention_days INTEGER DEFAULT 30 CHECK (checkpoint_repository_retention_days IS NULL OR checkpoint_repository_retention_days >= 1),
+						checkpoint_transcript_retention_mode TEXT NOT NULL DEFAULT 'days' CHECK (checkpoint_transcript_retention_mode IN ('days', 'unlimited')),
+						checkpoint_transcript_retention_days INTEGER DEFAULT 7 CHECK (checkpoint_transcript_retention_days IS NULL OR checkpoint_transcript_retention_days >= 1),
+						collection_active_interval_seconds INTEGER NOT NULL DEFAULT 300 CHECK (collection_active_interval_seconds BETWEEN 300 AND 86400),
+						collection_idle_interval_seconds INTEGER NOT NULL DEFAULT 1800 CHECK (collection_idle_interval_seconds BETWEEN 300 AND 86400),
+						notification_detail_enabled INTEGER NOT NULL DEFAULT 0 CHECK (notification_detail_enabled IN (0, 1)),
+						diagnostics_enabled INTEGER NOT NULL DEFAULT 1 CHECK (diagnostics_enabled IN (0, 1)),
+						diagnostics_level TEXT NOT NULL DEFAULT 'info' CHECK (diagnostics_level IN ('info', 'warning', 'error'))
+					)`,
+					`INSERT INTO settings_v22 (
+						settings_id, analytics_retention_mode, analytics_retention_days, diagnostics_retention_days, locale, appearance,
+						service_enabled, experimental_features_enabled, updated_at, checkpoint_repository_retention_mode,
+						checkpoint_repository_retention_days, checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days,
+						collection_active_interval_seconds, collection_idle_interval_seconds, notification_detail_enabled
+					) SELECT settings_id, analytics_retention_mode, analytics_retention_days,
+						CASE WHEN diagnostics_retention_days IS NULL THEN 14 WHEN diagnostics_retention_days > 30 THEN 30 ELSE diagnostics_retention_days END, locale,
+						appearance, service_enabled, experimental_features_enabled, updated_at, checkpoint_repository_retention_mode,
+						checkpoint_repository_retention_days, checkpoint_transcript_retention_mode, checkpoint_transcript_retention_days,
+						collection_active_interval_seconds, collection_idle_interval_seconds, notification_detail_enabled FROM settings`,
+					`DROP TABLE settings`,
+					`ALTER TABLE settings_v22 RENAME TO settings`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -755,7 +800,7 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
 	"usage_observations":             {"observation_id", "profile_id", "metric_key", "provenance_id", "metric_availability_id", "value", "unit", "window_start", "window_end", "observed_at", "snapshot_id", "window_timezone", "assumptions", "uncertainty"},

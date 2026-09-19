@@ -181,6 +181,11 @@ In the dashboard:
   retention to 7 days; each accepts one or more days or `unlimited`. Export is
   previewed before an encrypted `.cfolio` browser download. Plaintext JSON needs
   a separate acknowledgement. Purge previews and confirms one exact revision.
+- **Settings → Local diagnostics** controls diagnostic collection independently
+  from the service, notifications, updates, and telemetry. The default is
+  enabled at Info level for 14 days, with a 50 MB bundle ceiling. Preview the
+  exact redacted field list and record count before choosing **Download
+  reviewed JSON**; canceling downloads nothing.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
@@ -239,6 +244,21 @@ for the current user, inspect it, and remove only that enrollment:
 ./build/bin/codex-folio service status --json
 ./build/bin/codex-folio service uninstall
 ```
+
+Review or change local diagnostic policy, then preview before choosing a local
+destination:
+
+```sh
+./build/bin/codex-folio diagnostics settings
+./build/bin/codex-folio diagnostics settings --enabled false --level warning --retention-days 7
+./build/bin/codex-folio diagnostics export --dry-run
+./build/bin/codex-folio diagnostics export --output ./codex-folio-diagnostics.json
+```
+
+The export command requires the displayed confirmation and never replaces an
+existing file. It does not upload, open an issue, enable telemetry, or include
+analytics, checkpoints, configuration payloads, identities, paths, usage, or
+Codex/repository content.
 
 Only an explicitly installed native service runs periodic usage collection.
 Opening the dashboard or using `service start` on demand does not enroll or

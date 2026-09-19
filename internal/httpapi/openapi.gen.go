@@ -21,9 +21,10 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "28e741f10bb13c1f8dececc5bb1ef918d94790bb7cbfbe69961c3f17419d840f"
+	ContractSourceSHA256   = "f3dd219c7eba170ef40c50b184dc209bed83ffe72077f1220e7d05f25f0964d2"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
+	DiagnosticsPath        = "/api/v1/diagnostics"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
 	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
@@ -93,6 +94,74 @@ type AlertActionRequest struct {
 	WarningPercent         *float64 `json:"warning_percent,omitempty"`
 	CriticalPercent        *float64 `json:"critical_percent,omitempty"`
 	DetailedContentEnabled *bool    `json:"detailed_content_enabled,omitempty"`
+}
+
+type DiagnosticSettings struct {
+	Enabled       bool   `json:"enabled"`
+	MinimumLevel  string `json:"minimum_level"`
+	RetentionDays int64  `json:"retention_days"`
+}
+
+type DiagnosticFeatureStates struct {
+	Service          bool `json:"service"`
+	DetailedAlerts   bool `json:"detailed_alerts"`
+	AutomaticUpdates bool `json:"automatic_updates"`
+	Telemetry        bool `json:"telemetry"`
+}
+
+type DiagnosticHealth struct {
+	Service   string  `json:"service"`
+	Database  string  `json:"database"`
+	Vault     string  `json:"vault"`
+	ErrorCode *string `json:"error_code,omitempty"`
+}
+
+type DiagnosticEnvironment struct {
+	ApplicationVersion    string                  `json:"application_version"`
+	DatabaseSchemaVersion int64                   `json:"database_schema_version"`
+	OsFamily              string                  `json:"os_family"`
+	Architecture          string                  `json:"architecture"`
+	Features              DiagnosticFeatureStates `json:"features"`
+	Health                DiagnosticHealth        `json:"health"`
+}
+
+type DiagnosticRecord struct {
+	Id              string `json:"id"`
+	Component       string `json:"component"`
+	ErrorCode       string `json:"error_code"`
+	Severity        string `json:"severity"`
+	OccurrenceCount int64  `json:"occurrence_count"`
+	FirstSeenAt     string `json:"first_seen_at"`
+	LastSeenAt      string `json:"last_seen_at"`
+}
+
+type DiagnosticBundle struct {
+	SchemaVersion int64                 `json:"schema_version"`
+	GeneratedAt   string                `json:"generated_at"`
+	Settings      DiagnosticSettings    `json:"settings"`
+	Environment   DiagnosticEnvironment `json:"environment"`
+	Diagnostics   []DiagnosticRecord    `json:"diagnostics"`
+}
+
+type DiagnosticPreview struct {
+	Fields             []string         `json:"fields"`
+	DiagnosticCount    int64            `json:"diagnostic_count"`
+	EncodedBytes       int64            `json:"encoded_bytes"`
+	ConfirmationDigest string           `json:"confirmation_digest"`
+	Bundle             DiagnosticBundle `json:"bundle"`
+}
+
+type DiagnosticsRequest struct {
+	Action       string              `json:"action"`
+	Settings     *DiagnosticSettings `json:"settings,omitempty"`
+	Confirmation *string             `json:"confirmation,omitempty"`
+}
+
+type DiagnosticsResponse struct {
+	Settings            DiagnosticSettings `json:"settings"`
+	MaximumEncodedBytes int64              `json:"maximum_encoded_bytes"`
+	Preview             *DiagnosticPreview `json:"preview,omitempty"`
+	Bundle              *DiagnosticBundle  `json:"bundle,omitempty"`
 }
 
 type ConfigurationDocument struct {
@@ -772,6 +841,65 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: httpClient,
 	}
+}
+
+func (client *Client) getDiagnostics(ctx context.Context) (DiagnosticsResponse, *http.Response, error) {
+	var result DiagnosticsResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+DiagnosticsPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) manageDiagnostics(ctx context.Context, input DiagnosticsRequest) (DiagnosticsResponse, *http.Response, error) {
+	var result DiagnosticsResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+DiagnosticsPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryRequest) (HistoryResponse, *http.Response, error) {

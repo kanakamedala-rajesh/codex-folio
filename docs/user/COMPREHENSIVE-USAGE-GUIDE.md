@@ -744,6 +744,36 @@ the generated integration with the matching command:
 ./build/bin/codex-folio shell remove --shell zsh
 ```
 
+## Local diagnostics and support bundles
+
+Local diagnostics are enabled by default at `info` level, retained for 14 days,
+and bounded to 50 MB and 128 aggregate records. Collection can be disabled, and
+the severity floor and retention can be changed independently without enrolling
+the background service:
+
+```sh
+./build/bin/codex-folio diagnostics settings --json
+./build/bin/codex-folio diagnostics settings --enabled false --level error --retention-days 7
+```
+
+Retention accepts 1–30 days. Disabling collection or raising the severity floor
+does not enable another data source. Expired records are removed in bounded
+store operations.
+
+Use `diagnostics export --dry-run` to inspect the included field inventory,
+record count, encoded size, and confirmation digest. For an interactive export,
+provide `--output FILE`, review that preview, and type its exact digest. An
+automation caller must use `--confirm DIGEST --non-interactive` against the same
+running state-owner preview. Existing destinations are never replaced.
+
+The versioned JSON contains application/schema versions, OS family and
+architecture, coarse feature enablement, safe service/database/vault health,
+the current diagnostic controls, and stable component/error aggregates. It
+excludes identities, workspaces, projects, canonical/home paths, usage values,
+sessions, Codex or repository content, credentials, command arguments,
+analytics, checkpoints, and configuration payloads. CodexFolio neither uploads
+the bundle nor opens a support issue.
+
 ## JSON output and stable errors
 
 Commands that support `--json` write structured data to stdout and diagnostics

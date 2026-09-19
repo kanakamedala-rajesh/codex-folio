@@ -62,6 +62,9 @@ const (
 	ContinuationRepositoryInspectionFailed   = "CF_CONTINUATION_REPOSITORY_INSPECTION_FAILED"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
+	DiagnosticsRequestInvalid                = "CF_DIAGNOSTICS_REQUEST_INVALID"
+	DiagnosticsConfirmationInvalid           = "CF_DIAGNOSTICS_CONFIRMATION_INVALID"
+	DiagnosticsExportFailed                  = "CF_DIAGNOSTICS_EXPORT_FAILED"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
 	PlatformStatePathUnsafe                  = "CF_PLATFORM_STATE_PATH_UNSAFE"
 	PlatformPermissionDenied                 = "CF_PLATFORM_PERMISSION_DENIED"
@@ -191,6 +194,9 @@ func IsRegistered(code string) bool {
 		ContinuationRepositoryInspectionFailed,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
+		DiagnosticsRequestInvalid,
+		DiagnosticsConfirmationInvalid,
+		DiagnosticsExportFailed,
 		PlatformStatePathInvalid,
 		PlatformStatePathUnsafe,
 		PlatformPermissionDenied,

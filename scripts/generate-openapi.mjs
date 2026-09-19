@@ -146,6 +146,7 @@ function validateContract(contract, productVersion) {
   const handoffPath = `/api/${apiVersion}/handoff`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
+  const diagnosticsPath = `/api/${apiVersion}/diagnostics`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
   const profileLifecyclePath = `/api/${apiVersion}/profile-lifecycle`;
@@ -164,6 +165,7 @@ function validateContract(contract, productVersion) {
       historyPath,
       bootstrapPath,
       collectionSettingsPath,
+      diagnosticsPath,
       configurationPacksPath,
       handoffPath,
       metadataPath,
@@ -238,6 +240,21 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(manageAlertsOperation, `POST ${alertsPath}`, ["200", "default"]), alertsResponseReference, "alerts response reference");
   assertEqual(errorResponseReference(getAlertsOperation, `GET ${alertsPath}`), "#/$defs/UsageErrorResponse", "alerts error response");
   assertEqual(errorResponseReference(manageAlertsOperation, `POST ${alertsPath}`), "#/$defs/UsageErrorResponse", "alerts mutation error response");
+
+  const diagnosticsPathItem = contract.paths[diagnosticsPath];
+  assertObject(diagnosticsPathItem, `path ${diagnosticsPath}`);
+  assertExactKeys(diagnosticsPathItem, ["get", "post"], `path ${diagnosticsPath}`);
+  const getDiagnosticsOperation = diagnosticsPathItem.get;
+  const manageDiagnosticsOperation = diagnosticsPathItem.post;
+  assertExactKeys(getDiagnosticsOperation, ["operationId", "responses"], `GET ${diagnosticsPath}`);
+  assertExactKeys(manageDiagnosticsOperation, ["operationId", "requestBody", "responses"], `POST ${diagnosticsPath}`);
+  assertIdentifier(getDiagnosticsOperation.operationId, "get diagnostics operationId");
+  assertIdentifier(manageDiagnosticsOperation.operationId, "manage diagnostics operationId");
+  const diagnosticsResponseReference = responseReference(getDiagnosticsOperation, `GET ${diagnosticsPath}`, ["200", "default"]);
+  const diagnosticsRequestReference = requestReference(manageDiagnosticsOperation.requestBody, `POST ${diagnosticsPath} request body`);
+  assertEqual(responseReference(manageDiagnosticsOperation, `POST ${diagnosticsPath}`, ["200", "default"]), diagnosticsResponseReference, "diagnostics response reference");
+  assertEqual(errorResponseReference(getDiagnosticsOperation, `GET ${diagnosticsPath}`), "#/$defs/UsageErrorResponse", "diagnostics error response");
+  assertEqual(errorResponseReference(manageDiagnosticsOperation, `POST ${diagnosticsPath}`), "#/$defs/UsageErrorResponse", "diagnostics mutation error response");
 
   const activityOperation = contract.paths[activityPath]?.get;
   assertObject(activityOperation, `GET ${activityPath}`);
@@ -418,6 +435,7 @@ function validateContract(contract, productVersion) {
   const handoffSchemaNames = ["HandoffFields", "HandoffFieldEvidence", "HandoffValidationEvidence", "HandoffCheckpointFields", "HandoffRepository", "HandoffCheckpointSummary", "HandoffRetentionPolicy", "HandoffOperationPreview", "HandoffDownload", "HandoffResponse", "CheckpointManagementResponse", schemaNameFromReference(handoffRequestReference, "handoff request"), schemaNameFromReference(handoffResponseReference, "handoff response")];
   const configurationSchemaNames = ["ConfigurationDocument", "ConfigurationPackSummary", "ConfigurationChange", "ConfigurationAssignment", "ConfigurationProjectionPlan", "ConfigurationProjectionResult", "ConfigurationPromotionPreview", schemaNameFromReference(configurationPackRequestReference, "configuration pack request"), schemaNameFromReference(configurationPackResponseReference, "configuration pack response")];
   const alertSchemaNames = ["AlertRecord", "AlertThreshold", "AlertDeliveryHealth", schemaNameFromReference(alertsResponseReference, "alerts response"), schemaNameFromReference(alertActionRequestReference, "alert action request")];
+  const diagnosticsSchemaNames = ["DiagnosticSettings", "DiagnosticFeatureStates", "DiagnosticHealth", "DiagnosticEnvironment", "DiagnosticRecord", "DiagnosticBundle", "DiagnosticPreview", schemaNameFromReference(diagnosticsRequestReference, "diagnostics request"), schemaNameFromReference(diagnosticsResponseReference, "diagnostics response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -457,6 +475,7 @@ function validateContract(contract, productVersion) {
     ...handoffSchemaNames,
     ...configurationSchemaNames,
     ...alertSchemaNames,
+    ...diagnosticsSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
@@ -580,6 +599,12 @@ function validateContract(contract, productVersion) {
     alertsRequestType: schemaNameFromReference(alertActionRequestReference, "alert action request"),
     alertsResponseType: schemaNameFromReference(alertsResponseReference, "alerts response"),
     alertSchemas: alertSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    diagnosticsPath,
+    diagnosticsGetOperationId: getDiagnosticsOperation.operationId,
+    diagnosticsManageOperationId: manageDiagnosticsOperation.operationId,
+    diagnosticsRequestType: schemaNameFromReference(diagnosticsRequestReference, "diagnostics request"),
+    diagnosticsResponseType: schemaNameFromReference(diagnosticsResponseReference, "diagnostics response"),
+    diagnosticsSchemas: diagnosticsSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     collectionSettingsPath,
     collectionSettingsGetOperationId: getCollectionSettingsOperation.operationId,
     collectionSettingsSetOperationId: setCollectionSettingsOperation.operationId,
@@ -878,6 +903,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
   const usageMethod = goIdentifier(usageOperationId);
   const types = [
     ...contractShape.alertSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...contractShape.diagnosticsSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
@@ -945,6 +971,7 @@ const (
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
 \tCollectionSettingsPath = "${collectionSettingsPath}"
+\tDiagnosticsPath      = "${contractShape.diagnosticsPath}"
 \tConfigurationPacksPath = "${configurationPacksPath}"
 \tMetadataPath         = "${metadataPath}"
 \tProfileLifecyclePath = "${profileLifecyclePath}"
@@ -973,6 +1000,47 @@ func NewClient(baseURL string, httpClient HTTPDoer) *Client {
 \t\tbaseURL:    strings.TrimRight(baseURL, "/"),
 \t\thttpClient: httpClient,
 \t}
+}
+
+func (client *Client) ${contractShape.diagnosticsGetOperationId}(ctx context.Context) (${contractShape.diagnosticsResponseType}, *http.Response, error) {
+\tvar result ${contractShape.diagnosticsResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+DiagnosticsPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${contractShape.diagnosticsManageOperationId}(ctx context.Context, input ${contractShape.diagnosticsRequestType}) (${contractShape.diagnosticsResponseType}, *http.Response, error) {
+\tvar result ${contractShape.diagnosticsResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+DiagnosticsPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
 }
 
 func (client *Client) ManageAnalyticsHistory(ctx context.Context, input HistoryRequest) (HistoryResponse, *http.Response, error) {
@@ -1564,8 +1632,11 @@ export const CONTRACT_SOURCE_SHA256 =
   "${sourceHash}" as const;
 export const HandoffPath = "${handoffPath}" as const;
 export const AlertsPath = "${contractShape.alertsPath}" as const;
+export const DiagnosticsPath = "${contractShape.diagnosticsPath}" as const;
 
 ${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${contractShape.diagnosticsSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1706,6 +1777,23 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${contractShape.diagnosticsPath}": {
+    get: {
+      operationId: "${contractShape.diagnosticsGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${contractShape.diagnosticsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${contractShape.diagnosticsManageOperationId}";
+      requestBody: ${contractShape.diagnosticsRequestType};
+      responses: {
+        200: { content: { "application/json": ${contractShape.diagnosticsResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${contractShape.alertsPath}": {
     get: {
       operationId: "${contractShape.alertsGetOperationId}";
@@ -1906,6 +1994,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${contractShape.diagnosticsGetOperationId}(init?: RequestInit): Promise<${contractShape.diagnosticsResponseType}>;
+  ${contractShape.diagnosticsManageOperationId}(request: ${contractShape.diagnosticsRequestType}, init?: RequestInit): Promise<${contractShape.diagnosticsResponseType}>;
   ${contractShape.alertsGetOperationId}(init?: RequestInit): Promise<${contractShape.alertsResponseType}>;
   ${contractShape.alertsManageOperationId}(request: ${contractShape.alertsRequestType}, init?: RequestInit): Promise<${contractShape.alertsResponseType}>;
   ${configurationPackGetOperationId}(init?: RequestInit): Promise<${configurationPackResponseType}>;
@@ -1952,6 +2042,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${contractShape.diagnosticsGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.diagnosticsPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.diagnosticsResponseType};
+    },
+    async ${contractShape.diagnosticsManageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.diagnosticsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.diagnosticsResponseType};
+    },
     async ${contractShape.alertsGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

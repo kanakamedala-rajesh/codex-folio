@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -36,6 +37,23 @@ func (store *Store) RecordDiagnostic(ctx context.Context, event diagnostics.Even
 	rollback := func() {
 		_ = tx.Rollback()
 	}
+	settings, err := readDiagnosticSettings(ctx, tx)
+	if err != nil {
+		rollback()
+		return diagnosticWriteError(err)
+	}
+	cutoff := store.clock.Now().UTC().Add(-time.Duration(settings.RetentionDays) * 24 * time.Hour)
+	if _, err := tx.ExecContext(ctx, "DELETE FROM diagnostic_aggregates WHERE last_seen_at < ?", formatStoredTime(cutoff)); err != nil {
+		rollback()
+		return diagnosticWriteError(err)
+	}
+	if !settings.Enabled || !diagnosticLevelIncludes(settings.MinimumLevel, event.Severity) || at.Before(cutoff) {
+		if err := tx.Commit(); err != nil {
+			rollback()
+			return diagnosticWriteError(err)
+		}
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO diagnostic_aggregates (
 		diagnostic_aggregate_id, component, error_code, severity,
 		occurrence_count, first_seen_at, last_seen_at
@@ -66,11 +84,6 @@ func (store *Store) RecordDiagnostic(ctx context.Context, event diagnostics.Even
 		return diagnosticWriteError(err)
 	}
 
-	cutoff := formatStoredTime(at.Add(-diagnostics.DefaultRetention))
-	if _, err := tx.ExecContext(ctx, "DELETE FROM diagnostic_aggregates WHERE last_seen_at < ?", cutoff); err != nil {
-		rollback()
-		return diagnosticWriteError(err)
-	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM diagnostic_aggregates
 		WHERE diagnostic_aggregate_id NOT IN (
 			SELECT diagnostic_aggregate_id FROM diagnostic_aggregates
@@ -95,7 +108,11 @@ func (store *Store) ListDiagnosticAggregates(ctx context.Context) ([]diagnostics
 	ctx = contextOrBackground(ctx)
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
-	cutoff := formatStoredTime(store.clock.Now().UTC().Add(-diagnostics.DefaultRetention))
+	settings, err := readDiagnosticSettings(ctx, store.db)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	cutoff := formatStoredTime(store.clock.Now().UTC().Add(-time.Duration(settings.RetentionDays) * 24 * time.Hour))
 
 	rows, err := store.db.QueryContext(ctx, `SELECT diagnostic_aggregate_id, component, error_code,
 		severity, occurrence_count, first_seen_at, last_seen_at
@@ -121,12 +138,108 @@ func (store *Store) ListDiagnosticAggregates(ctx context.Context) ([]diagnostics
 		if err != nil {
 			return nil, apperrors.New(apperrors.StoreReadFailed, errors.Join(ErrDiagnosticAggregate, err))
 		}
+		if err := aggregate.Validate(); err != nil {
+			return nil, apperrors.New(apperrors.StoreReadFailed, errors.Join(ErrDiagnosticAggregate, err))
+		}
 		aggregates = append(aggregates, aggregate)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, apperrors.New(apperrors.StoreReadFailed, errors.Join(ErrDiagnosticAggregate, err))
 	}
 	return aggregates, nil
+}
+
+// DiagnosticSettings returns the durable independent collection policy. A
+// missing singleton row resolves to the reviewed safe defaults.
+func (store *Store) DiagnosticSettings(ctx context.Context) (diagnostics.Settings, error) {
+	if store == nil || store.db == nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreReadFailed, ErrDiagnosticAggregate)
+	}
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	settings, err := readDiagnosticSettings(contextOrBackground(ctx), store.db)
+	if err != nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreReadFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	return settings, nil
+}
+
+// SetDiagnosticSettings persists only validated bounded policy values.
+func (store *Store) SetDiagnosticSettings(ctx context.Context, settings diagnostics.Settings) (diagnostics.Settings, error) {
+	if store == nil || store.db == nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreWriteFailed, ErrDiagnosticAggregate)
+	}
+	if err := settings.Validate(); err != nil {
+		return diagnostics.Settings{}, err
+	}
+	enabled := 0
+	if settings.Enabled {
+		enabled = 1
+	}
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	ctx = contextOrBackground(ctx)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO settings
+		(settings_id, diagnostics_enabled, diagnostics_level, diagnostics_retention_days, updated_at)
+		VALUES (1, ?, ?, ?, ?) ON CONFLICT(settings_id) DO UPDATE SET
+		diagnostics_enabled = excluded.diagnostics_enabled,
+		diagnostics_level = excluded.diagnostics_level,
+		diagnostics_retention_days = excluded.diagnostics_retention_days,
+		updated_at = excluded.updated_at`, enabled, settings.MinimumLevel, settings.RetentionDays, formatStoredTime(store.clock.Now()))
+	if err != nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	cutoff := store.clock.Now().UTC().Add(-time.Duration(settings.RetentionDays) * 24 * time.Hour)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM diagnostic_aggregates WHERE last_seen_at < ?`, formatStoredTime(cutoff)); err != nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	if err := tx.Commit(); err != nil {
+		return diagnostics.Settings{}, coded(apperrors.StoreWriteFailed, errors.Join(ErrDiagnosticAggregate, err))
+	}
+	return settings, nil
+}
+
+type diagnosticSettingsReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func readDiagnosticSettings(ctx context.Context, reader diagnosticSettingsReader) (diagnostics.Settings, error) {
+	settings := diagnostics.DefaultSettings()
+	var enabled int
+	var level string
+	err := reader.QueryRowContext(ctx, `SELECT diagnostics_enabled, diagnostics_level, diagnostics_retention_days
+		FROM settings WHERE settings_id = 1`).Scan(&enabled, &level, &settings.RetentionDays)
+	if errors.Is(err, sql.ErrNoRows) {
+		return settings, nil
+	}
+	if err != nil {
+		return diagnostics.Settings{}, err
+	}
+	settings.Enabled = enabled == 1
+	settings.MinimumLevel = diagnostics.Level(level)
+	if err := settings.Validate(); err != nil {
+		return diagnostics.Settings{}, err
+	}
+	return settings, nil
+}
+
+func diagnosticLevelIncludes(minimum diagnostics.Level, severity diagnostics.Severity) bool {
+	rank := func(value string) int {
+		switch value {
+		case "warning":
+			return 1
+		case "error":
+			return 2
+		default:
+			return 0
+		}
+	}
+	return rank(string(severity)) >= rank(string(minimum))
 }
 
 // PurgeDiagnosticAggregates removes aggregate buckets older than before. It
