@@ -803,6 +803,34 @@ endpoint. Status and checks therefore report `unconfigured` without disrupting
 local features. Recording HTTPS fixtures qualify the adapter behavior but are
 not evidence of a live production update service.
 
+## Optional telemetry client
+
+Telemetry is off by default and uses a separate schema-versioned consent:
+
+```sh
+./build/bin/codex-folio telemetry status --json
+./build/bin/codex-folio telemetry schema
+./build/bin/codex-folio telemetry enable --schema-version 1
+./build/bin/codex-folio telemetry revoke
+./build/bin/codex-folio telemetry reset-id
+```
+
+Enablement requires a project HTTPS endpoint, the public schema and privacy
+notice, operational 30-day individual-event and 13-month anonymous-aggregate
+retention jobs, and deletion/reset operations. The production adapter provides
+none of these, so status is `unavailable` and enable fails closed. Recording
+adapters exist only to verify the real service path without deploying a backend.
+
+Schema v1 contains only application version, OS family/architecture, coarse
+feature and outcome, a registered stable error code, duration bucket, and a
+random resettable installation ID. Identity, workspace, project, paths, usage,
+sessions, Codex content, credentials, command arguments, and raw payloads are
+not representable. Consent and the ID live outside portable configuration;
+browser, CLI, and diagnostics report only whether an ID exists, never its value.
+Collection uses bounded non-blocking queues, so an unavailable or failing
+telemetry service cannot block local workflows. Revoke and reset invalidate
+pending events immediately and queue best-effort deletion of the prior ID.
+
 ## JSON output and stable errors
 
 Commands that support `--json` write structured data to stdout and diagnostics

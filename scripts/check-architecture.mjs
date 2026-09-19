@@ -23,6 +23,7 @@ const featureModules = new Set([
   "internal/profile",
   "internal/settings",
   "internal/sharedhome",
+  "internal/telemetry",
   "internal/usage",
   "internal/updates",
 ]);

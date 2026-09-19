@@ -26,6 +26,8 @@ import {
   type UsageSnapshotResponse,
   type UpdateRequest,
   type UpdateResponse,
+  type TelemetryRequest,
+  type TelemetryResponse,
 } from "./generated/openapi";
 import { alertsCopy, copy as c, serviceHealthCopy, stateCopy, provenanceCopy } from "./copy";
 import { Profiles } from "./Profiles";
@@ -38,6 +40,7 @@ import { ServiceHealth } from "./ServiceHealth";
 import { Alerts, NotificationPrivacy } from "./Alerts";
 import { Diagnostics } from "./Diagnostics";
 import { Updates } from "./Updates";
+import { Telemetry } from "./Telemetry";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -470,6 +473,7 @@ export function App() {
   );
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
   const [updates, setUpdates] = useState<UpdateResponse | null>(null);
+  const [telemetry, setTelemetry] = useState<TelemetryResponse | null>(null);
   const [activeMinutes, setActiveMinutes] = useState(5);
   const [idleMinutes, setIdleMinutes] = useState(30);
   const [combined, setCombined] = useState(false);
@@ -557,6 +561,7 @@ export function App() {
             api.getCollectionSettings(),
             api.getDiagnostics(),
             api.getUpdates(),
+            api.getTelemetry().catch(() => null),
           ])
         : null,
     ]);
@@ -571,6 +576,7 @@ export function App() {
       setCollectionSettings(inventory[3]);
       setDiagnostics(inventory[4]);
       setUpdates(inventory[5]);
+      setTelemetry(inventory[6]);
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
@@ -623,6 +629,24 @@ export function App() {
         headers: { "X-CodexFolio-CSRF": csrf.current },
       });
       setUpdates(result);
+      return result;
+    } catch (error) {
+      failure(error);
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function manageTelemetry(request: TelemetryRequest) {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      const result = await api.manageTelemetry(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+      setTelemetry(result);
       return result;
     } catch (error) {
       failure(error);
@@ -1459,6 +1483,9 @@ export function App() {
                       <Diagnostics data={diagnostics} busy={busy} manage={manageDiagnostics} />
                     ) : null}
                     {updates ? <Updates data={updates} busy={busy} manage={manageUpdates} /> : null}
+                    {telemetry ? (
+                      <Telemetry data={telemetry} busy={busy} manage={manageTelemetry} />
+                    ) : null}
                     <section className="border-b border-rule py-6">
                       <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                         {c.backgroundService}

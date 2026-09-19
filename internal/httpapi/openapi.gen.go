@@ -21,11 +21,12 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "1414d85efc156a5829e666bbd6b4001260190380c86015589c525d10dec1d5de"
+	ContractSourceSHA256   = "3fe61f788fbe3a6f2053f1c7dfa975bf28294dfdb624cb86d2a63c7c840ff21a"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
 	DiagnosticsPath        = "/api/v1/diagnostics"
 	UpdatesPath            = "/api/v1/updates"
+	TelemetryPath          = "/api/v1/telemetry"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
 	MetadataPath           = "/api/v1/meta"
 	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
@@ -181,6 +182,41 @@ type UpdateResponse struct {
 	CheckedAt         string `json:"checked_at"`
 	NextCheckAt       string `json:"next_check_at"`
 	ErrorCode         string `json:"error_code"`
+}
+
+type TelemetryPrerequisites struct {
+	Endpoint           bool `json:"endpoint"`
+	PublicSchema       bool `json:"public_schema"`
+	PrivacyNotice      bool `json:"privacy_notice"`
+	EventRetention     bool `json:"event_retention"`
+	AggregateRetention bool `json:"aggregate_retention"`
+	Deletion           bool `json:"deletion"`
+	Reset              bool `json:"reset"`
+}
+
+type TelemetryRequest struct {
+	Action        string `json:"action"`
+	SchemaVersion *int64 `json:"schema_version,omitempty"`
+}
+
+type TelemetryResponse struct {
+	Available                bool                   `json:"available"`
+	Enabled                  bool                   `json:"enabled"`
+	Status                   string                 `json:"status"`
+	SchemaVersion            int64                  `json:"schema_version"`
+	ConsentSchemaVersion     int64                  `json:"consent_schema_version"`
+	EventRetentionDays       int64                  `json:"event_retention_days"`
+	AggregateRetentionMonths int64                  `json:"aggregate_retention_months"`
+	InstallationIdPresent    bool                   `json:"installation_id_present"`
+	Prerequisites            TelemetryPrerequisites `json:"prerequisites"`
+	AllowedFields            []string               `json:"allowed_fields"`
+	ExcludedFields           []string               `json:"excluded_fields"`
+	OsFamilies               []string               `json:"os_families"`
+	Architectures            []string               `json:"architectures"`
+	Features                 []string               `json:"features"`
+	Outcomes                 []string               `json:"outcomes"`
+	DurationBuckets          []string               `json:"duration_buckets"`
+	Detail                   string                 `json:"detail"`
 }
 
 type ConfigurationDocument struct {
@@ -955,6 +991,65 @@ func (client *Client) manageUpdates(ctx context.Context, input UpdateRequest) (U
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+UpdatesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) getTelemetry(ctx context.Context) (TelemetryResponse, *http.Response, error) {
+	var result TelemetryResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+TelemetryPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) manageTelemetry(ctx context.Context, input TelemetryRequest) (TelemetryResponse, *http.Response, error) {
+	var result TelemetryResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+TelemetryPath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}

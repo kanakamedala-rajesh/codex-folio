@@ -986,6 +986,46 @@
       "required": ["automatic_checks", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"],
       "type": "object"
     },
+    "TelemetryPrerequisites": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {"type": "boolean"}, "public_schema": {"type": "boolean"},
+        "privacy_notice": {"type": "boolean"}, "event_retention": {"type": "boolean"},
+        "aggregate_retention": {"type": "boolean"}, "deletion": {"type": "boolean"}, "reset": {"type": "boolean"}
+      },
+      "required": ["endpoint", "public_schema", "privacy_notice", "event_retention", "aggregate_retention", "deletion", "reset"],
+      "type": "object"
+    },
+    "TelemetryRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {"enum": ["enable", "revoke", "reset_id"], "type": "string"},
+        "schema_version": {"minimum": 1, "type": "integer"}
+      },
+      "required": ["action"],
+      "type": "object"
+    },
+    "TelemetryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {"type": "boolean"}, "enabled": {"type": "boolean"},
+        "status": {"enum": ["unavailable", "disabled", "enabled"], "type": "string"},
+        "schema_version": {"type": "integer"}, "consent_schema_version": {"type": "integer"},
+        "event_retention_days": {"type": "integer"}, "aggregate_retention_months": {"type": "integer"},
+        "installation_id_present": {"type": "boolean"},
+        "prerequisites": {"$ref": "#/$defs/TelemetryPrerequisites"},
+        "allowed_fields": {"type": "array", "items": {"type": "string"}},
+        "excluded_fields": {"type": "array", "items": {"type": "string"}},
+        "os_families": {"type": "array", "items": {"type": "string"}},
+        "architectures": {"type": "array", "items": {"type": "string"}},
+        "features": {"type": "array", "items": {"type": "string"}},
+        "outcomes": {"type": "array", "items": {"type": "string"}},
+        "duration_buckets": {"type": "array", "items": {"type": "string"}},
+        "detail": {"type": "string"}
+      },
+      "required": ["available", "enabled", "status", "schema_version", "consent_schema_version", "event_retention_days", "aggregate_retention_months", "installation_id_present", "prerequisites", "allowed_fields", "excluded_fields", "os_families", "architectures", "features", "outcomes", "duration_buckets", "detail"],
+      "type": "object"
+    },
     "DiagnosticSettings": {
       "additionalProperties": false,
       "properties": {
@@ -1148,6 +1188,23 @@
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UpdateRequest"}}}, "required": true},
         "responses": {
           "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UpdateResponse"}}}, "description": "Persists separate automatic-check consent or performs one explicit bounded update check."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      }
+    },
+    "/api/v1/telemetry": {
+      "get": {
+        "operationId": "getTelemetry",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/TelemetryResponse"}}}, "description": "Returns browser-safe telemetry availability, consent state, prerequisite evidence, and the inspectable public schema without exposing the installation identifier."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "manageTelemetry",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/TelemetryRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/TelemetryResponse"}}}, "description": "Applies explicit schema-versioned consent, immediate revocation, or installation-ID reset when operational prerequisites allow it."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }

@@ -563,6 +563,21 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 24,
+			name:    "explicit-telemetry-consent",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE telemetry_state (
+					telemetry_state_id INTEGER PRIMARY KEY CHECK (telemetry_state_id = 1),
+					enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+					schema_version INTEGER NOT NULL DEFAULT 0 CHECK (schema_version >= 0),
+					consented_at TEXT,
+					installation_id TEXT NOT NULL DEFAULT '' CHECK (length(installation_id) IN (0, 32)),
+					CHECK ((enabled = 0 AND schema_version = 0 AND consented_at IS NULL) OR (enabled = 1 AND schema_version > 0 AND consented_at IS NOT NULL))
+				)`)
+				return err
+			},
+		},
 	}
 }
 
@@ -833,6 +848,7 @@ var expectedTables = map[string][]string{
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
 	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
+	"telemetry_state":                {"telemetry_state_id", "enabled", "schema_version", "consented_at", "installation_id"},
 	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},

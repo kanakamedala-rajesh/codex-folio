@@ -28,6 +28,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/telemetry"
 	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
@@ -50,6 +51,7 @@ const (
 	CommandCollectionSettingsPath    = "/api/v1/command/collection-settings"
 	CommandDiagnosticsPath           = "/api/v1/command/diagnostics"
 	CommandUpdatesPath               = "/api/v1/command/updates"
+	CommandTelemetryPath             = "/api/v1/command/telemetry"
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
@@ -118,6 +120,7 @@ type ServiceLifecycle interface {
 // once after the vault and database have opened successfully.
 type OperationalServices struct {
 	Background            io.Closer
+	Shutdown              io.Closer
 	Selection             *profile.Selector
 	Profiles              *profile.Registry
 	ProfileLifecycle      *profile.Lifecycle
@@ -135,6 +138,7 @@ type OperationalServices struct {
 	Alerts                *alerts.Service
 	DiagnosticService     *diagnostics.Service
 	Updates               *updates.Service
+	Telemetry             *telemetry.Service
 }
 
 // Options configures the local browser service. Random is used only for
@@ -164,6 +168,7 @@ type Options struct {
 	Alerts                *alerts.Service
 	DiagnosticService     *diagnostics.Service
 	Updates               *updates.Service
+	Telemetry             *telemetry.Service
 	CommandToken          string
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
@@ -205,6 +210,7 @@ type Server struct {
 	alerts                *alerts.Service
 	diagnosticService     *diagnostics.Service
 	updates               *updates.Service
+	telemetry             *telemetry.Service
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
 	serviceEnrollment     ServiceEnrollmentHealth
@@ -295,6 +301,7 @@ func NewServer(options Options) (*Server, error) {
 		alerts:                options.Alerts,
 		diagnosticService:     options.DiagnosticService,
 		updates:               options.Updates,
+		telemetry:             options.Telemetry,
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
 		serviceEnrollment:     options.ServiceEnrollment,
@@ -635,6 +642,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.updatesHandler(response, request)
+	case CommandTelemetryPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.telemetryHandler(response, request)
 	case CommandAnalyticsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -763,6 +775,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.updatesHandler(response, request)
+	case TelemetryPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.telemetryHandler(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1275,6 +1296,7 @@ func (server *Server) Activate(services OperationalServices) error {
 	server.alerts = services.Alerts
 	server.diagnosticService = services.DiagnosticService
 	server.updates = services.Updates
+	server.telemetry = services.Telemetry
 	server.operational.Store(true)
 	return nil
 }

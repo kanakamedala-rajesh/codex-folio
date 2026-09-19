@@ -20,6 +20,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	telemetryadapter "venkatasudha.com/codex-folio/internal/adapters/telemetry"
 	updatesadapter "venkatasudha.com/codex-folio/internal/adapters/updates"
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -30,6 +31,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/telemetry"
 	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
@@ -416,7 +418,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background}
+		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background, shutdown: services.Shutdown}
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -548,8 +550,17 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		return httpapi.OperationalServices{}, err
 	}
 	launches.continuations = checkpoints
-	diagnosticService, err := newDiagnosticService(stateStore, deliveryEnabled)
+	telemetryService, err := telemetry.NewService(context.Background(), telemetry.ServiceOptions{
+		Repository: stateStore, Prerequisites: telemetryadapter.DisabledPrerequisites{}, Transport: telemetryadapter.DisabledTransport{},
+		Clock: usageClock{}, IDGenerator: telemetryadapter.RandomIDGenerator{}, AppVersion: buildinfo.Version,
+		OSFamily: telemetryOSFamily(), Architecture: telemetry.Architecture(runtime.GOARCH),
+	})
 	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
+	diagnosticService, err := newDiagnosticService(stateStore, deliveryEnabled, telemetryService)
+	if err != nil {
+		_ = telemetryService.Close(context.Background())
 		return httpapi.OperationalServices{}, err
 	}
 	services := httpapi.OperationalServices{
@@ -562,17 +573,21 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
 		Alerts:            alertService,
 		DiagnosticService: diagnosticService,
+		Telemetry:         telemetryService,
 	}
 	updateService, err := updates.NewService(updates.ServiceOptions{
 		Repository: stateStore, Source: updatesadapter.DisabledSource(), Clock: usageClock{}, CurrentVersion: buildinfo.Version,
 	})
 	if err != nil {
+		_ = telemetryService.Close(context.Background())
 		return httpapi.OperationalServices{}, err
 	}
 	services.Updates = updateService
+	services.Shutdown = telemetryServiceCloser{service: telemetryService}
 	if deliveryEnabled {
 		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
 		if err != nil {
+			_ = telemetryService.Close(context.Background())
 			return httpapi.OperationalServices{}, err
 		}
 		services.Background = &serviceCloserGroup{closers: []serviceCloser{startUpdateScheduler(updateService), startCollectionScheduler(scheduler)}}
@@ -583,6 +598,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 type serviceStateOwner struct {
 	store      *store.Store
 	background serviceCloser
+	shutdown   serviceCloser
 }
 
 func (owner *serviceStateOwner) Close() error {
@@ -591,6 +607,12 @@ func (owner *serviceStateOwner) Close() error {
 			return err
 		}
 		owner.background = nil
+	}
+	if owner.shutdown != nil {
+		if err := owner.shutdown.Close(); err != nil {
+			return err
+		}
+		owner.shutdown = nil
 	}
 	if owner.store == nil {
 		return nil
@@ -611,6 +633,7 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		Alerts:            services.Alerts,
 		DiagnosticService: services.DiagnosticService,
 		Updates:           services.Updates,
+		Telemetry:         services.Telemetry,
 		CommandToken:      commandToken,
 	}
 }
@@ -627,13 +650,25 @@ func newConfigurationPackService(stateStore *store.Store) (*configpack.Service, 
 	return configpack.NewService(stateStore, configpack.NewProjector(nil))
 }
 
-func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagnostics.Service, error) {
+func newDiagnosticService(stateStore *store.Store, serviceEnabled bool, telemetryServices ...*telemetry.Service) (*diagnostics.Service, error) {
+	var telemetryService *telemetry.Service
+	if len(telemetryServices) > 0 {
+		telemetryService = telemetryServices[0]
+	}
 	return diagnostics.NewService(diagnostics.ServiceOptions{
 		Repository: stateStore,
 		Environment: func(ctx context.Context) (diagnostics.BundleEnvironment, error) {
 			preference, err := stateStore.NotificationPreference(ctx)
 			if err != nil {
 				return diagnostics.BundleEnvironment{}, err
+			}
+			telemetryEnabled := false
+			if telemetryService != nil {
+				snapshot, statusErr := telemetryService.Status(ctx)
+				if statusErr != nil {
+					return diagnostics.BundleEnvironment{}, statusErr
+				}
+				telemetryEnabled = snapshot.Status == telemetry.StatusEnabled
 			}
 			updateSettings, err := stateStore.UpdateSettings(ctx)
 			if err != nil {
@@ -646,7 +681,7 @@ func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagno
 				Architecture:          diagnostics.Architecture(runtime.GOARCH),
 				Features: diagnostics.FeatureStates{
 					Service: serviceEnabled, DetailedAlerts: preference.DetailEnabled,
-					AutomaticUpdates: updateSettings.AutomaticChecks, Telemetry: false,
+					AutomaticUpdates: updateSettings.AutomaticChecks, Telemetry: telemetryEnabled,
 				},
 				Health: diagnostics.Health{
 					Service: diagnostics.HealthHealthy, Database: diagnostics.HealthHealthy, Vault: diagnostics.HealthHealthy,
@@ -654,6 +689,21 @@ func newDiagnosticService(stateStore *store.Store, serviceEnabled bool) (*diagno
 			}, nil
 		},
 	})
+}
+
+type telemetryServiceCloser struct{ service *telemetry.Service }
+
+func (closer telemetryServiceCloser) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return closer.service.Close(ctx)
+}
+
+func telemetryOSFamily() telemetry.OSFamily {
+	if runtime.GOOS == "darwin" {
+		return telemetry.OSMacOS
+	}
+	return telemetry.OSFamily(runtime.GOOS)
 }
 
 func newCommandToken() (string, error) {

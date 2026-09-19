@@ -193,6 +193,11 @@ In the dashboard:
   download location, and installer guidance; CodexFolio never downloads,
   executes, or installs the update. Development builds report the production
   source as unconfigured until a release endpoint is approved.
+- **Settings → Optional telemetry** shows the complete public field list,
+  exclusions, retention policy, and each operational prerequisite. Consent is
+  tied to an exact schema version and can be revoked independently; the random
+  installation ID can be reset without displaying it. Development builds show
+  **Off · Enablement unavailable** because no production backend is configured.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
@@ -270,6 +275,17 @@ Check update state or manage the separate network consent from the CLI:
 ./build/bin/codex-folio updates settings --automatic true
 ./build/bin/codex-folio updates settings --automatic false
 ```
+
+Inspect the telemetry schema and production availability without enabling it:
+
+```sh
+./build/bin/codex-folio telemetry status
+./build/bin/codex-folio telemetry schema --json
+```
+
+`telemetry enable --schema-version 1`, `telemetry revoke`, and
+`telemetry reset-id` are explicit, separate actions. Enable fails closed while
+any privacy prerequisite is unavailable.
 
 The explicit check never changes the automatic preference. Until a
 project-controlled production endpoint is configured, checks safely report

@@ -18,8 +18,10 @@ explicit check authorizes one request, while automatic checks require a
 persisted opt-in that can be revoked. They request only a bounded version,
 release-note, verified-download-location, and installer-guidance manifest from
 a compiled project-controlled HTTPS endpoint. The development build has no
-production endpoint configured. Telemetry is not shipped, and update consent
-does not enable it.
+production endpoint configured. An optional telemetry client is shipped but is
+off by default and cannot be enabled in production because no project HTTPS
+endpoint, published privacy notice, retention jobs, or deletion/reset operation
+is configured. Update consent does not enable telemetry.
 
 ## Data classes and retention
 
@@ -37,6 +39,7 @@ does not enable it.
 | Local diagnostics | Enabled by default; stable component/error aggregates retain 14 days by default, with a configurable 1–30 day limit and independent disable/severity controls |
 | Diagnostic support bundles | Created only after local preview and confirmation; written to a destination the user chooses and never uploaded automatically |
 | Update checks | Off by default; explicit checks are one-shot, automatic checks require separate revocable consent, and only bounded release metadata is retained |
+| Optional telemetry | Client present but off and unavailable in production; enablement requires separate consent to public schema v1 and every operational privacy prerequisite |
 
 The analytics implementation processes bounded maintenance batches; it does not
 promise that every expired row disappears immediately. No periodic scheduler is
@@ -85,6 +88,23 @@ paths, usage values, session/Codex/repository content, credentials, command
 arguments, analytics, checkpoints, and configuration payloads. Preview and
 confirmation never authorize an upload, issue creation, telemetry, or replacing
 an existing destination.
+
+## Optional telemetry boundary
+
+Telemetry schema v1 permits only the application version, OS family and
+architecture, coarse feature and outcome, registered stable error code,
+duration bucket, and a resettable random installation ID. It cannot represent
+identity, workspace, project, paths, usage, sessions, Codex content,
+credentials, command arguments, or raw payloads. The ID value is never returned
+by the browser API, CLI status, diagnostics, or portable configuration.
+
+Consent is versioned and independent of notifications, service enrollment,
+updates, generic confirmations, and configuration import. Revoke takes effect
+locally before any best-effort remote cleanup. Reset replaces the local random
+ID before queuing deletion of the prior ID. The public policy is 30 days for
+individual events and 13 months for anonymous aggregates, but this development
+build makes no production retention or deletion claim because no backend is
+deployed. Missing evidence for any prerequisite keeps collection unavailable.
 
 ## Public reports
 

@@ -20,6 +20,7 @@ import (
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
+	telemetryadapter "venkatasudha.com/codex-folio/internal/adapters/telemetry"
 	updatesadapter "venkatasudha.com/codex-folio/internal/adapters/updates"
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -30,6 +31,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/telemetry"
 	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
@@ -46,6 +48,12 @@ type dashboardUpdateTransport struct {
 	control  string
 	attempts *atomic.Int64
 	next     http.RoundTripper
+}
+
+type dashboardTelemetryPrerequisites struct{}
+
+func (dashboardTelemetryPrerequisites) TelemetryPrerequisites(context.Context) (telemetry.Prerequisites, error) {
+	return telemetry.Prerequisites{Endpoint: true, PublicSchema: true, PrivacyNotice: true, EventRetention: true, AggregateRetention: true, Deletion: true, Reset: true}, nil
 }
 
 func (transport dashboardUpdateTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -443,7 +451,23 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	diagnosticService, err := newDiagnosticService(state, false)
+	telemetryTransport := telemetryadapter.NewRecordingTransport(nil)
+	telemetryService, err := telemetry.NewService(context.Background(), telemetry.ServiceOptions{
+		Repository: state, Prerequisites: dashboardTelemetryPrerequisites{}, Transport: telemetryTransport,
+		Clock: clock, IDGenerator: telemetryadapter.RandomIDGenerator{}, AppVersion: buildinfo.Version,
+		OSFamily: telemetryOSFamily(), Architecture: telemetry.Architecture(runtime.GOARCH),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if closeErr := telemetryService.Close(closeCtx); closeErr != nil {
+			t.Errorf("close telemetry: %v", closeErr)
+		}
+	}()
+	diagnosticService, err := newDiagnosticService(state, false, telemetryService)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +501,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
 	}})
 	if err != nil {

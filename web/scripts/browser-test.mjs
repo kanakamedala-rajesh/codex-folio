@@ -832,6 +832,47 @@ try {
       check("Settings keeps explicit and automatic update consent separate and revocable");
       assert.match(
         await page.locator("main").innerText(),
+        /Optional telemetry[\s\S]*Off · Awaiting explicit consent/,
+      );
+      await page.getByText("Inspect public schema and prerequisites", { exact: true }).click();
+      assert.match(
+        await page.locator("main").innerText(),
+        /Public event schema[\s\S]*schema_version[\s\S]*Always excluded[\s\S]*credentials[\s\S]*30-day event deletion job/,
+      );
+      const telemetryEnabled = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/telemetry") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "enable",
+      );
+      await page.getByRole("button", { name: "Consent and enable schema v1", exact: true }).click();
+      assert.equal((await telemetryEnabled).status(), 200);
+      const telemetryStatus = await page.request.get(new URL("/api/v1/telemetry", link).href);
+      const enabledTelemetry = await telemetryStatus.json();
+      assert.equal(enabledTelemetry.enabled, true);
+      assert.equal(enabledTelemetry.installation_id_present, true);
+      assert.equal("installation_id" in enabledTelemetry, false);
+      const telemetryReset = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/telemetry") &&
+          response.request().postDataJSON().action === "reset_id",
+      );
+      await page.getByRole("button", { name: "Reset installation ID", exact: true }).click();
+      assert.equal((await telemetryReset).status(), 200);
+      const telemetryRevoked = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/telemetry") &&
+          response.request().postDataJSON().action === "revoke",
+      );
+      await page.getByRole("button", { name: "Revoke consent", exact: true }).click();
+      assert.equal((await telemetryRevoked).status(), 200);
+      await page.getByText("Telemetry consent revoked immediately.", { exact: true }).waitFor();
+      check(
+        "Settings requires schema-versioned telemetry consent and supports immediate reset and revoke without exposing the installation ID",
+      );
+      await page.getByText("Inspect public schema and prerequisites", { exact: true }).click();
+      assert.match(
+        await page.locator("main").innerText(),
         /Local diagnostics[\s\S]*Enabled · 14 days · 50 MB/,
       );
       const diagnosticSettings = page.locator('section[aria-labelledby="diagnostics-title"]');
@@ -924,7 +965,10 @@ try {
 
       await page.getByLabel("Encrypted .cfolio", { exact: true }).check();
       await page.getByRole("button", { name: "Preview export", exact: true }).first().click();
-      await page.getByText(/Always excluded/).waitFor();
+      await page
+        .getByLabel("Export · Atlas")
+        .getByText(/Always excluded/)
+        .waitFor();
       const exportPreviewText = await page.locator("main").innerText();
       assert.match(exportPreviewText, /Raw transcripts/);
       assert.match(exportPreviewText, /Identity Homes/);

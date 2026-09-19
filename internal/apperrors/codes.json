@@ -374,6 +374,18 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_TELEMETRY_REQUEST_INVALID",
+      "owner": "telemetry",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_TELEMETRY_UNAVAILABLE",
+      "owner": "telemetry",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PLATFORM_STATE_PATH_INVALID",
       "owner": "platform",
       "lifecycle": "active",

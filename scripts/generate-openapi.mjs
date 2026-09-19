@@ -147,6 +147,7 @@ function validateContract(contract, productVersion) {
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
   const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
   const diagnosticsPath = `/api/${apiVersion}/diagnostics`;
+  const telemetryPath = `/api/${apiVersion}/telemetry`;
   const updatesPath = `/api/${apiVersion}/updates`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
@@ -167,6 +168,7 @@ function validateContract(contract, productVersion) {
       bootstrapPath,
       collectionSettingsPath,
       diagnosticsPath,
+      telemetryPath,
       updatesPath,
       configurationPacksPath,
       handoffPath,
@@ -272,6 +274,21 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(manageUpdatesOperation, `POST ${updatesPath}`, ["200", "default"]), updatesResponseReference, "updates response reference");
   assertEqual(errorResponseReference(getUpdatesOperation, `GET ${updatesPath}`), "#/$defs/UsageErrorResponse", "updates error response");
   assertEqual(errorResponseReference(manageUpdatesOperation, `POST ${updatesPath}`), "#/$defs/UsageErrorResponse", "updates mutation error response");
+
+  const telemetryPathItem = contract.paths[telemetryPath];
+  assertObject(telemetryPathItem, `path ${telemetryPath}`);
+  assertExactKeys(telemetryPathItem, ["get", "post"], `path ${telemetryPath}`);
+  const getTelemetryOperation = telemetryPathItem.get;
+  const manageTelemetryOperation = telemetryPathItem.post;
+  assertExactKeys(getTelemetryOperation, ["operationId", "responses"], `GET ${telemetryPath}`);
+  assertExactKeys(manageTelemetryOperation, ["operationId", "requestBody", "responses"], `POST ${telemetryPath}`);
+  assertIdentifier(getTelemetryOperation.operationId, "get telemetry operationId");
+  assertIdentifier(manageTelemetryOperation.operationId, "manage telemetry operationId");
+  const telemetryResponseReference = responseReference(getTelemetryOperation, `GET ${telemetryPath}`, ["200", "default"]);
+  const telemetryRequestReference = requestReference(manageTelemetryOperation.requestBody, `POST ${telemetryPath} request body`);
+  assertEqual(responseReference(manageTelemetryOperation, `POST ${telemetryPath}`, ["200", "default"]), telemetryResponseReference, "telemetry response reference");
+  assertEqual(errorResponseReference(getTelemetryOperation, `GET ${telemetryPath}`), "#/$defs/UsageErrorResponse", "telemetry error response");
+  assertEqual(errorResponseReference(manageTelemetryOperation, `POST ${telemetryPath}`), "#/$defs/UsageErrorResponse", "telemetry mutation error response");
 
   const activityOperation = contract.paths[activityPath]?.get;
   assertObject(activityOperation, `GET ${activityPath}`);
@@ -454,6 +471,7 @@ function validateContract(contract, productVersion) {
   const alertSchemaNames = ["AlertRecord", "AlertThreshold", "AlertDeliveryHealth", schemaNameFromReference(alertsResponseReference, "alerts response"), schemaNameFromReference(alertActionRequestReference, "alert action request")];
   const diagnosticsSchemaNames = ["DiagnosticSettings", "DiagnosticFeatureStates", "DiagnosticHealth", "DiagnosticEnvironment", "DiagnosticRecord", "DiagnosticBundle", "DiagnosticPreview", schemaNameFromReference(diagnosticsRequestReference, "diagnostics request"), schemaNameFromReference(diagnosticsResponseReference, "diagnostics response")];
   const updateSchemaNames = [schemaNameFromReference(updatesRequestReference, "updates request"), schemaNameFromReference(updatesResponseReference, "updates response")];
+  const telemetrySchemaNames = ["TelemetryPrerequisites", schemaNameFromReference(telemetryRequestReference, "telemetry request"), schemaNameFromReference(telemetryResponseReference, "telemetry response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -495,6 +513,7 @@ function validateContract(contract, productVersion) {
     ...alertSchemaNames,
     ...diagnosticsSchemaNames,
     ...updateSchemaNames,
+    ...telemetrySchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
@@ -630,6 +649,12 @@ function validateContract(contract, productVersion) {
     updatesRequestType: schemaNameFromReference(updatesRequestReference, "updates request"),
     updatesResponseType: schemaNameFromReference(updatesResponseReference, "updates response"),
     updateSchemas: updateSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    telemetryPath,
+    telemetryGetOperationId: getTelemetryOperation.operationId,
+    telemetryManageOperationId: manageTelemetryOperation.operationId,
+    telemetryRequestType: schemaNameFromReference(telemetryRequestReference, "telemetry request"),
+    telemetryResponseType: schemaNameFromReference(telemetryResponseReference, "telemetry response"),
+    telemetrySchemas: telemetrySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     collectionSettingsPath,
     collectionSettingsGetOperationId: getCollectionSettingsOperation.operationId,
     collectionSettingsSetOperationId: setCollectionSettingsOperation.operationId,
@@ -930,6 +955,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     ...contractShape.alertSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.diagnosticsSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.updateSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...contractShape.telemetrySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
@@ -999,6 +1025,7 @@ const (
 \tCollectionSettingsPath = "${collectionSettingsPath}"
 \tDiagnosticsPath      = "${contractShape.diagnosticsPath}"
 \tUpdatesPath          = "${contractShape.updatesPath}"
+\tTelemetryPath        = "${contractShape.telemetryPath}"
 \tConfigurationPacksPath = "${configurationPacksPath}"
 \tMetadataPath         = "${metadataPath}"
 \tProfileLifecyclePath = "${profileLifecyclePath}"
@@ -1094,6 +1121,47 @@ func (client *Client) ${contractShape.updatesManageOperationId}(ctx context.Cont
 \tbody, err := json.Marshal(input)
 \tif err != nil { return result, nil, err }
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+UpdatesPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${contractShape.telemetryGetOperationId}(ctx context.Context) (${contractShape.telemetryResponseType}, *http.Response, error) {
+\tvar result ${contractShape.telemetryResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+TelemetryPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${contractShape.telemetryManageOperationId}(ctx context.Context, input ${contractShape.telemetryRequestType}) (${contractShape.telemetryResponseType}, *http.Response, error) {
+\tvar result ${contractShape.telemetryResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+TelemetryPath, bytes.NewReader(body))
 \tif err != nil { return result, nil, err }
 \trequest.Header.Set("Accept", "application/json")
 \trequest.Header.Set("Content-Type", "application/json")
@@ -1702,12 +1770,15 @@ export const HandoffPath = "${handoffPath}" as const;
 export const AlertsPath = "${contractShape.alertsPath}" as const;
 export const DiagnosticsPath = "${contractShape.diagnosticsPath}" as const;
 export const UpdatesPath = "${contractShape.updatesPath}" as const;
+export const TelemetryPath = "${contractShape.telemetryPath}" as const;
 
 ${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.diagnosticsSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.updateSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${contractShape.telemetrySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1848,6 +1919,23 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${contractShape.telemetryPath}": {
+    get: {
+      operationId: "${contractShape.telemetryGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${contractShape.telemetryResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${contractShape.telemetryManageOperationId}";
+      requestBody: ${contractShape.telemetryRequestType};
+      responses: {
+        200: { content: { "application/json": ${contractShape.telemetryResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${contractShape.updatesPath}": {
     get: {
       operationId: "${contractShape.updatesGetOperationId}";
@@ -2082,6 +2170,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${contractShape.telemetryGetOperationId}(init?: RequestInit): Promise<${contractShape.telemetryResponseType}>;
+  ${contractShape.telemetryManageOperationId}(request: ${contractShape.telemetryRequestType}, init?: RequestInit): Promise<${contractShape.telemetryResponseType}>;
   ${contractShape.updatesGetOperationId}(init?: RequestInit): Promise<${contractShape.updatesResponseType}>;
   ${contractShape.updatesManageOperationId}(request: ${contractShape.updatesRequestType}, init?: RequestInit): Promise<${contractShape.updatesResponseType}>;
   ${contractShape.diagnosticsGetOperationId}(init?: RequestInit): Promise<${contractShape.diagnosticsResponseType}>;
@@ -2132,6 +2222,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${contractShape.telemetryGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.telemetryPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.telemetryResponseType};
+    },
+    async ${contractShape.telemetryManageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.telemetryPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.telemetryResponseType};
+    },
     async ${contractShape.updatesGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

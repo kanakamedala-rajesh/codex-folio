@@ -3,11 +3,12 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "1414d85efc156a5829e666bbd6b4001260190380c86015589c525d10dec1d5de" as const;
+  "3fe61f788fbe3a6f2053f1c7dfa975bf28294dfdb624cb86d2a63c7c840ff21a" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
 export const UpdatesPath = "/api/v1/updates" as const;
+export const TelemetryPath = "/api/v1/telemetry" as const;
 
 export interface AlertRecord {
   alert_id: string;
@@ -154,6 +155,41 @@ export interface UpdateResponse {
   checked_at: string;
   next_check_at: string;
   error_code: string;
+}
+
+export interface TelemetryPrerequisites {
+  endpoint: boolean;
+  public_schema: boolean;
+  privacy_notice: boolean;
+  event_retention: boolean;
+  aggregate_retention: boolean;
+  deletion: boolean;
+  reset: boolean;
+}
+
+export interface TelemetryRequest {
+  action: string;
+  schema_version?: number;
+}
+
+export interface TelemetryResponse {
+  available: boolean;
+  enabled: boolean;
+  status: string;
+  schema_version: number;
+  consent_schema_version: number;
+  event_retention_days: number;
+  aggregate_retention_months: number;
+  installation_id_present: boolean;
+  prerequisites: TelemetryPrerequisites;
+  allowed_fields: string[];
+  excluded_fields: string[];
+  os_families: string[];
+  architectures: string[];
+  features: string[];
+  outcomes: string[];
+  duration_buckets: string[];
+  detail: string;
 }
 
 export interface HistoryScope {
@@ -830,6 +866,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/telemetry": {
+    get: {
+      operationId: "getTelemetry";
+      responses: {
+        200: { content: { "application/json": TelemetryResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "manageTelemetry";
+      requestBody: TelemetryRequest;
+      responses: {
+        200: { content: { "application/json": TelemetryResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/updates": {
     get: {
       operationId: "getUpdates";
@@ -1064,6 +1117,8 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  getTelemetry(init?: RequestInit): Promise<TelemetryResponse>;
+  manageTelemetry(request: TelemetryRequest, init?: RequestInit): Promise<TelemetryResponse>;
   getUpdates(init?: RequestInit): Promise<UpdateResponse>;
   manageUpdates(request: UpdateRequest, init?: RequestInit): Promise<UpdateResponse>;
   getDiagnostics(init?: RequestInit): Promise<DiagnosticsResponse>;
@@ -1114,6 +1169,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async getTelemetry(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/telemetry", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as TelemetryResponse;
+    },
+    async manageTelemetry(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/telemetry", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as TelemetryResponse;
+    },
     async getUpdates(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

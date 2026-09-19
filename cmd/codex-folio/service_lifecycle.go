@@ -27,6 +27,7 @@ type lockedServiceLifecycle struct {
 	activate   serviceActivator
 	store      *store.Store
 	background serviceCloser
+	shutdown   serviceCloser
 	health     httpapi.ServiceHealth
 }
 
@@ -83,6 +84,7 @@ func (lifecycle *lockedServiceLifecycle) Unlock(ctx context.Context, passphrase 
 	services, err := lifecycle.compose(stateStore)
 	if err == nil {
 		lifecycle.background = services.Background
+		lifecycle.shutdown = services.Shutdown
 	}
 	if err == nil {
 		err = lifecycle.activate(services)
@@ -91,6 +93,10 @@ func (lifecycle *lockedServiceLifecycle) Unlock(ctx context.Context, passphrase 
 		if lifecycle.background != nil {
 			_ = lifecycle.background.Close()
 			lifecycle.background = nil
+		}
+		if lifecycle.shutdown != nil {
+			_ = lifecycle.shutdown.Close()
+			lifecycle.shutdown = nil
 		}
 		_ = stateStore.Close()
 		lifecycle.recordFailure(err)
@@ -117,6 +123,12 @@ func (lifecycle *lockedServiceLifecycle) Close() error {
 			return err
 		}
 		lifecycle.background = nil
+	}
+	if lifecycle.shutdown != nil {
+		if err := lifecycle.shutdown.Close(); err != nil {
+			return err
+		}
+		lifecycle.shutdown = nil
 	}
 	err := lifecycle.store.Close()
 	lifecycle.store = nil
