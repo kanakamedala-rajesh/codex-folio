@@ -386,6 +386,24 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_CONFIGBUNDLE_INVALID",
+      "owner": "configbundle",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGBUNDLE_CONFLICT",
+      "owner": "configbundle",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_CONFIGBUNDLE_STALE",
+      "owner": "configbundle",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_PLATFORM_STATE_PATH_INVALID",
       "owner": "platform",
       "lifecycle": "active",

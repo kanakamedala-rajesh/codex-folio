@@ -148,6 +148,7 @@ function validateContract(contract, productVersion) {
   const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
   const diagnosticsPath = `/api/${apiVersion}/diagnostics`;
   const telemetryPath = `/api/${apiVersion}/telemetry`;
+  const portableConfigurationPath = `/api/${apiVersion}/configuration`;
   const updatesPath = `/api/${apiVersion}/updates`;
   const metadataPath = `/api/${apiVersion}/meta`;
   const configurationPacksPath = `/api/${apiVersion}/configuration-packs`;
@@ -169,6 +170,7 @@ function validateContract(contract, productVersion) {
       collectionSettingsPath,
       diagnosticsPath,
       telemetryPath,
+      portableConfigurationPath,
       updatesPath,
       configurationPacksPath,
       handoffPath,
@@ -289,6 +291,19 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(manageTelemetryOperation, `POST ${telemetryPath}`, ["200", "default"]), telemetryResponseReference, "telemetry response reference");
   assertEqual(errorResponseReference(getTelemetryOperation, `GET ${telemetryPath}`), "#/$defs/UsageErrorResponse", "telemetry error response");
   assertEqual(errorResponseReference(manageTelemetryOperation, `POST ${telemetryPath}`), "#/$defs/UsageErrorResponse", "telemetry mutation error response");
+
+  const portableConfigurationPathItem = contract.paths[portableConfigurationPath];
+  assertObject(portableConfigurationPathItem, `path ${portableConfigurationPath}`);
+  assertExactKeys(portableConfigurationPathItem, ["get", "post"], `path ${portableConfigurationPath}`);
+  const previewConfigurationExportOperation = portableConfigurationPathItem.get;
+  const managePortableConfigurationOperation = portableConfigurationPathItem.post;
+  assertExactKeys(previewConfigurationExportOperation, ["operationId", "responses"], `GET ${portableConfigurationPath}`);
+  assertExactKeys(managePortableConfigurationOperation, ["operationId", "requestBody", "responses"], `POST ${portableConfigurationPath}`);
+  const portableConfigurationResponseReference = responseReference(previewConfigurationExportOperation, `GET ${portableConfigurationPath}`, ["200", "default"]);
+  const portableConfigurationRequestReference = requestReference(managePortableConfigurationOperation.requestBody, `POST ${portableConfigurationPath} request body`);
+  assertEqual(responseReference(managePortableConfigurationOperation, `POST ${portableConfigurationPath}`, ["200", "default"]), portableConfigurationResponseReference, "portable configuration response reference");
+  assertEqual(errorResponseReference(previewConfigurationExportOperation, `GET ${portableConfigurationPath}`), "#/$defs/UsageErrorResponse", "portable configuration error response");
+  assertEqual(errorResponseReference(managePortableConfigurationOperation, `POST ${portableConfigurationPath}`), "#/$defs/UsageErrorResponse", "portable configuration mutation error response");
 
   const activityOperation = contract.paths[activityPath]?.get;
   assertObject(activityOperation, `GET ${activityPath}`);
@@ -472,6 +487,7 @@ function validateContract(contract, productVersion) {
   const diagnosticsSchemaNames = ["DiagnosticSettings", "DiagnosticFeatureStates", "DiagnosticHealth", "DiagnosticEnvironment", "DiagnosticRecord", "DiagnosticBundle", "DiagnosticPreview", schemaNameFromReference(diagnosticsRequestReference, "diagnostics request"), schemaNameFromReference(diagnosticsResponseReference, "diagnostics response")];
   const updateSchemaNames = [schemaNameFromReference(updatesRequestReference, "updates request"), schemaNameFromReference(updatesResponseReference, "updates response")];
   const telemetrySchemaNames = ["TelemetryPrerequisites", schemaNameFromReference(telemetryRequestReference, "telemetry request"), schemaNameFromReference(telemetryResponseReference, "telemetry response")];
+  const portableConfigurationSchemaNames = ["PortableConfigurationProfile", "PortableConfigurationPack", "PortableConfigurationThreshold", "PortableConfigurationProjectAlias", "PortableConfigurationPreferences", "PortableConfigurationBundle", "PortableConfigurationCounts", "PortableConfigurationConflict", "PortableConfigurationPreview", "PortableConfigurationApplyResult", schemaNameFromReference(portableConfigurationRequestReference, "portable configuration request"), schemaNameFromReference(portableConfigurationResponseReference, "portable configuration response")];
   const schemaNames = [
     schemaNameFromReference(bootstrapRequestReference, "bootstrap request"),
     schemaNameFromReference(bootstrapResponseReference, "bootstrap response"),
@@ -514,6 +530,7 @@ function validateContract(contract, productVersion) {
     ...diagnosticsSchemaNames,
     ...updateSchemaNames,
     ...telemetrySchemaNames,
+    ...portableConfigurationSchemaNames,
     schemaNameFromReference(profileLifecycleRecordReference, "profile lifecycle record"),
     schemaNameFromReference(profileLifecycleListResponseReference, "profile lifecycle list response"),
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
@@ -655,6 +672,12 @@ function validateContract(contract, productVersion) {
     telemetryRequestType: schemaNameFromReference(telemetryRequestReference, "telemetry request"),
     telemetryResponseType: schemaNameFromReference(telemetryResponseReference, "telemetry response"),
     telemetrySchemas: telemetrySchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    portableConfigurationPath,
+    portableConfigurationGetOperationId: previewConfigurationExportOperation.operationId,
+    portableConfigurationManageOperationId: managePortableConfigurationOperation.operationId,
+    portableConfigurationRequestType: schemaNameFromReference(portableConfigurationRequestReference, "portable configuration request"),
+    portableConfigurationResponseType: schemaNameFromReference(portableConfigurationResponseReference, "portable configuration response"),
+    portableConfigurationSchemas: portableConfigurationSchemaNames.map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     collectionSettingsPath,
     collectionSettingsGetOperationId: getCollectionSettingsOperation.operationId,
     collectionSettingsSetOperationId: setCollectionSettingsOperation.operationId,
@@ -956,6 +979,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     ...contractShape.diagnosticsSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.updateSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.telemetrySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...contractShape.portableConfigurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
@@ -1026,6 +1050,7 @@ const (
 \tDiagnosticsPath      = "${contractShape.diagnosticsPath}"
 \tUpdatesPath          = "${contractShape.updatesPath}"
 \tTelemetryPath        = "${contractShape.telemetryPath}"
+\tPortableConfigurationPath = "${contractShape.portableConfigurationPath}"
 \tConfigurationPacksPath = "${configurationPacksPath}"
 \tMetadataPath         = "${metadataPath}"
 \tProfileLifecyclePath = "${profileLifecyclePath}"
@@ -1162,6 +1187,47 @@ func (client *Client) ${contractShape.telemetryManageOperationId}(ctx context.Co
 \tbody, err := json.Marshal(input)
 \tif err != nil { return result, nil, err }
 \trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+TelemetryPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${contractShape.portableConfigurationGetOperationId}(ctx context.Context) (${contractShape.portableConfigurationResponseType}, *http.Response, error) {
+\tvar result ${contractShape.portableConfigurationResponseType}
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+PortableConfigurationPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\tvar failure ${usageErrorResponseType}
+\t\tif err := json.NewDecoder(response.Body).Decode(&failure); err != nil { return result, response, err }
+\t\treturn result, response, failure
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ${contractShape.portableConfigurationManageOperationId}(ctx context.Context, input ${contractShape.portableConfigurationRequestType}) (${contractShape.portableConfigurationResponseType}, *http.Response, error) {
+\tvar result ${contractShape.portableConfigurationResponseType}
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+PortableConfigurationPath, bytes.NewReader(body))
 \tif err != nil { return result, nil, err }
 \trequest.Header.Set("Accept", "application/json")
 \trequest.Header.Set("Content-Type", "application/json")
@@ -1771,6 +1837,7 @@ export const AlertsPath = "${contractShape.alertsPath}" as const;
 export const DiagnosticsPath = "${contractShape.diagnosticsPath}" as const;
 export const UpdatesPath = "${contractShape.updatesPath}" as const;
 export const TelemetryPath = "${contractShape.telemetryPath}" as const;
+export const PortableConfigurationPath = "${contractShape.portableConfigurationPath}" as const;
 
 ${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1779,6 +1846,8 @@ ${contractShape.diagnosticsSchemas.map(({name, fields}) => `export interface ${n
 ${contractShape.updateSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.telemetrySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${contractShape.portableConfigurationSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1919,6 +1988,23 @@ ${usageResponseLines}
 }
 
 export interface ApiPaths {
+  "${contractShape.portableConfigurationPath}": {
+    get: {
+      operationId: "${contractShape.portableConfigurationGetOperationId}";
+      responses: {
+        200: { content: { "application/json": ${contractShape.portableConfigurationResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+    post: {
+      operationId: "${contractShape.portableConfigurationManageOperationId}";
+      requestBody: ${contractShape.portableConfigurationRequestType};
+      responses: {
+        200: { content: { "application/json": ${contractShape.portableConfigurationResponseType} } };
+        default: { content: { "application/json": ${usageErrorResponseType} } };
+      };
+    };
+  };
   "${contractShape.telemetryPath}": {
     get: {
       operationId: "${contractShape.telemetryGetOperationId}";
@@ -2170,6 +2256,11 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  ${contractShape.portableConfigurationGetOperationId}(init?: RequestInit): Promise<${contractShape.portableConfigurationResponseType}>;
+  ${contractShape.portableConfigurationManageOperationId}(
+    request: ${contractShape.portableConfigurationRequestType},
+    init?: RequestInit,
+  ): Promise<${contractShape.portableConfigurationResponseType}>;
   ${contractShape.telemetryGetOperationId}(init?: RequestInit): Promise<${contractShape.telemetryResponseType}>;
   ${contractShape.telemetryManageOperationId}(request: ${contractShape.telemetryRequestType}, init?: RequestInit): Promise<${contractShape.telemetryResponseType}>;
   ${contractShape.updatesGetOperationId}(init?: RequestInit): Promise<${contractShape.updatesResponseType}>;
@@ -2222,6 +2313,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async ${contractShape.portableConfigurationGetOperationId}(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.portableConfigurationPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.portableConfigurationResponseType};
+    },
+    async ${contractShape.portableConfigurationManageOperationId}(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${contractShape.portableConfigurationPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ${contractShape.portableConfigurationResponseType};
+    },
     async ${contractShape.telemetryGetOperationId}(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -2805,6 +2928,7 @@ function goType(schema) {
   if (schema.type === "array" && typeof schema.items?.$ref === "string") {
     return `[]${goIdentifier(schemaNameFromReference(schema.items.$ref, "array item"))}`;
   }
+  if (schema.type === "object" && schema.additionalProperties?.type === "string") return "map[string]string";
   throw new Error(`unsupported Go schema type ${JSON.stringify(schema.type)}`);
 }
 
@@ -2823,5 +2947,6 @@ function typescriptType(schema) {
   if (schema.type === "array" && typeof schema.items?.$ref === "string") {
     return `${schemaNameFromReference(schema.items.$ref, "array item")}[]`;
   }
+  if (schema.type === "object" && schema.additionalProperties?.type === "string") return "Record<string, string>";
   throw new Error(`unsupported TypeScript schema type ${JSON.stringify(schema.type)}`);
 }

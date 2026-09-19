@@ -188,6 +188,54 @@ export const diagnosticsCopy = {
   cancel: "Cancel preview",
   cancelled: "Preview cancelled. Nothing was downloaded.",
 } as const;
+
+export const portableConfigurationCopy = {
+  title: "Portable configuration",
+  detail:
+    "Move reviewed nonsecret profile definitions, approved Shared Configuration Packs, alert thresholds, collection intervals, and appearance between devices.",
+  boundary:
+    "Authentication, Identity Homes, paths, history, consent grants, telemetry identifiers, service enrollment, automatic update checks, notification detail, and experiments never transfer.",
+  exportTitle: "Export configuration",
+  includeProjects: "Include Project Aliases matched only by repository basename",
+  previewExport: "Preview configuration export",
+  exportPreviewTitle: "Configuration export preview",
+  download: "Download reviewed configuration",
+  exported: "Reviewed portable configuration downloaded locally.",
+  preparingExport: "Preparing the nonsecret export preview.",
+  exportReady: "Export preview ready. Review fields and exclusions before downloading.",
+  importTitle: "Import configuration",
+  file: "Portable configuration JSON",
+  fileReady: (name: string) => `${name} selected. Preview it before applying.`,
+  previewImport: "Preview configuration import",
+  importPreviewTitle: "Configuration import preview",
+  preparingImport: "Validating the versioned bundle and current local conflicts.",
+  importReady: "Import preview ready. Applying creates new profiles as Pending.",
+  conflictsReady: "Import preview ready. Resolve every local conflict before applying.",
+  resolve: "Conflict resolutions",
+  resolution: (key: string) => `Resolution for ${key}`,
+  chooseResolution: "Choose a resolution",
+  resolutionLabel: {
+    skip: "Skip imported record",
+    keep_local: "Keep local value",
+    use_imported: "Use reviewed imported value",
+  } as Record<string, string>,
+  apply: "Apply reviewed configuration",
+  applying: "Applying the exact reviewed preview.",
+  applied:
+    "Configuration applied. Imported profiles remain Pending until you choose a local Identity Home and authenticate through Codex.",
+  stale:
+    "Configuration was not applied. Preview again; local state or the reviewed bundle changed.",
+  invalid: "The file is malformed, unsupported, too large, or contains a field outside schema v1.",
+  failed: "Portable configuration was not changed or downloaded.",
+  cancel: "Cancel preview",
+  cancelled: "Preview cancelled. Local state is unchanged.",
+  profiles: "profiles",
+  packs: "pack versions",
+  thresholds: "thresholds",
+  projects: "Project Aliases",
+  records: "Review included records",
+  excluded: "Always excluded",
+} as const;
 export const stateCopy: Record<string, string> = {
   ready: "Ready",
   pending: "Pending",

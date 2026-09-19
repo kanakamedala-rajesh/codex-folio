@@ -17,6 +17,7 @@ const featureModules = new Set([
   "internal/apperrors",
   "internal/application",
   "internal/configpack",
+  "internal/configbundle",
   "internal/continuation",
   "internal/diagnostics",
   "internal/launch",

@@ -14,27 +14,28 @@ import (
 )
 
 const (
-	APIVersion             = "v1"
-	ActivityPath           = "/api/v1/activity"
-	AlertsPath             = "/api/v1/alerts"
-	AnalyticsPath          = "/api/v1/analytics"
-	HistoryPath            = "/api/v1/analytics/history"
-	HandoffPath            = "/api/v1/handoff"
-	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "3fe61f788fbe3a6f2053f1c7dfa975bf28294dfdb624cb86d2a63c7c840ff21a"
-	BootstrapPath          = "/api/v1/bootstrap"
-	CollectionSettingsPath = "/api/v1/collection-settings"
-	DiagnosticsPath        = "/api/v1/diagnostics"
-	UpdatesPath            = "/api/v1/updates"
-	TelemetryPath          = "/api/v1/telemetry"
-	ConfigurationPacksPath = "/api/v1/configuration-packs"
-	MetadataPath           = "/api/v1/meta"
-	ProfileLifecyclePath   = "/api/v1/profile-lifecycle"
-	ProfilesPath           = "/api/v1/profiles"
-	ProjectsPath           = "/api/v1/projects"
-	SelectionPath          = "/api/v1/selection"
-	UsageLatestPath        = "/api/v1/usage/latest"
-	UsageRefreshPath       = "/api/v1/usage/refresh"
+	APIVersion                = "v1"
+	ActivityPath              = "/api/v1/activity"
+	AlertsPath                = "/api/v1/alerts"
+	AnalyticsPath             = "/api/v1/analytics"
+	HistoryPath               = "/api/v1/analytics/history"
+	HandoffPath               = "/api/v1/handoff"
+	ContractVersion           = "0.0.1-alpha"
+	ContractSourceSHA256      = "3cd0e91ca3b78bb80cf09bf41f8b83d46b77addd6c6e4422b4d521a27a72e439"
+	BootstrapPath             = "/api/v1/bootstrap"
+	CollectionSettingsPath    = "/api/v1/collection-settings"
+	DiagnosticsPath           = "/api/v1/diagnostics"
+	UpdatesPath               = "/api/v1/updates"
+	TelemetryPath             = "/api/v1/telemetry"
+	PortableConfigurationPath = "/api/v1/configuration"
+	ConfigurationPacksPath    = "/api/v1/configuration-packs"
+	MetadataPath              = "/api/v1/meta"
+	ProfileLifecyclePath      = "/api/v1/profile-lifecycle"
+	ProfilesPath              = "/api/v1/profiles"
+	ProjectsPath              = "/api/v1/projects"
+	SelectionPath             = "/api/v1/selection"
+	UsageLatestPath           = "/api/v1/usage/latest"
+	UsageRefreshPath          = "/api/v1/usage/refresh"
 )
 
 type AlertRecord struct {
@@ -217,6 +218,92 @@ type TelemetryResponse struct {
 	Outcomes                 []string               `json:"outcomes"`
 	DurationBuckets          []string               `json:"duration_buckets"`
 	Detail                   string                 `json:"detail"`
+}
+
+type PortableConfigurationProfile struct {
+	Alias       string `json:"alias"`
+	DisplayName string `json:"display_name"`
+}
+
+type PortableConfigurationPack struct {
+	Id      string            `json:"id"`
+	Version string            `json:"version"`
+	Digest  string            `json:"digest"`
+	Files   map[string]string `json:"files"`
+}
+
+type PortableConfigurationThreshold struct {
+	ProfileAlias    string  `json:"profile_alias"`
+	MetricKey       string  `json:"metric_key"`
+	WarningPercent  float64 `json:"warning_percent"`
+	CriticalPercent float64 `json:"critical_percent"`
+}
+
+type PortableConfigurationProjectAlias struct {
+	RepositoryBasename string `json:"repository_basename"`
+	Alias              string `json:"alias"`
+}
+
+type PortableConfigurationPreferences struct {
+	CollectionActiveSeconds int64  `json:"collection_active_seconds"`
+	CollectionIdleSeconds   int64  `json:"collection_idle_seconds"`
+	Appearance              string `json:"appearance"`
+}
+
+type PortableConfigurationBundle struct {
+	SchemaVersion          int64                                `json:"schema_version"`
+	Profiles               []PortableConfigurationProfile       `json:"profiles"`
+	ConfigurationPacks     []PortableConfigurationPack          `json:"configuration_packs"`
+	AlertThresholds        []PortableConfigurationThreshold     `json:"alert_thresholds"`
+	ProjectAliases         *[]PortableConfigurationProjectAlias `json:"project_aliases,omitempty"`
+	OperationalPreferences PortableConfigurationPreferences     `json:"operational_preferences"`
+}
+
+type PortableConfigurationCounts struct {
+	Profiles               int64 `json:"profiles"`
+	ConfigurationPacks     int64 `json:"configuration_packs"`
+	AlertThresholds        int64 `json:"alert_thresholds"`
+	ProjectAliases         int64 `json:"project_aliases"`
+	OperationalPreferences int64 `json:"operational_preferences"`
+}
+
+type PortableConfigurationConflict struct {
+	Key         string   `json:"key"`
+	Kind        string   `json:"kind"`
+	Detail      string   `json:"detail"`
+	Resolutions []string `json:"resolutions"`
+}
+
+type PortableConfigurationPreview struct {
+	Direction          string                          `json:"direction"`
+	SchemaVersion      int64                           `json:"schema_version"`
+	Fields             []string                        `json:"fields"`
+	Counts             PortableConfigurationCounts     `json:"counts"`
+	ExcludedFields     []string                        `json:"excluded_fields"`
+	Conflicts          []PortableConfigurationConflict `json:"conflicts"`
+	ConfirmationDigest string                          `json:"confirmation_digest"`
+	Bundle             *PortableConfigurationBundle    `json:"bundle,omitempty"`
+}
+
+type PortableConfigurationApplyResult struct {
+	Applied bool                        `json:"applied"`
+	Counts  PortableConfigurationCounts `json:"counts"`
+	Skipped []string                    `json:"skipped"`
+}
+
+type PortableConfigurationRequest struct {
+	Action                string                       `json:"action"`
+	Bundle                *PortableConfigurationBundle `json:"bundle,omitempty"`
+	ConfirmationDigest    *string                      `json:"confirmation_digest,omitempty"`
+	Reviewed              *bool                        `json:"reviewed,omitempty"`
+	Resolutions           *map[string]string           `json:"resolutions,omitempty"`
+	IncludeProjectAliases *bool                        `json:"include_project_aliases,omitempty"`
+	Appearance            *string                      `json:"appearance,omitempty"`
+}
+
+type PortableConfigurationResponse struct {
+	Preview *PortableConfigurationPreview     `json:"preview,omitempty"`
+	Result  *PortableConfigurationApplyResult `json:"result,omitempty"`
 }
 
 type ConfigurationDocument struct {
@@ -1050,6 +1137,65 @@ func (client *Client) manageTelemetry(ctx context.Context, input TelemetryReques
 		return result, nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+TelemetryPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) previewConfigurationExport(ctx context.Context) (PortableConfigurationResponse, *http.Response, error) {
+	var result PortableConfigurationResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+PortableConfigurationPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		var failure UsageErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+			return result, response, err
+		}
+		return result, response, failure
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) managePortableConfiguration(ctx context.Context, input PortableConfigurationRequest) (PortableConfigurationResponse, *http.Response, error) {
+	var result PortableConfigurationResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+PortableConfigurationPath, bytes.NewReader(body))
 	if err != nil {
 		return result, nil, err
 	}

@@ -1115,6 +1115,73 @@
       },
       "required": ["settings", "maximum_encoded_bytes"],
       "type": "object"
+    },
+    "PortableConfigurationProfile": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"alias": {"type": "string"}, "display_name": {"type": "string"}},
+      "required": ["alias", "display_name"]
+    },
+    "PortableConfigurationPack": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "digest": {"type": "string"}, "files": {"type": "object", "additionalProperties": {"type": "string"}}},
+      "required": ["id", "version", "digest", "files"]
+    },
+    "PortableConfigurationThreshold": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"profile_alias": {"type": "string"}, "metric_key": {"type": "string"}, "warning_percent": {"type": "number"}, "critical_percent": {"type": "number"}},
+      "required": ["profile_alias", "metric_key", "warning_percent", "critical_percent"]
+    },
+    "PortableConfigurationProjectAlias": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"repository_basename": {"type": "string"}, "alias": {"type": "string"}},
+      "required": ["repository_basename", "alias"]
+    },
+    "PortableConfigurationPreferences": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"collection_active_seconds": {"type": "integer"}, "collection_idle_seconds": {"type": "integer"}, "appearance": {"enum": ["system", "light", "dark"], "type": "string"}},
+      "required": ["collection_active_seconds", "collection_idle_seconds", "appearance"]
+    },
+    "PortableConfigurationBundle": {
+      "additionalProperties": false, "type": "object",
+      "properties": {
+        "schema_version": {"type": "integer"},
+        "profiles": {"type": "array", "items": {"$ref": "#/$defs/PortableConfigurationProfile"}},
+        "configuration_packs": {"type": "array", "items": {"$ref": "#/$defs/PortableConfigurationPack"}},
+        "alert_thresholds": {"type": "array", "items": {"$ref": "#/$defs/PortableConfigurationThreshold"}},
+        "project_aliases": {"type": "array", "items": {"$ref": "#/$defs/PortableConfigurationProjectAlias"}},
+        "operational_preferences": {"$ref": "#/$defs/PortableConfigurationPreferences"}
+      },
+      "required": ["schema_version", "profiles", "configuration_packs", "alert_thresholds", "operational_preferences"]
+    },
+    "PortableConfigurationCounts": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"profiles": {"type": "integer"}, "configuration_packs": {"type": "integer"}, "alert_thresholds": {"type": "integer"}, "project_aliases": {"type": "integer"}, "operational_preferences": {"type": "integer"}},
+      "required": ["profiles", "configuration_packs", "alert_thresholds", "project_aliases", "operational_preferences"]
+    },
+    "PortableConfigurationConflict": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"key": {"type": "string"}, "kind": {"type": "string"}, "detail": {"type": "string"}, "resolutions": {"type": "array", "items": {"type": "string"}}},
+      "required": ["key", "kind", "detail", "resolutions"]
+    },
+    "PortableConfigurationPreview": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"direction": {"type": "string"}, "schema_version": {"type": "integer"}, "fields": {"type": "array", "items": {"type": "string"}}, "counts": {"$ref": "#/$defs/PortableConfigurationCounts"}, "excluded_fields": {"type": "array", "items": {"type": "string"}}, "conflicts": {"type": "array", "items": {"$ref": "#/$defs/PortableConfigurationConflict"}}, "confirmation_digest": {"type": "string"}, "bundle": {"$ref": "#/$defs/PortableConfigurationBundle"}},
+      "required": ["direction", "schema_version", "fields", "counts", "excluded_fields", "conflicts", "confirmation_digest"]
+    },
+    "PortableConfigurationApplyResult": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"applied": {"type": "boolean"}, "counts": {"$ref": "#/$defs/PortableConfigurationCounts"}, "skipped": {"type": "array", "items": {"type": "string"}}},
+      "required": ["applied", "counts", "skipped"]
+    },
+    "PortableConfigurationRequest": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"action": {"enum": ["configure_appearance", "export_preview", "import_preview", "import_apply"], "type": "string"}, "bundle": {"$ref": "#/$defs/PortableConfigurationBundle"}, "confirmation_digest": {"type": "string"}, "reviewed": {"type": "boolean"}, "resolutions": {"type": "object", "additionalProperties": {"type": "string"}}, "include_project_aliases": {"type": "boolean"}, "appearance": {"enum": ["system", "light", "dark"], "type": "string"}},
+      "required": ["action"]
+    },
+    "PortableConfigurationResponse": {
+      "additionalProperties": false, "type": "object",
+      "properties": {"preview": {"$ref": "#/$defs/PortableConfigurationPreview"}, "result": {"$ref": "#/$defs/PortableConfigurationApplyResult"}},
+      "required": []
     }
   },
   "info": {
@@ -1124,6 +1191,23 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/configuration": {
+      "get": {
+        "operationId": "previewConfigurationExport",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/PortableConfigurationResponse"}}}, "description": "Previews a strict nonsecret configuration export before any destination is created."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "managePortableConfiguration",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/PortableConfigurationRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/PortableConfigurationResponse"}}}, "description": "Previews or applies an explicitly reviewed portable configuration import."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      }
+    },
     "/api/v1/alerts": {
       "get": {
         "operationId": "getAlerts",

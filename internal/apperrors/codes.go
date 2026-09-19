@@ -68,6 +68,9 @@ const (
 	UpdateRequestInvalid                     = "CF_UPDATES_REQUEST_INVALID"
 	TelemetryRequestInvalid                  = "CF_TELEMETRY_REQUEST_INVALID"
 	TelemetryUnavailable                     = "CF_TELEMETRY_UNAVAILABLE"
+	ConfigurationBundleInvalid               = "CF_CONFIGBUNDLE_INVALID"
+	ConfigurationBundleConflict              = "CF_CONFIGBUNDLE_CONFLICT"
+	ConfigurationBundleStale                 = "CF_CONFIGBUNDLE_STALE"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
 	PlatformStatePathUnsafe                  = "CF_PLATFORM_STATE_PATH_UNSAFE"
 	PlatformPermissionDenied                 = "CF_PLATFORM_PERMISSION_DENIED"
@@ -203,6 +206,9 @@ func IsRegistered(code string) bool {
 		UpdateRequestInvalid,
 		TelemetryRequestInvalid,
 		TelemetryUnavailable,
+		ConfigurationBundleInvalid,
+		ConfigurationBundleConflict,
+		ConfigurationBundleStale,
 		PlatformStatePathInvalid,
 		PlatformStatePathUnsafe,
 		PlatformPermissionDenied,

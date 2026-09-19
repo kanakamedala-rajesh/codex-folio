@@ -3,12 +3,13 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "3fe61f788fbe3a6f2053f1c7dfa975bf28294dfdb624cb86d2a63c7c840ff21a" as const;
+  "3cd0e91ca3b78bb80cf09bf41f8b83d46b77addd6c6e4422b4d521a27a72e439" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
 export const UpdatesPath = "/api/v1/updates" as const;
 export const TelemetryPath = "/api/v1/telemetry" as const;
+export const PortableConfigurationPath = "/api/v1/configuration" as const;
 
 export interface AlertRecord {
   alert_id: string;
@@ -190,6 +191,92 @@ export interface TelemetryResponse {
   outcomes: string[];
   duration_buckets: string[];
   detail: string;
+}
+
+export interface PortableConfigurationProfile {
+  alias: string;
+  display_name: string;
+}
+
+export interface PortableConfigurationPack {
+  id: string;
+  version: string;
+  digest: string;
+  files: Record<string, string>;
+}
+
+export interface PortableConfigurationThreshold {
+  profile_alias: string;
+  metric_key: string;
+  warning_percent: number;
+  critical_percent: number;
+}
+
+export interface PortableConfigurationProjectAlias {
+  repository_basename: string;
+  alias: string;
+}
+
+export interface PortableConfigurationPreferences {
+  collection_active_seconds: number;
+  collection_idle_seconds: number;
+  appearance: string;
+}
+
+export interface PortableConfigurationBundle {
+  schema_version: number;
+  profiles: PortableConfigurationProfile[];
+  configuration_packs: PortableConfigurationPack[];
+  alert_thresholds: PortableConfigurationThreshold[];
+  project_aliases?: PortableConfigurationProjectAlias[];
+  operational_preferences: PortableConfigurationPreferences;
+}
+
+export interface PortableConfigurationCounts {
+  profiles: number;
+  configuration_packs: number;
+  alert_thresholds: number;
+  project_aliases: number;
+  operational_preferences: number;
+}
+
+export interface PortableConfigurationConflict {
+  key: string;
+  kind: string;
+  detail: string;
+  resolutions: string[];
+}
+
+export interface PortableConfigurationPreview {
+  direction: string;
+  schema_version: number;
+  fields: string[];
+  counts: PortableConfigurationCounts;
+  excluded_fields: string[];
+  conflicts: PortableConfigurationConflict[];
+  confirmation_digest: string;
+  bundle?: PortableConfigurationBundle;
+}
+
+export interface PortableConfigurationApplyResult {
+  applied: boolean;
+  counts: PortableConfigurationCounts;
+  skipped: string[];
+}
+
+export interface PortableConfigurationRequest {
+  action: string;
+  bundle?: PortableConfigurationBundle;
+  confirmation_digest?: string;
+  reviewed?: boolean;
+  resolutions?: Record<string, string>;
+  include_project_aliases?: boolean;
+  appearance?: string;
+}
+
+export interface PortableConfigurationResponse {
+  preview?: PortableConfigurationPreview;
+  result?: PortableConfigurationApplyResult;
 }
 
 export interface HistoryScope {
@@ -866,6 +953,23 @@ export interface UsageSnapshotResponse {
 }
 
 export interface ApiPaths {
+  "/api/v1/configuration": {
+    get: {
+      operationId: "previewConfigurationExport";
+      responses: {
+        200: { content: { "application/json": PortableConfigurationResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+    post: {
+      operationId: "managePortableConfiguration";
+      requestBody: PortableConfigurationRequest;
+      responses: {
+        200: { content: { "application/json": PortableConfigurationResponse } };
+        default: { content: { "application/json": UsageErrorResponse } };
+      };
+    };
+  };
   "/api/v1/telemetry": {
     get: {
       operationId: "getTelemetry";
@@ -1117,6 +1221,11 @@ export interface ApiPaths {
 }
 
 export interface CodexFolioApiClient {
+  previewConfigurationExport(init?: RequestInit): Promise<PortableConfigurationResponse>;
+  managePortableConfiguration(
+    request: PortableConfigurationRequest,
+    init?: RequestInit,
+  ): Promise<PortableConfigurationResponse>;
   getTelemetry(init?: RequestInit): Promise<TelemetryResponse>;
   manageTelemetry(request: TelemetryRequest, init?: RequestInit): Promise<TelemetryResponse>;
   getUpdates(init?: RequestInit): Promise<UpdateResponse>;
@@ -1169,6 +1278,38 @@ export function createCodexFolioApiClient(
   fetcher: typeof fetch = fetch,
 ): CodexFolioApiClient {
   return {
+    async previewConfigurationExport(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as PortableConfigurationResponse;
+    },
+    async managePortableConfiguration(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/configuration", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as PortableConfigurationResponse;
+    },
     async getTelemetry(init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");

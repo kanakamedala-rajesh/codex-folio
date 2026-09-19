@@ -89,6 +89,17 @@ arguments, analytics, checkpoints, and configuration payloads. Preview and
 confirmation never authorize an upload, issue creation, telemetry, or replacing
 an existing destination.
 
+Portable configuration is a third, separate versioned export class. Its
+allowlist is profile aliases/display names, approved immutable configuration
+pack content, alert thresholds, collection intervals, appearance, and optional
+Project Aliases represented only by repository basename and alias. It never
+contains authentication state, vault keys, Identity Homes, canonical paths,
+local project IDs, telemetry identifiers or consent, service enrollment,
+automatic update consent, notification detail, experiments, usage, histories,
+sessions, raw content, credentials, pack assignments, or local overrides.
+Import does not grant any excluded consent and creates profiles as Pending until
+a local home is chosen and installed Codex completes authentication.
+
 ## Optional telemetry boundary
 
 Telemetry schema v1 permits only the application version, OS family and

@@ -1,5 +1,6 @@
 /* global document, window, innerWidth, getComputedStyle, fetch */
 import { URL } from "node:url";
+import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -704,7 +705,15 @@ try {
           .getAttribute("open"),
         null,
       );
+      const appearanceSaved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "configure_appearance",
+      );
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
+      assert.equal((await appearanceSaved).status(), 200);
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
       const settings = await page.locator("main").innerText();
       assert.equal(
@@ -747,6 +756,243 @@ try {
         "45",
       );
       check("Settings persists bounded collection intervals without enrolling the service");
+
+      const portableSection = page.locator(
+        'section[aria-labelledby="portable-configuration-title"]',
+      );
+      await portableSection
+        .getByLabel("Include Project Aliases matched only by repository basename", {
+          exact: true,
+        })
+        .check();
+      const configurationExported = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "export_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration export", exact: true })
+        .click();
+      const configurationExportResponse = await configurationExported;
+      assert.equal(configurationExportResponse.status(), 200);
+      const configurationPreview = await configurationExportResponse.json();
+      assert.equal(configurationPreview.preview.schema_version, 1);
+      assert.ok(configurationPreview.preview.confirmation_digest);
+      assert.equal(configurationPreview.preview.bundle.operational_preferences.appearance, "light");
+      assert.ok(configurationPreview.preview.bundle.project_aliases.length > 0);
+      const portableBody = JSON.stringify(configurationPreview.preview.bundle);
+      assert.doesNotMatch(
+        portableBody,
+        /identity_home|canonical_path|credential|authentication_method|telemetry|consent|session|raw_content|automatic_update|notification_detail|service_enrollment/,
+      );
+      const configurationDownload = page.waitForEvent("download");
+      await portableSection
+        .getByRole("button", { name: "Download reviewed configuration", exact: true })
+        .click();
+      const downloadedConfiguration = await configurationDownload;
+      assert.equal(
+        downloadedConfiguration.suggestedFilename(),
+        "codex-folio-configuration-v1.json",
+      );
+      assert.deepEqual(
+        JSON.parse(readFileSync(await downloadedConfiguration.path(), "utf8")),
+        configurationPreview.preview.bundle,
+      );
+
+      const configurationFile = portableSection.getByLabel("Portable configuration JSON", {
+        exact: true,
+      });
+      const profilesBeforeRejectedImports = await page.request.get(
+        new URL("/api/v1/profiles", link).href,
+      );
+      const rejectedImportBaseline = await profilesBeforeRejectedImports.json();
+      const configurationCsrf = configurationExportResponse.request().headers()[
+        "x-codexfolio-csrf"
+      ];
+      assert.ok(configurationCsrf);
+      const malformedResponse = await page.evaluate(
+        async ({ csrfToken }) => {
+          const response = await fetch("/api/v1/configuration", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CodexFolio-CSRF": csrfToken,
+            },
+            body: '{"action":"import_preview","bundle":',
+          });
+          return { status: response.status, body: await response.json() };
+        },
+        { csrfToken: configurationCsrf },
+      );
+      assert.equal(malformedResponse.status, 400);
+      assert.equal(malformedResponse.body.code, "CF_CONFIGBUNDLE_INVALID");
+      await configurationFile.setInputFiles({
+        name: "unsupported-configuration.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            ...configurationPreview.preview.bundle,
+            schema_version: 2,
+          }),
+        ),
+      });
+      const unsupportedPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration import", exact: true })
+        .click();
+      assert.equal((await unsupportedPreviewed).status(), 400);
+      await portableSection
+        .getByText(
+          "The file is malformed, unsupported, too large, or contains a field outside schema v1.",
+          { exact: true },
+        )
+        .waitFor();
+      const profilesAfterRejectedImports = await page.request.get(
+        new URL("/api/v1/profiles", link).href,
+      );
+      assert.deepEqual(await profilesAfterRejectedImports.json(), rejectedImportBaseline);
+      const configurationAfterRejectedImports = await page.request.get(
+        new URL("/api/v1/configuration?include_project_aliases=true", link).href,
+      );
+      assert.deepEqual(
+        (await configurationAfterRejectedImports.json()).preview.bundle,
+        configurationPreview.preview.bundle,
+      );
+
+      const conflictingConfiguration = {
+        schema_version: 1,
+        profiles: [{ alias: "Work", display_name: "Imported Work" }],
+        configuration_packs: [],
+        alert_thresholds: [],
+        operational_preferences: {
+          ...configurationPreview.preview.bundle.operational_preferences,
+          appearance: "dark",
+        },
+      };
+      await configurationFile.setInputFiles({
+        name: "conflicting-configuration.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(conflictingConfiguration)),
+      });
+      const conflictPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration import", exact: true })
+        .click();
+      const conflictPreview = await (await conflictPreviewed).json();
+      assert.equal(conflictPreview.preview.conflicts[0].key, "profile:work");
+      assert.equal(
+        await portableSection
+          .getByRole("button", { name: "Apply reviewed configuration", exact: true })
+          .isDisabled(),
+        true,
+      );
+      await portableSection.getByRole("button", { name: "Cancel preview", exact: true }).click();
+      await portableSection
+        .getByText("Preview cancelled. Local state is unchanged.", { exact: true })
+        .waitFor();
+
+      const keepLocalPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration import", exact: true })
+        .click();
+      await keepLocalPreviewed;
+      await portableSection
+        .getByRole("combobox", { name: "Resolution for profile:work", exact: true })
+        .selectOption("keep_local");
+      await portableSection
+        .getByRole("combobox", { name: "Resolution for preferences:operational", exact: true })
+        .selectOption("keep_local");
+      const keptLocalConfiguration = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_apply",
+      );
+      await portableSection
+        .getByRole("button", { name: "Apply reviewed configuration", exact: true })
+        .click();
+      assert.equal((await keptLocalConfiguration).status(), 200);
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+      const keptLocalExport = await page.request.get(new URL("/api/v1/configuration", link).href);
+      assert.equal(
+        (await keptLocalExport.json()).preview.bundle.operational_preferences.appearance,
+        "light",
+      );
+      await portableSection
+        .getByText(
+          "Configuration applied. Imported profiles remain Pending until you choose a local Identity Home and authenticate through Codex.",
+          { exact: true },
+        )
+        .waitFor();
+
+      await configurationFile.setInputFiles({
+        name: "new-device-configuration.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            schema_version: 1,
+            profiles: [{ alias: "Imported", display_name: "Imported Profile" }],
+            configuration_packs: [],
+            alert_thresholds: [],
+            operational_preferences: configurationPreview.preview.bundle.operational_preferences,
+          }),
+        ),
+      });
+      const importPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration import", exact: true })
+        .click();
+      const importedPreview = await (await importPreviewed).json();
+      assert.deepEqual(importedPreview.preview.conflicts, []);
+      const configurationApplied = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_apply",
+      );
+      await portableSection
+        .getByRole("button", { name: "Apply reviewed configuration", exact: true })
+        .click();
+      assert.equal((await configurationApplied).status(), 200);
+      await portableSection
+        .getByText(
+          "Configuration applied. Imported profiles remain Pending until you choose a local Identity Home and authenticate through Codex.",
+          { exact: true },
+        )
+        .waitFor();
+      const importedProfiles = await page.request.get(new URL("/api/v1/profiles", link).href);
+      const importedProfile = (await importedProfiles.json()).profiles.find(
+        (profile) => profile.alias === "Imported",
+      );
+      assert.equal(importedProfile.status, "pending");
+      assert.equal(importedProfile.selected, false);
+      await scanAccessibility("portable-configuration-settings");
+      check(
+        "portable configuration previews exclusions and conflicts, cancels without mutation, and imports a new profile as Pending",
+      );
+
       const automaticUpdates = page.getByLabel("Check automatically", { exact: true });
       assert.equal(await automaticUpdates.isChecked(), false);
       assert.match(
@@ -1067,6 +1313,22 @@ try {
       await assertFocusedHeading("Profiles");
       await scanAccessibility("profiles");
       assert.doesNotMatch(await page.locator("main").innerText(), /referenced-home|CODEX_HOME/);
+
+      await page.getByRole("button", { name: "Imported Profile", exact: true }).click();
+      await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
+      await assertFocusedHeading("Finish setting up Imported Profile");
+      assert.equal(await page.getByLabel("CLI Alias", { exact: true }).inputValue(), "Imported");
+      assert.equal(
+        await page.getByLabel("Managed Identity Home (default)", { exact: true }).isChecked(),
+        true,
+      );
+      await profileAction("Continue in Codex");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      check(
+        "an imported profile requires an explicit local Identity Home choice and fake-Codex authentication before becoming Ready",
+      );
 
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
       await assertFocusedHeading("Add Identity Profile");

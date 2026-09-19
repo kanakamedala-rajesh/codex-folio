@@ -25,6 +25,7 @@ import (
 	alertfeature "venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/configbundle"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
@@ -512,6 +513,10 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
+	configurationBundles, err := configbundle.NewService(stateStore)
+	if err != nil {
+		return httpapi.OperationalServices{}, err
+	}
 	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
 	if err != nil {
 		return httpapi.OperationalServices{}, err
@@ -569,11 +574,12 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
 		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: deliveryEnabled},
 		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
-		Checkpoints:       checkpoints,
-		CheckpointHistory: browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
-		Alerts:            alertService,
-		DiagnosticService: diagnosticService,
-		Telemetry:         telemetryService,
+		Checkpoints:          checkpoints,
+		CheckpointHistory:    browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
+		Alerts:               alertService,
+		DiagnosticService:    diagnosticService,
+		Telemetry:            telemetryService,
+		ConfigurationBundles: configurationBundles,
 	}
 	updateService, err := updates.NewService(updates.ServiceOptions{
 		Repository: stateStore, Source: updatesadapter.DisabledSource(), Clock: usageClock{}, CurrentVersion: buildinfo.Version,

@@ -25,6 +25,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/alerts"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/configbundle"
 	"venkatasudha.com/codex-folio/internal/configpack"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/profile"
@@ -52,6 +53,8 @@ const (
 	CommandDiagnosticsPath           = "/api/v1/command/diagnostics"
 	CommandUpdatesPath               = "/api/v1/command/updates"
 	CommandTelemetryPath             = "/api/v1/command/telemetry"
+	CommandConfigurationBundlePath   = "/api/v1/command/configuration"
+	ConfigurationBundlePath          = "/api/v1/configuration"
 	CommandAnalyticsPath             = "/api/v1/command/analytics"
 	CommandProjectsPath              = "/api/v1/command/projects"
 	CommandActivityPath              = "/api/v1/command/activity"
@@ -139,6 +142,7 @@ type OperationalServices struct {
 	DiagnosticService     *diagnostics.Service
 	Updates               *updates.Service
 	Telemetry             *telemetry.Service
+	ConfigurationBundles  *configbundle.Service
 }
 
 // Options configures the local browser service. Random is used only for
@@ -169,6 +173,7 @@ type Options struct {
 	DiagnosticService     *diagnostics.Service
 	Updates               *updates.Service
 	Telemetry             *telemetry.Service
+	ConfigurationBundles  *configbundle.Service
 	CommandToken          string
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
@@ -211,6 +216,7 @@ type Server struct {
 	diagnosticService     *diagnostics.Service
 	updates               *updates.Service
 	telemetry             *telemetry.Service
+	configurationBundles  *configbundle.Service
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
 	serviceEnrollment     ServiceEnrollmentHealth
@@ -302,6 +308,7 @@ func NewServer(options Options) (*Server, error) {
 		diagnosticService:     options.DiagnosticService,
 		updates:               options.Updates,
 		telemetry:             options.Telemetry,
+		configurationBundles:  options.ConfigurationBundles,
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
 		serviceEnrollment:     options.ServiceEnrollment,
@@ -647,6 +654,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.telemetryHandler(response, request)
+	case CommandConfigurationBundlePath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.configurationBundleHandler(response, request)
 	case CommandAnalyticsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -784,6 +796,15 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.telemetryHandler(response, request)
+	case ConfigurationBundlePath:
+		if !server.authorize(response, request) {
+			return
+		}
+		if request.Method != http.MethodGet && !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		server.configurationBundleHandler(response, request)
 	case ProjectsPath:
 		if !server.authorize(response, request) {
 			return
@@ -1297,6 +1318,7 @@ func (server *Server) Activate(services OperationalServices) error {
 	server.diagnosticService = services.DiagnosticService
 	server.updates = services.Updates
 	server.telemetry = services.Telemetry
+	server.configurationBundles = services.ConfigurationBundles
 	server.operational.Store(true)
 	return nil
 }

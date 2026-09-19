@@ -198,6 +198,11 @@ In the dashboard:
   tied to an exact schema version and can be revoked independently; the random
   installation ID can be reset without displaying it. Development builds show
   **Off · Enablement unavailable** because no production backend is configured.
+- **Settings → Portable configuration** previews a versioned nonsecret bundle
+  before download or import. It can carry profile names, approved immutable
+  pack versions, alert thresholds, collection intervals, appearance, and
+  optional path-free Project Aliases. Imported profiles stay Pending until you
+  choose a local Identity Home and authenticate through installed Codex.
 
 The launch view stays at **Prepared · Not started** until the terminal command
 reports a real process start. It then reports running, exit status, or failed
@@ -295,6 +300,21 @@ The export command requires the displayed confirmation and never replaces an
 existing file. It does not upload, open an issue, enable telemetry, or include
 analytics, checkpoints, configuration payloads, identities, paths, usage, or
 Codex/repository content.
+
+Portable configuration also uses preview-before-write and preview-before-apply:
+
+```sh
+./build/bin/codex-folio configuration export --json
+./build/bin/codex-folio configuration export --write --output ./portable.json --confirmation-digest DIGEST
+./build/bin/codex-folio configuration import --input ./portable.json --json
+```
+
+Use the digest printed by the preview. Import apply additionally requires
+`--apply --reviewed --confirmation-digest DIGEST`; supply each displayed
+conflict as `--resolve KEY=keep_local`, `use_imported`, or `skip`. Export never
+overwrites an existing destination. Authentication, Identity Homes, paths,
+consent, telemetry identity, service enrollment, automatic update checks,
+notification detail, histories, sessions, and credentials are always excluded.
 
 Only an explicitly installed native service runs periodic usage collection.
 Opening the dashboard or using `service start` on demand does not enroll or

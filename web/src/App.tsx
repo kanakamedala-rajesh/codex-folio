@@ -22,6 +22,8 @@ import {
   type ProfileLifecycleRequest,
   type ProfileSummary,
   type ProjectIdentity,
+  type PortableConfigurationRequest,
+  type PortableConfigurationResponse,
   type SelectionResponse,
   type UsageSnapshotResponse,
   type UpdateRequest,
@@ -41,6 +43,7 @@ import { Alerts, NotificationPrivacy } from "./Alerts";
 import { Diagnostics } from "./Diagnostics";
 import { Updates } from "./Updates";
 import { Telemetry } from "./Telemetry";
+import { ConfigurationTransfer } from "./ConfigurationTransfer";
 import "./styles.css";
 
 const api = createCodexFolioApiClient("", async (input, init) => {
@@ -562,6 +565,7 @@ export function App() {
             api.getDiagnostics(),
             api.getUpdates(),
             api.getTelemetry().catch(() => null),
+            api.previewConfigurationExport(),
           ])
         : null,
     ]);
@@ -577,6 +581,15 @@ export function App() {
       setDiagnostics(inventory[4]);
       setUpdates(inventory[5]);
       setTelemetry(inventory[6]);
+      const persistedTheme = inventory[7].preview?.bundle?.operational_preferences.appearance;
+      if (persistedTheme) {
+        setTheme(persistedTheme);
+        try {
+          localStorage.setItem("codex-folio.appearance.v1", persistedTheme);
+        } catch {
+          // The persisted preference still applies for this page when browser storage is unavailable.
+        }
+      }
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
@@ -654,6 +667,39 @@ export function App() {
     } finally {
       operation.current = false;
       setBusy(false);
+    }
+  }
+  async function managePortableConfiguration(
+    request: PortableConfigurationRequest,
+  ): Promise<PortableConfigurationResponse> {
+    if (operation.current) throw new Error(c.refreshing);
+    operation.current = true;
+    setBusy(true);
+    try {
+      return await api.managePortableConfiguration(request, {
+        headers: { "X-CodexFolio-CSRF": csrf.current },
+      });
+    } catch (error) {
+      failure(error);
+      throw error;
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function applyPortableConfiguration() {
+    await load(true);
+  }
+  async function saveAppearance(nextTheme: string) {
+    try {
+      await managePortableConfiguration({
+        action: "configure_appearance",
+        appearance: nextTheme,
+      });
+      setTheme(nextTheme);
+      localStorage.setItem("codex-folio.appearance.v1", nextTheme);
+    } catch {
+      setMessage(c.themeUnavailable);
     }
   }
   async function refresh(trigger: string, current: AnalyticsResponse) {
@@ -1486,6 +1532,11 @@ export function App() {
                     {telemetry ? (
                       <Telemetry data={telemetry} busy={busy} manage={manageTelemetry} />
                     ) : null}
+                    <ConfigurationTransfer
+                      busy={busy}
+                      manage={managePortableConfiguration}
+                      applied={applyPortableConfiguration}
+                    />
                     <section className="border-b border-rule py-6">
                       <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
                         {c.backgroundService}
@@ -1582,12 +1633,7 @@ export function App() {
                       <select
                         value={theme}
                         onChange={(e) => {
-                          setTheme(e.target.value);
-                          try {
-                            localStorage.setItem("codex-folio.appearance.v1", e.target.value);
-                          } catch {
-                            setMessage(c.themeUnavailable);
-                          }
+                          void saveAppearance(e.target.value);
                         }}
                         className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink w-full min-w-0 cursor-pointer"
                       >

@@ -663,6 +663,50 @@ Profile. Cancelling either review performs no write. A running Managed Launch
 continues to block projection while leaving preview and local configuration
 intact.
 
+## Portable nonsecret configuration
+
+The dashboard **Settings → Portable configuration** and the `configuration`
+CLI move only schema-v1 allowlisted settings. Export first returns an exact
+field inventory, record counts, exclusions, bundle, and confirmation digest.
+Writing requires that digest and an unused destination:
+
+```sh
+./build/bin/codex-folio configuration export --json
+./build/bin/codex-folio configuration export \
+  --write --output ./codex-folio-configuration-v1.json \
+  --confirmation-digest DIGEST
+```
+
+Add `--include-project-aliases` to both export commands to carry optional
+Project Aliases. Those records contain only a repository basename and alias;
+ambiguous basenames are omitted, and canonical paths and local project IDs are
+never exported.
+
+Import is also preview-first:
+
+```sh
+./build/bin/codex-folio configuration import --input ./codex-folio-configuration-v1.json --json
+./build/bin/codex-folio configuration import --input ./codex-folio-configuration-v1.json \
+  --apply --reviewed --confirmation-digest DIGEST \
+  --resolve profile:work=keep_local
+```
+
+Resolve every reported conflict with only one of its offered choices:
+`keep_local`, `use_imported`, or `skip`. A malformed or unsupported bundle, an
+unresolved conflict, a stale digest, or cancellation leaves local state
+unchanged. The imported allowlist is profile aliases/display names, approved
+immutable Shared Configuration Pack versions, alert thresholds, collection
+intervals, appearance, and optional path-free Project Aliases. Pack versions
+remain immutable and are not assigned or projected automatically.
+
+Authentication, vault keys, Identity Homes, canonical paths, telemetry IDs and
+consent, service enrollment, automatic update checks, notification detail,
+experiments, usage/history/session/raw content, credentials, pack assignments,
+and local overrides never transfer. Every imported profile is created Pending,
+unselected, and without a home or authentication state. Resume it in Profiles,
+choose a local Managed or Referenced Identity Home, and complete installed-Codex
+authentication before it can become Ready, selected, or launched.
+
 ## Checkpoints and Safe Continuation
 
 Capture repository-first context:
