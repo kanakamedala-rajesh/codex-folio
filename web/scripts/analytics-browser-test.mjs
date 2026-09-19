@@ -129,7 +129,7 @@ export async function testAnalytics({
     "command sentinel",
   ])
     assert.ok(!payload.includes(excluded), excluded);
-  assert.doesNotMatch(payload, /"(?:login_identity|workspace|canonical_path|identity_home)"/);
+  assert.doesNotMatch(payload, /"(?:login_identity|workspace|canonical_path|identity_home)"\s*:/);
   const request = response.request().postDataJSON();
   assert.equal(request.action, "aggregates");
   assert.deepEqual(request.scope.classes, ["aggregates"]);
@@ -142,7 +142,8 @@ export async function testAnalytics({
   const table = page.getByRole("table", {
     name: /The same monthly final samples as the chart/,
   });
-  assert.equal(await table.locator("tbody tr").count(), 13);
+  // Thirteen retained monthly fixtures plus the current unexpired detail month.
+  assert.equal(await table.locator("tbody tr").count(), 14);
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );

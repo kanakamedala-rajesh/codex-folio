@@ -44,6 +44,7 @@ interface AnalyticsDataProps {
   from: string;
   manageHistory: HistoryManager;
   expired: (error: unknown) => void;
+  dataChanged: () => void;
   close: () => void;
 }
 
@@ -444,6 +445,7 @@ function PurgeView(props: AnalyticsDataProps) {
       setPreview(result.purge);
       setConfirmation("");
       setStatus(c.purgeApplied);
+      props.dataChanged();
     } catch (error) {
       setPreview(null);
       setConfirmation("");

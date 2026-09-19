@@ -101,6 +101,13 @@ export function CheckpointManagement({ manage }: Props) {
   }, [manage]);
 
   const saveRetention = async () => {
+    const valid = (value: string) =>
+      value === "unlimited" ||
+      (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 3652059);
+    if (!valid(repositoryRetention) || !valid(assistedRetention)) {
+      setMessage(c.retentionFailed);
+      return;
+    }
     setBusy(true);
     try {
       await manage({

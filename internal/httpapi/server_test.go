@@ -728,6 +728,33 @@ func TestCommandDashboardReentryRequiresCommandAuthorization(t *testing.T) {
 	assertErrorResponse(t, response, http.StatusUnauthorized, apperrors.HTTPAPIBootstrapInvalid, token)
 }
 
+func TestCommandDashboardKeepsIndependentUnconsumedBootstrapLinks(t *testing.T) {
+	server, _, _ := startTestServer(t, Options{CommandToken: "dashboard-test-command"})
+	command := NewCommandClient(server.Origin(), "dashboard-test-command", nil)
+	links := make([]string, 2)
+	for index := range links {
+		link, err := command.Dashboard(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		links[index] = mustBootstrapToken(t, link)
+	}
+	if links[0] == links[1] {
+		t.Fatal("dashboard links reused a bootstrap token")
+	}
+	for _, token := range links {
+		body, _ := json.Marshal(BootstrapRequest{BootstrapToken: token})
+		response, err := doRequest(testClient(t), http.MethodPost, server.Origin()+BootstrapPath, server.Address(), server.Origin(), body, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("independent bootstrap exchange = %d", response.StatusCode)
+		}
+		response.Body.Close()
+	}
+}
+
 func TestLockedServiceExposesSafeHealthAndCommandOnlyUnlock(t *testing.T) {
 	const passphrase = "private unlock sentinel"
 	lifecycle := &serviceLifecycleFixture{health: ServiceHealth{

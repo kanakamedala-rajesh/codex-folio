@@ -59,9 +59,15 @@ export function ServiceHealth({ health, heading }: Props) {
       ) : (
         <>
           <p className="mb-4 max-w-[75ch]">
-            {c.runTerminal} <code className="wrap-anywhere">codex-folio vault unlock</code>{" "}
-            {c.privatePrompt}
+            {c.runTerminal} {c.privatePrompt}
           </p>
+          <div className="mb-4 grid gap-2">
+            {health.guidance_commands.map((command) => (
+              <code className="wrap-anywhere" key={command}>
+                {command}
+              </code>
+            ))}
+          </div>
           <p className="mb-4 max-w-[75ch]">{c.neverExpose}</p>
           <p className="mb-4 max-w-[75ch]">{c.onDemand}</p>
         </>

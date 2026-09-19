@@ -293,6 +293,13 @@ func TestSchedulerBoundsCollectionsAndScheduleStateWorkPerTick(t *testing.T) {
 	if idleStore.saves != MaxScheduleTargets {
 		t.Fatalf("initial schedule writes = %d, want bounded %d", idleStore.saves, MaxScheduleTargets)
 	}
+	if _, err := idleScheduler.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lastID := targets[len(targets)-1].Profile.ID
+	if _, ok := idleStore.states[lastID]; !ok {
+		t.Fatalf("second bounded tick did not rotate far enough to inspect %s", lastID)
+	}
 }
 
 func TestSchedulerPreservesResetTriggerAcrossRestartAndSchedulesReturnedReset(t *testing.T) {

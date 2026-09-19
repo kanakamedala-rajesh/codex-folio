@@ -100,7 +100,7 @@ function currentReading(snapshot: UsageSnapshotResponse | undefined, metricKey: 
     observations.some((item) => item.availability === "contradictory");
   const state = contradictory
     ? "contradictory"
-    : (observation?.availability ?? availability?.state ?? "temporarily_unavailable");
+    : (availability?.state ?? observation?.availability ?? "temporarily_unavailable");
   const compatible =
     !contradictory &&
     (state === "available" || state === "stale") &&
@@ -119,8 +119,8 @@ function historyStart(range: HistoryRange, now: number) {
   if (range === "all") return "all";
   const at = new Date(now);
   if (range === "13-months") {
-    at.setUTCMonth(at.getUTCMonth() - 13);
     at.setUTCDate(1);
+    at.setUTCMonth(at.getUTCMonth() - 13);
     at.setUTCHours(0, 0, 0, 0);
   } else at.setUTCDate(at.getUTCDate() - (range === "90-days" ? 90 : 30));
   return at.toISOString();
@@ -159,8 +159,10 @@ function samplesFor(aggregates: HistoryAggregate[], windowFilter: WindowFilter) 
         Date.parse(left.last_captured_at) - Date.parse(right.last_captured_at) ||
         left.id.localeCompare(right.id),
     );
-    const contradictory = aggregates.some((item) => item.availability === "contradictory");
-    const selected = contradictory ? undefined : aggregates[aggregates.length - 1];
+    const finalCapturedAt = aggregates[aggregates.length - 1].last_captured_at;
+    const finalEvidence = aggregates.filter((item) => item.last_captured_at === finalCapturedAt);
+    const contradictory = finalEvidence.some((item) => item.availability === "contradictory");
+    const selected = contradictory ? undefined : finalEvidence[finalEvidence.length - 1];
     existing[fieldName] = {
       aggregates,
       aggregate: selected,
@@ -957,6 +959,7 @@ export function Analytics({
     "loading",
   );
   const [historyNow] = useState(now);
+  const [dataRevision, setDataRevision] = useState(0);
   const loadHistory = useEffectEvent(readHistory);
   const handleExpired = useEffectEvent(expired);
   const loadProjects = useEffectEvent(readProjects);
@@ -1002,7 +1005,7 @@ export function Analytics({
     return () => {
       cancelled = true;
     };
-  }, [data.candidates, profileId, projectId, range, tab]);
+  }, [data.candidates, dataRevision, profileId, projectId, range, tab]);
 
   useEffect(() => {
     if (tab !== "capacity" || !profileId) return;
@@ -1022,7 +1025,7 @@ export function Analytics({
     return () => {
       cancelled = true;
     };
-  }, [historyNow, profileId, projectId, range, tab]);
+  }, [dataRevision, historyNow, profileId, projectId, range, tab]);
 
   const samples = useMemo(() => samplesFor(aggregates, windowFilter), [aggregates, windowFilter]);
   const profile = data.candidates.find((item) => item.profile_id === profileId);
@@ -1078,6 +1081,7 @@ export function Analytics({
         from={historyStart(range, historyNow)}
         manageHistory={manageHistory}
         expired={expired}
+        dataChanged={() => setDataRevision((value) => value + 1)}
         close={() => {
           setDataView(null);
           requestAnimationFrame(() => heading.current?.focus());

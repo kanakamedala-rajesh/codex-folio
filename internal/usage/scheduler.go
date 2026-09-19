@@ -75,6 +75,7 @@ type Scheduler struct {
 	clock     Clock
 	jitter    Jitter
 	running   atomic.Bool
+	cursor    atomic.Uint64
 }
 
 type TickResult struct {
@@ -125,13 +126,19 @@ func (scheduler *Scheduler) Tick(ctx context.Context) (TickResult, error) {
 	})
 
 	result := TickResult{}
-	for index, target := range targets {
-		if index >= MaxScheduleTargets {
-			break
-		}
+	limit := min(len(targets), MaxScheduleTargets)
+	start := 0
+	if len(targets) > 0 {
+		start = int(scheduler.cursor.Load() % uint64(len(targets)))
+	}
+	inspected := 0
+	defer func() { scheduler.cursor.Add(uint64(inspected)) }()
+	for inspected < limit {
 		if result.Collected >= MaxCollectionsPerTick {
 			break
 		}
+		target := targets[(start+inspected)%len(targets)]
+		inspected++
 		dueAt, trigger := nextScheduledAttempt(target, settings, now)
 		if now.Before(dueAt) {
 			if target.State.NextAttemptAt.IsZero() || !target.State.NextAttemptAt.Equal(dueAt) {

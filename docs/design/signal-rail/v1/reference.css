@@ -135,6 +135,7 @@ body:not(:has(.screen:target)) #overview { display: block; }
   .mobile-bar label { width: 100%; }
   .bottom-nav { display: flex; align-items: end; justify-content: space-around; gap: .25rem; position: fixed; bottom: 0; width: 100%; background: var(--bg); border-top: 1px solid var(--rule); padding: .5rem .25rem; z-index: 3; }
   .bottom-nav a, .bottom-nav summary { min-height: 44px; padding: .65rem .5rem; color: var(--text); text-decoration: none; font-size: .9rem; }
+  .bottom-nav [aria-current="page"] { color: var(--cyan); text-decoration: underline; }
   .bottom-nav details { border: 0; padding: 0; }
   .bottom-nav details[open] > div { position: absolute; bottom: 100%; right: .5rem; min-width: 170px; background: var(--surface); border: 1px solid var(--rule); padding: .5rem; }
   .bottom-nav details > div a { display: block; }

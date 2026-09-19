@@ -500,11 +500,18 @@ export function Profiles({
                 </button>
               </div>
               {result?.terminal_command && (
-                <p className="mt-5 max-w-[75ch] border-y border-warning py-4 text-warning">
-                  {c.terminalRequired}
-                  <br />
+                <section className="mt-5 max-w-[75ch] border-y border-warning py-4 text-warning">
                   <code className="wrap-anywhere text-ink">{result.terminal_command}</code>
-                </p>
+                  <button
+                    className={`${buttonClass} mt-4 block`}
+                    disabled={busy}
+                    onClick={() =>
+                      void runAuthentication(reauthentication ? "reauthenticate" : "add")
+                    }
+                  >
+                    {c.checkTerminal}
+                  </button>
+                </section>
               )}
             </div>
           </div>

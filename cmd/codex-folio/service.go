@@ -355,7 +355,10 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	}
 	if status.Running {
 		if options.enrolled {
-			return exitSuccess
+			if !waitForServiceOwnerRelease(paths) {
+				return exitSuccess
+			}
+			return runServiceStartWithInputWithDiagnostics(paths, options, nil, stdout, stderr, diagnosticSink)
 		}
 		if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -369,7 +372,10 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
 				if options.enrolled {
-					return exitSuccess
+					if !waitForServiceOwnerRelease(paths) {
+						return exitSuccess
+					}
+					return runServiceStartWithInputWithDiagnostics(paths, options, nil, stdout, stderr, diagnosticSink)
 				}
 				if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -408,7 +414,21 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		}
 		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background}
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		_ = stateOwner.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		_ = stateOwner.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
+	serverOptions.TerminalCommandBase = []string{executable}
+	serverOptions.TerminalCommandSuffix = []string{"--state-root=" + paths.Root}
 	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
 		serverOptions.ServiceEnrollment = func() (state, mechanism string, available bool) {
 			status, statusErr := enrollment.Status()
@@ -447,6 +467,26 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	}()
 
 	return waitForServiceStopWithDiagnostics(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+var waitForServiceOwnerRelease = waitForServiceOwnerReleaseSignal
+
+func waitForServiceOwnerReleaseSignal(paths platform.Paths) bool {
+	ctx, stop := signal.NotifyContext(context.Background(), serviceStopSignals()...)
+	defer stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			status, err := platform.Discover(paths, platform.OwnerOptions{})
+			if err == nil && !status.Running {
+				return true
+			}
+		}
+	}
 }
 
 func composeServiceOperationalServices(paths platform.Paths, stateStore *store.Store, enrolled ...bool) (httpapi.OperationalServices, error) {
@@ -1145,7 +1185,16 @@ func metadataStart(metadata *platform.OwnerMetadata) *time.Time {
 }
 
 func writeReusedDashboard(paths platform.Paths, options serviceOptions, status platform.OwnerStatus, stdout, stderr io.Writer) error {
-	connection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+	deadline := time.Now().Add(2 * time.Second)
+	var connection platform.ServiceClient
+	var err error
+	for {
+		connection, err = platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+		if err == nil || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	if err != nil {
 		return err
 	}

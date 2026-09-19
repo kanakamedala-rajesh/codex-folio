@@ -43,6 +43,11 @@ export function ConfigurationPacks({ profile, packs, busy, heading, close, manag
   const [plan, setPlan] = useState<ConfigurationProjectionPlan | null>(null);
   const [promotionVersion, setPromotionVersion] = useState("");
   const [promotion, setPromotion] = useState<ConfigurationPromotionPreview | null>(null);
+  const [reviewableDraft, setReviewableDraft] = useState<{
+    key: string;
+    digest: string;
+    documents: { kind: string; content: string }[];
+  } | null>(null);
   const approved = useMemo(() => packs.filter((pack) => pack.state === "approved"), [packs]);
   const drafts = useMemo(() => packs.filter((pack) => pack.state === "draft"), [packs]);
 
@@ -63,8 +68,17 @@ export function ConfigurationPacks({ profile, packs, busy, heading, close, manag
       agents ? { kind: "agents", content: agents } : null,
       plugins ? { kind: "plugins", content: plugins } : null,
     ].filter((document): document is { kind: string; content: string } => document !== null);
-    await run({ action: "create", pack_id: packID, version, documents }, c.draftCreated);
-    setSelectedVersion(`${packID}@${version}`);
+    const response = await run(
+      { action: "create", pack_id: packID, version, documents },
+      c.draftCreated,
+    );
+    if (response?.pack) {
+      setReviewableDraft({
+        key: `${response.pack.id}@${response.pack.version}`,
+        digest: response.pack.digest,
+        documents,
+      });
+    }
   }
 
   function selectedParts() {
@@ -75,7 +89,7 @@ export function ConfigurationPacks({ profile, packs, busy, heading, close, manag
   async function approveDraft(value: string) {
     const split = value.lastIndexOf("@");
     if (split < 1) return;
-    await run(
+    const response = await run(
       {
         action: "approve",
         pack_id: value.slice(0, split),
@@ -84,6 +98,7 @@ export function ConfigurationPacks({ profile, packs, busy, heading, close, manag
       },
       c.approved,
     );
+    if (response) setReviewableDraft(null);
   }
 
   async function assign() {
@@ -294,15 +309,29 @@ export function ConfigurationPacks({ profile, packs, busy, heading, close, manag
                 <span className="ml-3 text-muted">
                   {pack.state} · {pack.files.join(", ")}
                 </span>
-                {pack.state === "draft" && (
-                  <button
-                    className={`${buttonClass} mt-3 block`}
-                    disabled={busy}
-                    onClick={() => void approveDraft(`${pack.id}@${pack.version}`)}
-                  >
-                    {c.approve}
-                  </button>
-                )}
+                {pack.state === "draft" && reviewableDraft?.key === `${pack.id}@${pack.version}` ? (
+                  <section className="mt-4 border-y border-rule py-4">
+                    <p className="text-muted">{c.reviewExactDraft}</p>
+                    <code className="wrap-anywhere">{reviewableDraft.digest}</code>
+                    {reviewableDraft.documents.map((document) => (
+                      <details className="mt-3" key={document.kind}>
+                        <summary className="cursor-pointer font-semibold">{document.kind}</summary>
+                        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap border border-rule bg-canvas p-3">
+                          {document.content}
+                        </pre>
+                      </details>
+                    ))}
+                    <button
+                      className={`${buttonClass} mt-3 block`}
+                      disabled={busy}
+                      onClick={() => void approveDraft(reviewableDraft.key)}
+                    >
+                      {c.approve}
+                    </button>
+                  </section>
+                ) : pack.state === "draft" ? (
+                  <span className="mt-3 block text-muted">{c.reopenDraft}</span>
+                ) : null}
               </li>
             ))}
           </ul>

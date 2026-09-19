@@ -179,7 +179,7 @@ type HistoryRepository interface {
 	SetAnalyticsRetention(context.Context, string) (Retention, error)
 	RetainAnalytics(context.Context) (RetentionResult, error)
 	PurgeAnalytics(context.Context, HistoryScope, string) (PurgeResult, error)
-	ListUsageAggregates(context.Context, HistoryScope) ([]HistoryAggregate, error)
+	ListUsageHistory(context.Context, HistoryScope) ([]HistoryAggregate, error)
 }
 
 type HistoryService struct{ repository HistoryRepository }
@@ -209,5 +209,5 @@ func (service *HistoryService) Purge(ctx context.Context, scope HistoryScope, co
 }
 
 func (service *HistoryService) Aggregates(ctx context.Context, scope HistoryScope) ([]HistoryAggregate, error) {
-	return service.repository.ListUsageAggregates(ctx, scope)
+	return service.repository.ListUsageHistory(ctx, scope)
 }

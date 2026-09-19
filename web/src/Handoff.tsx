@@ -61,18 +61,23 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
+      let terminal = false;
       try {
         const records = await readActivity(response.target_alias, response.project_id);
         if (cancelled) return;
-        const created = Date.parse(response.created_at);
-        setLifecycle(
-          records.find(
-            (record) =>
-              record.record_type === "managed_launch" && Date.parse(record.started_at) >= created,
-          ),
+        const record = records.find(
+          (item) =>
+            item.record_type === "managed_launch" &&
+            item.continuation_checkpoint_id === response.checkpoint_id &&
+            item.continuation_revision === response.revision,
         );
+        terminal = record?.lifecycle === "exited" || record?.lifecycle === "abandoned";
+        setLifecycle(record);
+      } catch {
+        setMessage(c.operationFailed);
+        terminal = true;
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => void poll(), 500);
+        if (!cancelled && !terminal) timer = window.setTimeout(() => void poll(), 500);
       }
     };
     void poll();
@@ -83,7 +88,9 @@ export function Handoff({ initial, heading, manage, readActivity, close }: Props
   }, [
     readActivity,
     response.created_at,
+    response.checkpoint_id,
     response.project_id,
+    response.revision,
     response.target_alias,
     response.terminal_command,
   ]);

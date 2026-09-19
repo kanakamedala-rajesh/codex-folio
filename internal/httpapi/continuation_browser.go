@@ -113,7 +113,18 @@ func (server *Server) browserHandoff(response http.ResponseWriter, request *http
 			err = continuation.ErrCheckpointInvalid
 			break
 		}
-		checkpoint, err = service.Approve(request.Context(), *input.CheckpointId, *input.Revision)
+		var current continuation.Checkpoint
+		current, err = service.Show(request.Context(), *input.CheckpointId)
+		if err == nil {
+			var readiness HandoffResponse
+			readiness, err = server.handoffResponse(request.Context(), service, current, targetAlias)
+			if err == nil && (readiness.SourceState != string(continuation.SourceExited) || !readiness.TargetEligible) {
+				err = continuation.ErrHandoffNotReady
+			}
+		}
+		if err == nil {
+			checkpoint, err = service.Approve(request.Context(), *input.CheckpointId, *input.Revision)
+		}
 	case "assist":
 		if input.CheckpointId == nil || input.Revision == nil || input.ThreadId == nil || input.HistoryConsent == nil || !*input.HistoryConsent || strings.TrimSpace(*input.CheckpointId) == "" || strings.TrimSpace(*input.Revision) == "" || strings.TrimSpace(*input.ThreadId) == "" || input.ProjectId != nil || input.Fields != nil || input.PreviewRevision != nil || input.RedactPaths != nil || input.RedactText != nil || server.checkpointHistory == nil {
 			err = continuation.ErrCheckpointInvalid
@@ -147,7 +158,18 @@ func (server *Server) browserHandoff(response http.ResponseWriter, request *http
 			err = continuation.ErrCheckpointInvalid
 			break
 		}
-		checkpoint, err = service.ApproveAssisted(request.Context(), *input.CheckpointId, *input.Revision, *input.PreviewRevision, continuation.EditRequest{Fields: handoffFields(*input.Fields), RedactPaths: stringSlice(input.RedactPaths), RedactText: stringSlice(input.RedactText)})
+		var current continuation.Checkpoint
+		current, err = service.Show(request.Context(), *input.CheckpointId)
+		if err == nil {
+			var readiness HandoffResponse
+			readiness, err = server.handoffResponse(request.Context(), service, current, targetAlias)
+			if err == nil && (readiness.SourceState != string(continuation.SourceExited) || !readiness.TargetEligible) {
+				err = continuation.ErrHandoffNotReady
+			}
+		}
+		if err == nil {
+			checkpoint, err = service.ApproveAssisted(request.Context(), *input.CheckpointId, *input.Revision, *input.PreviewRevision, continuation.EditRequest{Fields: handoffFields(*input.Fields), RedactPaths: stringSlice(input.RedactPaths), RedactText: stringSlice(input.RedactText)})
+		}
 	default:
 		err = continuation.ErrCheckpointInvalid
 	}
@@ -394,7 +416,7 @@ func (server *Server) handoffResponse(ctx context.Context, service browserCheckp
 	result.SourceProfileId, result.SourceAlias, result.SourceState = source.ProfileID, sourceAlias, string(source.State)
 	result.TargetProfileId, result.TargetAlias, result.TargetEligible, result.TargetCaution = targetID, targetAlias, targetEligible, caution
 	if checkpoint.Status == continuation.StatusApproved && targetEligible && source.State == continuation.SourceExited {
-		result.TerminalCommand = "codex-folio handoff " + terminalArgument(targetAlias) + " --checkpoint " + terminalArgument(checkpoint.ID) + " --revision " + terminalArgument(checkpoint.Revision)
+		result.TerminalCommand = server.terminalCommand("handoff", targetAlias, "--checkpoint", checkpoint.ID, "--revision", checkpoint.Revision)
 	}
 	return result, nil
 }

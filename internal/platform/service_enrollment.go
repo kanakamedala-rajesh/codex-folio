@@ -235,6 +235,7 @@ func (enrollment *ServiceEnrollment) Install() (ServiceEnrollmentResult, error) 
 		return ServiceEnrollmentResult{}, apperrors.New(apperrors.PlatformServiceUnavailable, errors.New("native per-user service mechanism is unavailable"))
 	}
 	changed := !before.Installed
+	restarted := false
 	switch enrollment.platform {
 	case PlatformLinux:
 		definition := enrollment.systemdDefinition()
@@ -248,6 +249,12 @@ func (enrollment *ServiceEnrollment) Install() (ServiceEnrollmentResult, error) 
 		}
 		if err := enrollment.run("systemctl", "--user", "enable", linuxServiceName); err != nil {
 			return ServiceEnrollmentResult{}, err
+		}
+		if before.Active && fileChanged {
+			if err := enrollment.run("systemctl", "--user", "restart", linuxServiceName); err != nil {
+				return ServiceEnrollmentResult{}, err
+			}
+			restarted = true
 		}
 	case PlatformDarwin:
 		definition := enrollment.launchAgentDefinition()
@@ -279,14 +286,19 @@ func (enrollment *ServiceEnrollment) Install() (ServiceEnrollmentResult, error) 
 			changed = !matches
 		}
 		if changed {
+			if before.Active {
+				_, _ = enrollment.runner.Run("schtasks.exe", "/End", "/TN", windowsTaskName)
+			}
 			arguments := []string{"/Create", "/TN", windowsTaskName, "/SC", "ONLOGON", "/TR", windowsCommandLine(enrollment.executable, enrollment.arguments), "/RL", "LIMITED", "/F"}
 			if err := enrollment.run("schtasks.exe", arguments...); err != nil {
 				return ServiceEnrollmentResult{}, err
 			}
 		}
 	}
-	if err := enrollment.Start(); err != nil {
-		return ServiceEnrollmentResult{}, err
+	if !restarted {
+		if err := enrollment.Start(); err != nil {
+			return ServiceEnrollmentResult{}, err
+		}
 	}
 	after, err := enrollment.Status()
 	return ServiceEnrollmentResult{ServiceEnrollmentStatus: after, Changed: changed}, err
@@ -324,14 +336,24 @@ func (enrollment *ServiceEnrollment) Uninstall() (ServiceEnrollmentResult, error
 	if !before.Available {
 		return ServiceEnrollmentResult{}, apperrors.New(apperrors.PlatformServiceUnavailable, errors.New("native per-user service mechanism is unavailable"))
 	}
-	if !before.Installed {
+	definitionExists := false
+	if before.Definition != "" {
+		_, statErr := os.Stat(before.Definition)
+		definitionExists = statErr == nil
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return ServiceEnrollmentResult{}, enrollmentError(statErr)
+		}
+	}
+	if !before.Installed && !definitionExists {
 		return ServiceEnrollmentResult{ServiceEnrollmentStatus: before}, nil
 	}
 	switch enrollment.platform {
 	case PlatformLinux:
 		_, _ = enrollment.runner.Run("systemctl", "--user", "stop", linuxServiceName)
-		if err := enrollment.run("systemctl", "--user", "disable", linuxServiceName); err != nil {
-			return ServiceEnrollmentResult{}, err
+		if before.Installed {
+			if err := enrollment.run("systemctl", "--user", "disable", linuxServiceName); err != nil {
+				return ServiceEnrollmentResult{}, err
+			}
 		}
 		if err := os.Remove(enrollment.DefinitionPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return ServiceEnrollmentResult{}, enrollmentError(err)

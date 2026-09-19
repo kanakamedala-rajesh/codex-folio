@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/httpapi"
@@ -99,11 +100,35 @@ func TestEnrolledServiceStartReusesOwnerWithoutEmittingDashboardCredential(t *te
 	}
 	go func() { _ = server.Serve(listener) }()
 
+	entered, release := make(chan struct{}), make(chan struct{})
+	originalWaiter := waitForServiceOwnerRelease
+	waitForServiceOwnerRelease = func(platform.Paths) bool {
+		close(entered)
+		<-release
+		return false
+	}
+	t.Cleanup(func() { waitForServiceOwnerRelease = originalWaiter })
+
 	var stdout, stderr bytes.Buffer
-	code := runWithServicePathResolver(
-		[]string{"service", "start", "--enrolled", "--state-root", stateRoot},
-		&stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home),
-	)
+	result := make(chan int, 1)
+	go func() {
+		result <- runWithServicePathResolver(
+			[]string{"service", "start", "--enrolled", "--state-root", stateRoot},
+			&stdout, &stderr, buildinfo.Metadata{}, testServicePathResolver(home),
+		)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("enrolled start did not wait for the foreground owner")
+	}
+	select {
+	case code := <-result:
+		t.Fatalf("enrolled start exited early with %d", code)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	code := <-result
 	if code != exitSuccess || stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("enrolled start = %d, stdout = %q, stderr = %q; want silent reuse", code, stdout.String(), stderr.String())
 	}

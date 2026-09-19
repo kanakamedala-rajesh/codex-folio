@@ -17,6 +17,8 @@ type Props = {
   heading: RefObject<HTMLHeadingElement | null>;
   chooseProject: (projectId: string) => void;
   close: () => void;
+  commandBase: string;
+  commandSuffix: string;
 };
 
 const buttonClass =
@@ -39,6 +41,8 @@ export function Launch({
   heading,
   chooseProject,
   close,
+  commandBase,
+  commandSuffix,
 }: Props) {
   const project = projects.find((item) => item.project_id === projectId);
   const active = record?.lifecycle === "pending" || record?.lifecycle === "running";
@@ -96,12 +100,16 @@ export function Launch({
           <h2 className="mb-3 text-[1.4rem] font-bold">{c.terminal}</h2>
           <p className="mb-4 max-w-[75ch]">{c.terminalDetail}</p>
           <code className="wrap-anywhere">
-            codex-folio launch {target.alias} --project {project.project_id} --
+            {commandBase} launch {target.alias} --project {project.project_id}
+            {commandSuffix ? ` ${commandSuffix}` : ""} --
           </code>
         </section>
       ) : (
         <p className="my-6 border-y border-warning py-5 text-warning">
-          {c.registerProject} <code>codex-folio project resolve .</code>
+          {c.registerProject}{" "}
+          <code>
+            {commandBase} project resolve .{commandSuffix ? ` ${commandSuffix}` : ""}
+          </code>
         </p>
       )}
       <p className="mb-4 max-w-[75ch]">{c.lifecycleDetail}</p>

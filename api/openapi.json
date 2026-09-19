@@ -286,6 +286,8 @@
         "started_at": {"type": "string"},
         "last_observed_at": {"type": "string"},
         "lifecycle": {"type": "string"},
+        "continuation_checkpoint_id": {"type": "string"},
+        "continuation_revision": {"type": "string"},
         "exit_status": {"type": "string"},
         "model": {"type": "string"},
         "tokens_used": {"type": "string"},
@@ -371,6 +373,14 @@
           "items": {"type": "string"},
           "type": "array"
         },
+        "terminal_command_base": {
+          "description": "The platform-quoted active executable prefix for safe browser terminal handoffs.",
+          "type": "string"
+        },
+        "terminal_command_suffix": {
+          "description": "Platform-quoted service options appended before a command's argument separator.",
+          "type": "string"
+        },
         "enrollment_state": {
           "description": "The inspectable state of optional native per-user startup enrollment.",
           "enum": ["unavailable", "not_installed", "installed", "active"],
@@ -400,6 +410,8 @@
         "database_state",
         "error_code",
         "guidance_commands",
+        "terminal_command_base",
+        "terminal_command_suffix",
         "enrollment_state",
         "enrollment_mechanism",
         "enrollment_available",

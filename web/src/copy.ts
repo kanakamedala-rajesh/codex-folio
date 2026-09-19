@@ -29,6 +29,12 @@ export const copy = {
   refreshing: "Refreshing…",
   launch: "Launch Codex",
   handoff: "Prepare Handoff",
+  handoffProjectTitle: "Choose the source project",
+  handoffProjectDetail:
+    "The repository-first checkpoint is captured from the project you explicitly select.",
+  handoffProject: "Source Project Identity",
+  handoffProjectChoose: "Choose a project",
+  handoffProjectContinue: "Capture checkpoint",
   details: "Open details",
   refreshStart: "Refreshing capacity. Last-known evidence remains visible with its original age.",
   refreshDone: "Capacity refreshed.",
@@ -669,6 +675,7 @@ export const profileCopy = {
   setupSaved: "Setup is saved. Resume here after signing in.",
   reauthSaved: "The established Identity Home stays unchanged.",
   terminalRequired: "Continue device-code authentication in your terminal:",
+  checkTerminal: "I finished in the terminal — check again",
   back: "Back to Profiles",
   updated: "Identity Profile metadata updated.",
   readyMessage: "Identity Profile is ready.",
@@ -706,6 +713,10 @@ export const profileErrorCopy: Record<string, string> = {
 };
 
 export const configurationCopy = {
+  reviewExactDraft:
+    "Review the exact draft content and digest below before approving this version.",
+  reopenDraft:
+    "Approval is unavailable after this exact-content review leaves the page. Create a new version to review and approve changed content.",
   title: "Shared Configuration Packs",
   localOnly:
     "Reviewed declarative configuration only. Credentials and Identity Home content stay excluded.",

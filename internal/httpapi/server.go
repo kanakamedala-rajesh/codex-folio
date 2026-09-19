@@ -158,6 +158,8 @@ type Options struct {
 	ServiceLifecycle      ServiceLifecycle
 	StartLocked           bool
 	ServiceEnrollment     ServiceEnrollmentHealth
+	TerminalCommandBase   []string
+	TerminalCommandSuffix []string
 }
 
 // ServerOptions is retained as a descriptive alias for callers composing the
@@ -193,6 +195,8 @@ type Server struct {
 	commandToken          [sha256.Size]byte
 	serviceLifecycle      ServiceLifecycle
 	serviceEnrollment     ServiceEnrollmentHealth
+	terminalCommandBase   []string
+	terminalCommandSuffix []string
 	operational           atomic.Bool
 	activationMu          sync.Mutex
 
@@ -200,6 +204,7 @@ type Server struct {
 	bootstrapDigest    [sha256.Size]byte
 	bootstrapExpiresAt time.Time
 	bootstrapAvailable bool
+	bootstrapTokens    map[[sha256.Size]byte]time.Time
 	sessions           map[[sha256.Size]byte]session
 
 	listener    net.Listener
@@ -277,14 +282,59 @@ func NewServer(options Options) (*Server, error) {
 		commandToken:          commandToken,
 		serviceLifecycle:      options.ServiceLifecycle,
 		serviceEnrollment:     options.ServiceEnrollment,
+		terminalCommandBase:   append([]string(nil), options.TerminalCommandBase...),
+		terminalCommandSuffix: append([]string(nil), options.TerminalCommandSuffix...),
 		bootstrapToken:        token,
 		bootstrapDigest:       sha256.Sum256([]byte(encodedToken)),
 		bootstrapExpiresAt:    now.Add(bootstrapTTL),
 		bootstrapAvailable:    true,
+		bootstrapTokens:       map[[sha256.Size]byte]time.Time{sha256.Sum256([]byte(encodedToken)): now.Add(bootstrapTTL)},
 		sessions:              make(map[[sha256.Size]byte]session),
 	}
 	server.operational.Store(!options.StartLocked)
+	if len(server.terminalCommandBase) == 0 {
+		server.terminalCommandBase = []string{"codex-folio"}
+	}
 	return server, nil
+}
+
+func (server *Server) terminalCommand(arguments ...string) string {
+	base := []string{"codex-folio"}
+	if server != nil && len(server.terminalCommandBase) > 0 {
+		base = server.terminalCommandBase
+	}
+	all := append(append([]string(nil), base...), arguments...)
+	if server != nil {
+		all = append(all, server.terminalCommandSuffix...)
+	}
+	parts := make([]string, 0, len(all))
+	for _, argument := range all {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (server *Server) terminalCommandBaseString() string {
+	base := []string{"codex-folio"}
+	if server != nil && len(server.terminalCommandBase) > 0 {
+		base = server.terminalCommandBase
+	}
+	parts := make([]string, 0, len(base))
+	for _, argument := range base {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (server *Server) terminalCommandSuffixString() string {
+	if server == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(server.terminalCommandSuffix))
+	for _, argument := range server.terminalCommandSuffix {
+		parts = append(parts, terminalArgument(argument))
+	}
+	return strings.Join(parts, " ")
 }
 
 // Listen binds exclusively to an IPv4 loopback address. It deliberately does
@@ -1006,10 +1056,18 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 		server.bootstrapAvailable = false
 		server.bootstrapToken = nil
 	}
-	valid := server.bootstrapAvailable && subtle.ConstantTimeCompare(digest[:], server.bootstrapDigest[:]) == 1
+	for candidate, expiresAt := range server.bootstrapTokens {
+		if !now.Before(expiresAt) {
+			delete(server.bootstrapTokens, candidate)
+		}
+	}
+	_, valid := server.bootstrapTokens[digest]
 	if valid {
-		server.bootstrapAvailable = false
-		server.bootstrapToken = nil
+		delete(server.bootstrapTokens, digest)
+		if subtle.ConstantTimeCompare(digest[:], server.bootstrapDigest[:]) == 1 {
+			server.bootstrapAvailable = false
+			server.bootstrapToken = nil
+		}
 	}
 	server.mu.Unlock()
 	if !valid {
@@ -1116,18 +1174,20 @@ func (server *Server) validCSRF(request *http.Request) bool {
 func (server *Server) writeMetadata(response http.ResponseWriter, request *http.Request) {
 	health := server.health()
 	writeJSON(response, http.StatusOK, MetadataResponse{
-		APIVersion:          APIVersion,
-		ContractVersion:     ContractVersion,
-		Product:             server.product,
-		ServiceState:        health.ServiceState,
-		VaultState:          health.VaultState,
-		DatabaseState:       health.DatabaseState,
-		ErrorCode:           health.ErrorCode,
-		GuidanceCommands:    health.GuidanceCommands,
-		EnrollmentState:     health.EnrollmentState,
-		EnrollmentMechanism: health.EnrollmentMechanism,
-		EnrollmentAvailable: health.EnrollmentAvailable,
-		EnrollmentGuidance:  health.EnrollmentGuidance,
+		APIVersion:            APIVersion,
+		ContractVersion:       ContractVersion,
+		Product:               server.product,
+		ServiceState:          health.ServiceState,
+		VaultState:            health.VaultState,
+		DatabaseState:         health.DatabaseState,
+		ErrorCode:             health.ErrorCode,
+		GuidanceCommands:      health.GuidanceCommands,
+		TerminalCommandBase:   server.terminalCommandBaseString(),
+		TerminalCommandSuffix: server.terminalCommandSuffixString(),
+		EnrollmentState:       health.EnrollmentState,
+		EnrollmentMechanism:   health.EnrollmentMechanism,
+		EnrollmentAvailable:   health.EnrollmentAvailable,
+		EnrollmentGuidance:    health.EnrollmentGuidance,
 	})
 }
 
@@ -1185,17 +1245,28 @@ func (server *Server) health() ServiceHealth {
 			GuidanceCommands: []string{"codex-folio vault unlock"},
 		}
 	}
+	if server != nil {
+		switch health.ServiceState {
+		case ServiceStateLocked:
+			health.GuidanceCommands = []string{server.terminalCommand("vault", "unlock")}
+		case ServiceStateRecoveryRequired:
+			health.GuidanceCommands = []string{
+				server.terminalCommand("service", "recovery", "verify"),
+				server.terminalCommand("service", "recovery", "list"),
+			}
+		}
+	}
 	health.EnrollmentState = "unavailable"
-	health.EnrollmentGuidance = []string{"codex-folio service status"}
+	health.EnrollmentGuidance = []string{server.terminalCommand("service", "status")}
 	if server != nil && server.serviceEnrollment != nil {
 		health.EnrollmentState, health.EnrollmentMechanism, health.EnrollmentAvailable = server.serviceEnrollment()
 	}
 	if health.EnrollmentAvailable {
 		switch health.EnrollmentState {
 		case "installed", "active":
-			health.EnrollmentGuidance = append(health.EnrollmentGuidance, "codex-folio service uninstall")
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, server.terminalCommand("service", "uninstall"))
 		case "not_installed":
-			health.EnrollmentGuidance = append(health.EnrollmentGuidance, "codex-folio service install")
+			health.EnrollmentGuidance = append(health.EnrollmentGuidance, server.terminalCommand("service", "install"))
 		}
 	}
 	return health
@@ -1360,6 +1431,7 @@ func (server *Server) invalidateLocked() {
 	server.sessions = make(map[[sha256.Size]byte]session)
 	server.bootstrapAvailable = false
 	server.bootstrapToken = nil
+	server.bootstrapTokens = make(map[[sha256.Size]byte]time.Time)
 }
 
 func setSecurityHeaders(response http.ResponseWriter) {

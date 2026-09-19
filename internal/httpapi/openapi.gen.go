@@ -20,7 +20,7 @@ const (
 	HistoryPath            = "/api/v1/analytics/history"
 	HandoffPath            = "/api/v1/handoff"
 	ContractVersion        = "0.0.1-alpha"
-	ContractSourceSHA256   = "e4e0ab4f13558ce90d6d8d56a3ccae277a2b4bedd149fc52236469a3c83258a7"
+	ContractSourceSHA256   = "1b11432b3dea53cf05ebcc6bfa4c088d8284abe1db03ee2b0635315b6c645bd2"
 	BootstrapPath          = "/api/v1/bootstrap"
 	CollectionSettingsPath = "/api/v1/collection-settings"
 	ConfigurationPacksPath = "/api/v1/configuration-packs"
@@ -446,6 +446,8 @@ type ActivityRecord struct {
 	StartedAt                  string  `json:"started_at"`
 	LastObservedAt             string  `json:"last_observed_at"`
 	Lifecycle                  string  `json:"lifecycle"`
+	ContinuationCheckpointId   *string `json:"continuation_checkpoint_id,omitempty"`
+	ContinuationRevision       *string `json:"continuation_revision,omitempty"`
 	ExitStatus                 string  `json:"exit_status"`
 	Model                      string  `json:"model"`
 	TokensUsed                 string  `json:"tokens_used"`
@@ -494,18 +496,20 @@ type CollectionSettingsResponse struct {
 }
 
 type MetadataResponse struct {
-	APIVersion          string   `json:"api_version"`
-	ContractVersion     string   `json:"contract_version"`
-	Product             string   `json:"product"`
-	ServiceState        string   `json:"service_state"`
-	VaultState          string   `json:"vault_state"`
-	DatabaseState       string   `json:"database_state"`
-	ErrorCode           string   `json:"error_code"`
-	GuidanceCommands    []string `json:"guidance_commands"`
-	EnrollmentState     string   `json:"enrollment_state"`
-	EnrollmentMechanism string   `json:"enrollment_mechanism"`
-	EnrollmentAvailable bool     `json:"enrollment_available"`
-	EnrollmentGuidance  []string `json:"enrollment_guidance"`
+	APIVersion            string   `json:"api_version"`
+	ContractVersion       string   `json:"contract_version"`
+	Product               string   `json:"product"`
+	ServiceState          string   `json:"service_state"`
+	VaultState            string   `json:"vault_state"`
+	DatabaseState         string   `json:"database_state"`
+	ErrorCode             string   `json:"error_code"`
+	GuidanceCommands      []string `json:"guidance_commands"`
+	TerminalCommandBase   string   `json:"terminal_command_base"`
+	TerminalCommandSuffix string   `json:"terminal_command_suffix"`
+	EnrollmentState       string   `json:"enrollment_state"`
+	EnrollmentMechanism   string   `json:"enrollment_mechanism"`
+	EnrollmentAvailable   bool     `json:"enrollment_available"`
+	EnrollmentGuidance    []string `json:"enrollment_guidance"`
 }
 
 type ProfileSetupStages struct {

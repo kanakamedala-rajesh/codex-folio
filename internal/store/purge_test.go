@@ -200,6 +200,16 @@ func TestPurgeProjectActivityRollbackRestartAndLifecycleIsolation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	var continuationLaunch activity.TimelineRecord
+	for _, record := range timeline {
+		if record.ID == "launch-project-a" {
+			continuationLaunch = record
+			break
+		}
+	}
+	if continuationLaunch.ContinuationCheckpointID != "checkpoint-project-a" || continuationLaunch.ContinuationRevision != "revision" {
+		t.Fatalf("continuation launch identity = %#v", continuationLaunch)
+	}
 	scope := usage.HistoryScope{ProfileID: "*", ProjectID: "project-a", From: "2026-08-01T00:00:00Z", To: "2026-08-02T00:00:00Z", Classes: []string{"usage", "aggregates", "observed_sessions", "managed_launches", "checkpoints"}}
 	preview, err := state.PurgeAnalytics(ctx, scope, "")
 	if err != nil {

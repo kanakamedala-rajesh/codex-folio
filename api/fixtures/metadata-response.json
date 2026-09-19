@@ -7,6 +7,8 @@
   "database_state": "ready",
   "error_code": "",
   "guidance_commands": [],
+  "terminal_command_base": "codex-folio",
+  "terminal_command_suffix": "",
   "enrollment_state": "not_installed",
   "enrollment_mechanism": "systemd-user",
   "enrollment_available": true,

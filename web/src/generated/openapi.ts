@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "e4e0ab4f13558ce90d6d8d56a3ccae277a2b4bedd149fc52236469a3c83258a7" as const;
+  "1b11432b3dea53cf05ebcc6bfa4c088d8284abe1db03ee2b0635315b6c645bd2" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 
 export interface HistoryScope {
@@ -419,6 +419,8 @@ export interface ActivityRecord {
   started_at: string;
   last_observed_at: string;
   lifecycle: string;
+  continuation_checkpoint_id?: string;
+  continuation_revision?: string;
   exit_status: string;
   model: string;
   tokens_used: string;
@@ -462,6 +464,8 @@ export interface MetadataResponse {
   database_state: string;
   error_code: string;
   guidance_commands: string[];
+  terminal_command_base: string;
+  terminal_command_suffix: string;
   enrollment_state: string;
   enrollment_mechanism: string;
   enrollment_available: boolean;

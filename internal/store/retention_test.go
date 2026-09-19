@@ -91,6 +91,39 @@ func historyReading(at time.Time) usage.Snapshot {
 	return snapshot
 }
 
+func TestUsageHistoryCombinesRetainedDetailsWithCompactedAggregates(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	addReadyProfile(t, state, "work", "Work")
+	target, err := state.ResolveUsageProfile(ctx, "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Time{
+		time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+	} {
+		if _, err := state.SaveUsageSnapshot(ctx, target, historyReading(at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := state.SetAnalyticsRetention(ctx, "30"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.RetainAnalytics(ctx); err != nil {
+		t.Fatal(err)
+	}
+	scope := usage.HistoryScope{ProfileID: "work", ProjectID: "*", From: "all", To: "all", Classes: []string{"aggregates"}}
+	items, err := state.ListUsageHistory(ctx, scope)
+	if err != nil || len(items) != 2 || items[0].Samples != 1 || items[1].Samples != 1 {
+		t.Fatalf("combined history = %#v/%v, want one retained detail and one compacted aggregate", items, err)
+	}
+}
+
 func TestRetentionMinimumDefaultUnlimitedAndExactBoundary(t *testing.T) {
 	for _, setting := range []string{"30", usage.DefaultRetention} {
 		t.Run(setting, func(t *testing.T) {

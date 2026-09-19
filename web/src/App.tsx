@@ -41,6 +41,11 @@ const api = createCodexFolioApiClient("", async (input, init) => {
 });
 const metrics = ["codex.primary.used_percent", "codex.secondary.used_percent"];
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+const percent = new Intl.NumberFormat(undefined, {
+  style: "percent",
+  maximumFractionDigits: 1,
+});
+const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "always" });
 const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const blankHandoffFields = {
@@ -60,10 +65,11 @@ function age(value: string, now: number) {
   if (!value) return c.ageUnknown;
   const seconds = Math.floor((now - Date.parse(value)) / 1000);
   if (seconds < 0) return c.future;
-  if (seconds < 60) return `${number.format(seconds)} ${c.secondsAgo}`;
-  if (seconds < 3600) return `${number.format(Math.floor(seconds / 60))} ${c.minutesAgo}`;
-  return `${number.format(Math.floor(seconds / 3600))} ${c.hoursAgo}`;
+  if (seconds < 60) return relativeTime.format(-seconds, "second");
+  if (seconds < 3600) return relativeTime.format(-Math.floor(seconds / 60), "minute");
+  return relativeTime.format(-Math.floor(seconds / 3600), "hour");
 }
+const formatPercent = (value: number) => percent.format(value / 100);
 function reading(snapshot: UsageSnapshotResponse | undefined, metric: string) {
   const observations = snapshot?.observations.filter((o) => o.metric_key === metric) ?? [];
   const state = snapshot?.availability.find((a) => a.metric_key === metric)?.state;
@@ -137,10 +143,13 @@ function Capacity({ snapshot, now }: { snapshot?: UsageSnapshotResponse; now: nu
                     />
                   </svg>
                   <p className="max-w-[75ch] relative -mt-[3.6rem] mb-[1.2rem] text-center md:-mt-[5.6rem] md:mb-8 [&_strong]:block [&_strong]:text-[1.7rem] [&_strong]:font-semibold [&_strong]:leading-[1.1] [&_strong]:tracking-[-0.035em] md:[&_strong]:text-[2.4rem] max-md:[&_span]:text-sm">
-                    <strong>{number.format(r.value)}%</strong>
+                    <strong>{formatPercent(r.value)}</strong>
                     <span>
                       {r.state !== "available" ||
-                      (r.observation && now - Date.parse(r.observation.captured_at) > 600000)
+                      (r.observation &&
+                        (now - Date.parse(r.observation.captured_at) > 600000 ||
+                          now < Date.parse(r.observation.window_start) ||
+                          now >= Date.parse(r.observation.window_end)))
                         ? c.lastKnown
                         : c.remaining}
                     </span>
@@ -211,7 +220,7 @@ function Evidence({ snapshot, now }: { snapshot: UsageSnapshotResponse; now: num
             </dd>
             <dt className="text-muted">{c.window}</dt>
             <dd className="mb-4 wrap-anywhere">
-              {instant(o.window_start)} — {instant(o.window_end)} · {o.window_timezone}
+              {instant(o.window_start)} — {instant(o.window_end)} · {zone}
             </dd>
             {(o.assumptions || o.uncertainty) && (
               <>
@@ -233,7 +242,7 @@ function Evidence({ snapshot, now }: { snapshot: UsageSnapshotResponse; now: num
   );
 }
 function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias: string }) {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(Number.MAX_SAFE_INTEGER);
   const samples = snapshots.filter((s) => s.alias === alias);
   if (!samples.length) return <p className="mb-4 max-w-[75ch]">{c.noHistory}</p>;
   const selected = samples[Math.min(index, samples.length - 1)];
@@ -313,7 +322,7 @@ function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias
             {metrics
               .map(
                 (m, i) =>
-                  `${i ? c.secondary : c.primary}: ${value(selected, m) === null ? c.noValue : number.format(value(selected, m)!) + "%"} · ${label(reading(selected, m).state)} · ${provenance(reading(selected, m).observation?.provenance ?? selected.availability.find((a) => a.metric_key === m)?.provenance ?? "")}`,
+                  `${i ? c.secondary : c.primary}: ${value(selected, m) === null ? c.noValue : formatPercent(value(selected, m)!)} · ${label(reading(selected, m).state)} · ${provenance(reading(selected, m).observation?.provenance ?? selected.availability.find((a) => a.metric_key === m)?.provenance ?? "")}`,
               )
               .join(" · ")}
           </p>
@@ -392,7 +401,7 @@ function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias
                           <p>
                             {value(s, m) === null
                               ? c.noValue
-                              : `${number.format(value(s, m)!)}% ${c.remaining}`}
+                              : `${formatPercent(value(s, m)!)} ${c.remaining}`}
                           </p>
                           <p className="text-sm text-muted">
                             {label(r.state)} ·{" "}
@@ -404,7 +413,7 @@ function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias
                           </p>
                           <p className="text-sm text-muted">
                             {r.observation?.window_start
-                              ? `${instant(r.observation.window_start)} — ${instant(r.observation.window_end)} · ${r.observation.window_timezone}`
+                              ? `${instant(r.observation.window_start)} — ${instant(r.observation.window_end)} · ${zone}`
                               : c.unknownReset}
                           </p>
                         </section>
@@ -417,7 +426,7 @@ function Trace({ snapshots, alias }: { snapshots: UsageSnapshotResponse[]; alias
                     key={m}
                     className="max-md:hidden border-b border-rule px-1 py-2 text-left wrap-anywhere md:px-[0.65rem] md:py-[0.8rem]"
                   >
-                    {value(s, m) === null ? c.noValue : `${number.format(value(s, m)!)}%`}
+                    {value(s, m) === null ? c.noValue : formatPercent(value(s, m)!)}
                     <small className="block text-sm text-muted">
                       {label(reading(s, m).state)} ·{" "}
                       {provenance(
@@ -474,6 +483,11 @@ export function App() {
     record?: ActivityRecord;
   } | null>(null);
   const [handoff, setHandoff] = useState<HandoffResponse | null>(null);
+  const [handoffSetup, setHandoffSetup] = useState<{
+    target: LaunchTarget;
+    projects: ProjectIdentity[];
+    projectId: string;
+  } | null>(null);
   const [now, setNow] = useState(Date.now);
   const [theme, setTheme] = useState(() => {
     try {
@@ -551,20 +565,25 @@ export function App() {
     setMessage(c.refreshStart);
     try {
       const results = await Promise.allSettled(
-        current.candidates
-          .filter((p) => p.eligible)
-          .map((p) =>
-            api.refreshUsage(
-              { alias: p.alias, trigger_reason: trigger },
-              { headers: { "X-CodexFolio-CSRF": csrf.current } },
-            ),
+        current.candidates.map((p) =>
+          api.refreshUsage(
+            { alias: p.alias, trigger_reason: trigger },
+            { headers: { "X-CodexFolio-CSRF": csrf.current } },
           ),
+        ),
       );
       const rejected = results.filter((r) => r.status === "rejected");
       for (const r of rejected)
         if (r.reason instanceof UsageRefreshError && [401, 403].includes(r.reason.status))
           throw r.reason;
-      await load();
+      const next = await load(true);
+      const hasConflict = next.activity.some(
+        (item) =>
+          item.record_type === "managed_launch" &&
+          ["running", "pending"].includes(item.lifecycle) &&
+          item.profile_id !== selection?.profile_id,
+      );
+      if (!hasConflict) setWarning("");
       setMessage(rejected.length ? c.refreshFailed : c.refreshDone);
     } catch (e) {
       failure(e);
@@ -612,10 +631,8 @@ export function App() {
       setServiceHealth(health);
       if (health.service_state === "ready") {
         const next = await load(true);
-        if (!cancelled()) {
-          setMessage(serviceHealthCopy.ready);
-          void refresh("vault_unlock", next);
-        }
+        setMessage(serviceHealthCopy.ready);
+        void refresh("dashboard_open", next);
       }
     } catch (error) {
       if (!cancelled()) failure(error);
@@ -659,27 +676,28 @@ export function App() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      let terminal = false;
       try {
-        const next = await api.getAnalytics("combined_identity");
+        const next = await api.getActivity(launch.target.alias, launch.projectId);
         if (cancelled) return;
-        setData(next);
         setLaunch((current) => {
           if (!current) return null;
           const record = current.record
-            ? next.activity.find((item) => item.id === current.record?.id)
-            : next.activity.find(
+            ? next.records.find((item) => item.id === current.record?.id)
+            : next.records.find(
                 (item) =>
                   item.record_type === "managed_launch" &&
                   item.profile_id === current.target.profile_id &&
                   item.project_id === current.projectId &&
                   !current.baseline.includes(item.id),
               );
+          terminal = record?.lifecycle === "exited" || record?.lifecycle === "abandoned";
           return record ? { ...current, record } : current;
         });
       } catch (error) {
         if (!cancelled) failure(error);
       } finally {
-        if (!cancelled) timer = setTimeout(() => void poll(), 500);
+        if (!cancelled && !terminal) timer = setTimeout(() => void poll(), 500);
       }
     };
     timer = setTimeout(() => void poll(), 500);
@@ -759,6 +777,7 @@ export function App() {
             profile.profile_id === result.updated?.profile_id ? result.updated : profile,
           ),
         );
+        await load(true);
       }
     } catch (error) {
       if (
@@ -790,6 +809,19 @@ export function App() {
           })),
         result.profile,
       ]);
+      if (result.outcome === "ready") {
+        await api
+          .refreshUsage(
+            { alias: result.profile.alias, trigger_reason: "dashboard_refresh" },
+            { headers: { "X-CodexFolio-CSRF": csrf.current } },
+          )
+          .catch((error) => {
+            if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) {
+              throw error;
+            }
+          });
+        await load(true);
+      }
       return result;
     } catch (error) {
       if (
@@ -957,17 +989,31 @@ export function App() {
     setGuidance("");
     try {
       const projects = await api.getProjects();
-      const project = projects.projects[0];
-      if (!project) {
+      if (!projects.projects.length) {
         setGuidance("handoff");
         return;
       }
+      setHandoffSetup({ target, projects: projects.projects, projectId: "" });
+      requestAnimationFrame(() => heading.current?.focus());
+    } catch (error) {
+      failure(error);
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function captureHandoff() {
+    if (!handoffSetup?.projectId || operation.current) return;
+    operation.current = true;
+    setBusy(true);
+    try {
       const captured = await manageHandoff({
         action: "capture",
-        target_alias: target.alias,
-        project_id: project.project_id,
+        target_alias: handoffSetup.target.alias,
+        project_id: handoffSetup.projectId,
         fields: blankHandoffFields,
       });
+      setHandoffSetup(null);
       setHandoff(captured);
       requestAnimationFrame(() => heading.current?.focus());
     } catch (error) {
@@ -1028,6 +1074,7 @@ export function App() {
   function navigate(destination: string) {
     setLaunch(null);
     setHandoff(null);
+    setHandoffSetup(null);
     setRoute(destination);
     setGuidance("");
     if (more.current) more.current.open = false;
@@ -1112,6 +1159,53 @@ export function App() {
               </>
             ) : serviceHealth && serviceHealth.service_state !== "ready" ? (
               <ServiceHealth health={serviceHealth} heading={heading} />
+            ) : handoffSetup ? (
+              <section>
+                <header className="mb-7 border-b border-rule pb-5">
+                  <h1
+                    ref={heading}
+                    tabIndex={-1}
+                    className="mb-4 max-w-[30ch] text-[clamp(1.8rem,3.3vw,2.75rem)] font-bold leading-[1.16] tracking-[-0.025em]"
+                  >
+                    {c.handoffProjectTitle}
+                  </h1>
+                  <p className="mb-0 max-w-[75ch] text-muted">{c.handoffProjectDetail}</p>
+                </header>
+                <label className="grid max-w-xl gap-2">
+                  {c.handoffProject}
+                  <select
+                    className="min-h-11 rounded border border-rule bg-panel px-3 py-2 text-ink"
+                    value={handoffSetup.projectId}
+                    onChange={(event) =>
+                      setHandoffSetup((current) =>
+                        current ? { ...current, projectId: event.target.value } : null,
+                      )
+                    }
+                  >
+                    <option value="">{c.handoffProjectChoose}</option>
+                    {handoffSetup.projects.map((project) => (
+                      <option key={project.project_id} value={project.project_id}>
+                        {project.alias} · {project.basename}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    className="min-h-11 rounded border border-accent bg-accent px-3 py-2 font-semibold text-canvas disabled:opacity-60"
+                    disabled={busy || !handoffSetup.projectId}
+                    onClick={() => void captureHandoff()}
+                  >
+                    {c.handoffProjectContinue}
+                  </button>
+                  <button
+                    className="min-h-11 rounded border border-rule bg-panel px-3 py-2"
+                    onClick={() => setHandoffSetup(null)}
+                  >
+                    {c.close}
+                  </button>
+                </div>
+              </section>
             ) : handoff ? (
               <Handoff
                 initial={handoff}
@@ -1126,6 +1220,8 @@ export function App() {
             ) : launch ? (
               <Launch
                 {...launch}
+                commandBase={serviceHealth?.terminal_command_base ?? "codex-folio"}
+                commandSuffix={serviceHealth?.terminal_command_suffix ?? ""}
                 selectedProfileId={selection?.profile_id}
                 heading={heading}
                 chooseProject={(projectId) =>

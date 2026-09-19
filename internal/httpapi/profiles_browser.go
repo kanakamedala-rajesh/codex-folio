@@ -208,7 +208,7 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 		}
 		writeJSON(response, http.StatusOK, ProfileAuthenticationResponse{
 			Profile: item, Warnings: []string{}, Outcome: "terminal_required",
-			TerminalCommand: profileTerminalCommand("reauthenticate", item.Alias, valueOrEmpty(input.CodexOverride)),
+			TerminalCommand: server.profileTerminalCommand("reauthenticate", item.Alias, valueOrEmpty(input.CodexOverride)),
 		})
 		return
 	}
@@ -244,6 +244,9 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 		warnings = append(warnings, setup.Warnings...)
 	} else if result.Reauthentication != nil {
 		item, discovery = result.Reauthentication.Profile, result.Reauthentication.Discovery
+		if item.Status == profile.StatusReady {
+			stages = profile.SetupStages{Discovery: true, Home: item.IdentityHomeID != "", Authentication: true, Validation: true, Selection: item.Selected}
+		}
 	}
 	projected, projectErr := server.browserProfile(request, item)
 	if projectErr != nil {
@@ -257,7 +260,7 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 	}
 	if input.AuthMethod == string(profile.AuthMethodDeviceCode) && projected.Status == string(profile.StatusPending) {
 		outcome = "terminal_required"
-		terminalCommand = profileTerminalCommand("add", projected.Alias, valueOrEmpty(input.CodexOverride))
+		terminalCommand = server.profileTerminalCommand("add", projected.Alias, valueOrEmpty(input.CodexOverride))
 	}
 	writeJSON(response, http.StatusOK, ProfileAuthenticationResponse{
 		Profile: projected, Stages: profileStages(stages), CodexFound: discovery.Version != "", CodexVersion: discovery.Version,
@@ -265,12 +268,12 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 	})
 }
 
-func profileTerminalCommand(action, alias, codexOverride string) string {
-	command := "codex-folio profile " + action + " " + terminalArgument(alias) + " --device-code"
+func (server *Server) profileTerminalCommand(action, alias, codexOverride string) string {
+	arguments := []string{"profile", action, alias, "--device-code"}
 	if codexOverride != "" {
-		command += " " + terminalArgument("--codex-bin="+codexOverride)
+		arguments = append(arguments, "--codex-bin="+codexOverride)
 	}
-	return command
+	return server.terminalCommand(arguments...)
 }
 
 func terminalArgument(value string) string {
@@ -350,12 +353,14 @@ func (server *Server) browserProfile(request *http.Request, item profile.Identit
 		}
 	}
 	if server.usage != nil {
-		snapshot, err := server.usage.Latest(request.Context(), item.Alias)
+		snapshots, err := server.usage.Recent(request.Context(), usage.ProfileTarget{ID: item.ID, Alias: item.Alias})
 		if err == nil {
 			var latest time.Time
-			for _, observation := range snapshot.Observations {
-				if observation.CapturedAt.After(latest) {
-					latest = observation.CapturedAt
+			for _, snapshot := range snapshots {
+				for _, observation := range snapshot.Observations {
+					if observation.CapturedAt.After(latest) {
+						latest = observation.CapturedAt
+					}
 				}
 			}
 			result.LastSuccessfulRefresh = formatUsageTime(latest)

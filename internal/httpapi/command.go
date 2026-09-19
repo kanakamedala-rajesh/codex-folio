@@ -355,10 +355,8 @@ func (server *Server) commandDashboard(response http.ResponseWriter, request *ht
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(token)
 	server.mu.Lock()
-	server.bootstrapToken = token
-	server.bootstrapDigest = sha256.Sum256([]byte(encoded))
-	server.bootstrapExpiresAt = server.clock.Now().UTC().Add(server.bootstrapTTL)
-	server.bootstrapAvailable = true
+	digest := sha256.Sum256([]byte(encoded))
+	server.bootstrapTokens[digest] = server.clock.Now().UTC().Add(server.bootstrapTTL)
 	link := server.origin + BootstrapPathName + "?" + BootstrapQueryName + "=" + encoded
 	server.mu.Unlock()
 	writeJSON(response, http.StatusOK, dashboardLink{URL: link})

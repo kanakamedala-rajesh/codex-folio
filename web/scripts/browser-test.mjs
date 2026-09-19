@@ -85,6 +85,17 @@ async function choose(value, confirm = true) {
   );
   if (confirmation) await confirmation;
 }
+async function prepareHandoff() {
+  await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
+  await assertFocusedHeading("Choose the source project");
+  const capture = page.getByRole("button", { name: "Capture checkpoint", exact: true });
+  assert.equal(await capture.isDisabled(), true);
+  await page
+    .getByRole("combobox", { name: "Source Project Identity", exact: true })
+    .selectOption({ index: 1 });
+  await capture.click();
+  await assertFocusedHeading("Prepare Handoff");
+}
 async function scenario(mode) {
   writeFileSync(control, mode);
   const refreshButton = page.getByRole("button", { name: "Refresh", exact: true });
@@ -362,8 +373,7 @@ try {
       const handoffActivityBefore = (
         await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
       ).activity.length;
-      await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
-      await assertFocusedHeading("Prepare Handoff");
+      await prepareHandoff();
       assert.match(await page.locator("main").innerText(), /Managed Launch is still running/);
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       const handoffActivityAfterCancel = (
@@ -373,7 +383,7 @@ try {
 
       writeFileSync(control, "handoff-source-uncertain");
       await page.waitForTimeout(100);
-      await page.getByRole("button", { name: "Prepare Handoff", exact: true }).first().click();
+      await prepareHandoff();
       await page.getByText(/Termination is uncertain/).waitFor();
       await page.getByText("Transcript assistance", { exact: true }).click();
       const reviewCandidates = page.getByRole("button", {

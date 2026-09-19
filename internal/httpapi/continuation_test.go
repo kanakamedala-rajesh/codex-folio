@@ -63,6 +63,17 @@ func TestBrowserHandoffCapturesRepositoryFirstDraftAndRejectsStaleApproval(t *te
 		t.Fatalf("browser capture = %q/%#v", service.captureProjectID, service.capture)
 	}
 
+	service.source = continuation.SourceLaunch{ProfileID: "source-profile", State: continuation.SourceRunning}
+	blocked, err := doRequest(client, http.MethodPost, origin+HandoffPath, server.Address(), origin, []byte(`{"action":"approve","checkpoint_id":"checkpoint-1","revision":"revision-2","target_alias":"Work"}`), bootstrap.CSRFToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.StatusCode != http.StatusConflict || service.approveID != "" {
+		t.Fatalf("approval with running source = %d, approve call %q", blocked.StatusCode, service.approveID)
+	}
+	_ = blocked.Body.Close()
+	service.source = continuation.SourceLaunch{ProfileID: "source-profile", State: continuation.SourceExited}
+
 	service.checkpoint.Revision = "revision-3"
 	stale, err := doRequest(client, http.MethodPost, origin+"/api/v1/handoff", server.Address(), origin, []byte(`{"action":"approve","checkpoint_id":"checkpoint-1","revision":"revision-2","target_alias":"Work"}`), bootstrap.CSRFToken)
 	if err != nil {
