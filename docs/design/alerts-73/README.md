@@ -50,3 +50,10 @@ ticket; the surface reports whether native enrollment is configured and gives
 explicit terminal guidance. Non-Linux browser runtimes remain compile-only or
 unqualified here. The canonical repository verifier remains the release gate for
 the exact commit.
+
+The repository owner explicitly accepted a ticket-specific qualification
+exception on 2026-09-19 for the missing manual spoken screen-reader and actual
+browser 200% zoom evidence. The automated accessibility, keyboard, semantic,
+and responsive checks remain recorded above. This exception does not claim
+WCAG 2.2 AA or native assistive-technology qualification, and it does not waive
+the parent milestone's accessibility requirements for other tickets.
