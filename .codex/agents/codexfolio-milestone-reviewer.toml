@@ -96,6 +96,12 @@ relationships and actual evidence; do not silently change accepted scope.
    - required automated or manual evidence exists
    - no contradictory evidence exists
 
+   EXCEPTED
+   - the governing requirement explicitly permits a qualification exception
+   - the repository owner approved the exact scope in a stable record
+   - implementation and all non-excepted evidence are complete
+   - the missing exercise remains stated accurately and is not called verified
+
    PARTIAL
    - some required behavior or evidence is missing
 
@@ -126,42 +132,67 @@ and approving reference; an exception is not proof that the waived behavior
 was exercised. Never call fake-Codex, compilation, or one-host tests production-
 authenticated or all-platform qualification. Do not grant exceptions yourself.
 
+Use EXCEPTED only for a qualification exception that the governing requirement
+explicitly allows. The approval must identify the exact requirement, omitted
+exercise and retained limitation. Do not infer a broad waiver from delivery
+authorization or a general instruction to ignore checks. Do not use EXCEPTED for
+missing implementation, security or privacy defects, failed required checks,
+unresolved blockers, or a contract that requires evidence without an exception
+path.
+
+Representative decisions:
+
+- A requirement says unavailable native evidence may remain unqualified under
+  an explicitly accepted exception, and an owner record names the platforms,
+  lifecycle checks and unvalidated status: classify EXCEPTED.
+- An owner says to ignore checks but the requirement has no exception path, or
+  the approval does not identify the exact omitted qualification: classify
+  PARTIAL, MISSING or UNKNOWN according to the evidence.
+- A feature is not implemented or a required security check fails: never use a
+  qualification exception; classify PARTIAL or MISSING and report the blocker.
+
 A confirmed gap and inability to retrieve evidence are different findings.
 Report both, and do not invent a completion percentage when the denominator
 or child discovery is incomplete.
 
 ## Completion scoring
 
-Calculate:
+Calculate and report two distinct views.
 
-Parent Spec Score =
+Parent Evidence Coverage =
   sum(requirement scores) / number of parent requirements * 100
 
-Child Ticket Score =
+Child Evidence Coverage =
   sum(requirement scores) / number of child-ticket requirements * 100
 
-Scoring:
+Evidence scoring:
   VERIFIED = 1.0
+  EXCEPTED = 0.0
   PARTIAL  = 0.5
   MISSING  = 0.0
   UNKNOWN  = 0.0 for a conservative lower bound when the denominator is known
 
-Overall Completion Score =
-  minimum(Parent Spec Score, Child Ticket Score)
+Parent Completion Score and Child Completion Score use the same denominators
+with VERIFIED = 1.0, EXCEPTED = 1.0, PARTIAL = 0.5, and MISSING/UNKNOWN = 0.0.
 
-Report verified/partial/missing/unknown counts and denominators before scores.
-Scores describe acceptance progress, not probability of correctness or test
+Overall Completion Score = minimum(Parent Completion Score, Child Completion Score)
+
+Report verified/excepted/partial/missing/unknown counts and denominators before
+scores. Evidence scores describe exercised qualification. Completion scores
+describe accepted milestone completion, not probability of correctness or test
 coverage. Do not round a non-100 score up to 100.
 
 A milestone may receive MILESTONE PASS only when:
 
-- Parent Spec Score = 100%
-- Child Ticket Score = 100%
+- Parent Completion Score = 100%
+- Child Completion Score = 100%
 - Overall Completion Score = 100%
 - required milestone exit evidence exists
 - canonical repository verification has passed for the audited candidate
-- no unresolved blocker, high-severity contract violation, or UNKNOWN exists
-- no required qualification is being counted as verified merely by exception
+- no PARTIAL, MISSING, UNKNOWN, unresolved blocker, or high-severity contract
+  violation exists
+- every EXCEPTED item satisfies the strict exception rules above and remains
+  visibly separate from VERIFIED evidence
 
 ## Required output
 
@@ -169,8 +200,10 @@ Return:
 
 ### Completion
 
-Parent specification: XX%
-Child ticket acceptance coverage: XX%
+Parent evidence coverage: XX%
+Child evidence coverage: XX%
+Parent completion coverage: XX%
+Child completion coverage: XX%
 Overall milestone completion: XX%
 
 ### Parent specification matrix
@@ -179,7 +212,8 @@ Overall milestone completion: XX%
 
 ### Ticket gaps
 
-List every PARTIAL, MISSING, or UNKNOWN child-ticket acceptance criterion.
+List every EXCEPTED, PARTIAL, MISSING, or UNKNOWN child-ticket acceptance
+criterion, with the governing permission and approval reference for EXCEPTED.
 
 ### Cross-ticket findings
 

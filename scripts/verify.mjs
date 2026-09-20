@@ -98,6 +98,8 @@ try {
   }
   gate("governance and DCO policy", () => {
     run("node", ["--test", "scripts/check-dco.test.mjs"]);
+    run("node", ["--test", "scripts/check-milestone-governance.test.mjs"]);
+    run("node", ["scripts/check-milestone-governance.mjs"]);
     run("node", ["scripts/check-governance.mjs"]);
   });
   if (web) {

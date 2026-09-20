@@ -274,6 +274,16 @@ The milestone reviewer should trace:
 
 Issue state, checked boxes, implementation summaries, or comments claiming success are pointers to evidence, not proof by themselves.
 
+When the governing requirement explicitly permits a qualification exception, an
+exact owner-approved exception may satisfy completion as `EXCEPTED`. Keep that
+classification separate from `VERIFIED`: it is completion evidence for the
+approved boundary, not proof that the waived behavior was exercised. The
+milestone reviewer must report evidence coverage separately from completion
+coverage. A broad or inferred waiver, a reviewer-granted exception, an exception
+the governing contract does not permit, or an exception used to conceal missing
+implementation, a security/privacy defect, or a failed required check remains an
+incomplete requirement.
+
 ### Milestone gaps
 
 If `codexfolio_milestone_reviewer` reports an incomplete requirement:
@@ -293,10 +303,17 @@ The milestone reviewer must not become an alternate source of implementation sco
 A milestone may be marked complete only when:
 
 * all executable child tickets are complete;
-* the milestone reviewer reports `MILESTONE PASS - 100%`;
+* the milestone reviewer reports `MILESTONE PASS - 100%` completion, with every
+  requirement classified `VERIFIED` or validly `EXCEPTED` and no `PARTIAL`,
+  `MISSING`, or `UNKNOWN` requirement;
 * required exit-gate evidence has been recorded;
 * canonical repository verification has passed where required;
 * no unresolved milestone-level blocker remains.
+
+Evidence coverage may be below 100% when valid `EXCEPTED` qualifications exist.
+Record their exact scope and approval in the exit evidence, preserve them as
+unvalidated, and never relabel them as manual, native, live-provider, security,
+or release passes.
 
 After milestone completion:
 
