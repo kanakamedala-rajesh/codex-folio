@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,6 +98,109 @@ func aggregateScopeAAD(id string) []byte {
 
 func (store *Store) ListUsageAggregates(ctx context.Context, scope usage.HistoryScope) ([]usage.HistoryAggregate, error) {
 	return store.listUsageAggregates(ctx, scope, true)
+}
+
+// ListUsageHistory combines retained detail with compacted aggregates for the
+// browser history view. ListUsageAggregates remains the durable-compaction
+// boundary used by retention and export verification.
+func (store *Store) ListUsageHistory(ctx context.Context, scope usage.HistoryScope) ([]usage.HistoryAggregate, error) {
+	aggregates, err := store.listUsageAggregates(ctx, scope, true)
+	if err != nil {
+		return nil, err
+	}
+	details, err := store.listRawUsageAggregates(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	aggregates = append(aggregates, details...)
+	slices.SortFunc(aggregates, func(left, right usage.HistoryAggregate) int {
+		if order := right.BucketStart.Compare(left.BucketStart); order != 0 {
+			return order
+		}
+		return strings.Compare(left.ID, right.ID)
+	})
+	if len(aggregates) > 1000 {
+		aggregates = aggregates[:1000]
+	}
+	return aggregates, nil
+}
+
+func (store *Store) listRawUsageAggregates(ctx context.Context, scope usage.HistoryScope) ([]usage.HistoryAggregate, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, apperrors.New(apperrors.AnalyticsRequestInvalid, err)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	where, args := historyWhere(scope, "o.profile_id", "NULL", "p.captured_at", "p.captured_at", false)
+	rows, err := store.db.QueryContext(ctx, `SELECT o.observation_id, o.profile_id, o.metric_key, o.value, m.unit,
+ m.value_kind, m.source_class, m.scope, m.aggregation, p.source, COALESCE(p.source_version, ''),
+ p.provenance_label, CASE WHEN a.condition <> '' THEN a.condition ELSE a.state END,
+ o.assumptions, o.uncertainty, o.observed_at, p.captured_at, o.window_start, o.window_end, o.window_timezone
+ FROM usage_observations o JOIN usage_metrics m ON m.metric_key = o.metric_key
+ JOIN metric_provenance p ON p.provenance_id = o.provenance_id
+ JOIN metric_availability a ON a.metric_availability_id = o.metric_availability_id
+ WHERE `+where+` ORDER BY rtrim(p.captured_at, 'Z') DESC, o.observation_id LIMIT 1000`, args...)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	defer rows.Close()
+	result := []usage.HistoryAggregate{}
+	for rows.Next() {
+		var item usage.HistoryAggregate
+		var observedAt, capturedAt string
+		var windowStart, windowEnd sql.NullString
+		if err := rows.Scan(&item.ID, &item.ProfileID, &item.Metric.Key, &item.Value, &item.Metric.Unit,
+			&item.Metric.ValueKind, &item.Metric.SourceClass, &item.Metric.Scope, &item.Metric.Aggregation,
+			&item.Source, &item.SourceVersion, &item.Provenance, &item.Availability, &item.Assumptions,
+			&item.Uncertainty, &observedAt, &capturedAt, &windowStart, &windowEnd, &item.Timezone); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		item.ID = "detail-" + item.ID
+		item.FirstObservedAt, err = parseStoredTime(observedAt)
+		if err == nil {
+			item.FirstCapturedAt, err = parseStoredTime(capturedAt)
+		}
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		item.LastObservedAt, item.LastCapturedAt, item.Samples = item.FirstObservedAt, item.FirstCapturedAt, 1
+		observation := usage.Observation{Metric: item.Metric, Value: item.Value, ObservedAt: item.FirstObservedAt, CapturedAt: item.FirstCapturedAt, WindowTimezone: item.Timezone}
+		if observation.WindowStart, err = parseNullableUsageTime(windowStart); err == nil {
+			observation.WindowEnd, err = parseNullableUsageTime(windowEnd)
+		}
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		item.BucketKind, item.BucketStart, item.BucketEnd, item.Timezone, err = usage.HistoryBucket(observation)
+		if err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		if !historyAggregateInScope(item, scope) {
+			continue
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	return result, nil
+}
+
+func historyAggregateInScope(item usage.HistoryAggregate, scope usage.HistoryScope) bool {
+	if scope.From != "all" {
+		from, _ := time.Parse(time.RFC3339Nano, scope.From)
+		if item.BucketStart.Before(from) {
+			return false
+		}
+	}
+	if scope.To != "all" {
+		to, _ := time.Parse(time.RFC3339Nano, scope.To)
+		if item.BucketEnd.After(to) {
+			return false
+		}
+	}
+	return true
 }
 
 func (store *Store) listUsageAggregates(ctx context.Context, scope usage.HistoryScope, limited bool) ([]usage.HistoryAggregate, error) {

@@ -36,7 +36,12 @@ func openServiceStoreWithVaultMode(paths platform.Paths, mode platform.VaultMode
 		if err := secureVault.Unlock(context.Background(), passphrase); err != nil {
 			return nil, err
 		}
-		return store.OpenWithVault(paths.DatabaseFile, secureVault)
+		stateStore, err := store.OpenWithVault(paths.DatabaseFile, secureVault)
+		if err != nil {
+			secureVault.Lock()
+			return nil, err
+		}
+		return stateStore, nil
 	default:
 		return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("unsupported vault mode"))
 	}

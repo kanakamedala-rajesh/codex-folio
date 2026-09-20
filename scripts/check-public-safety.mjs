@@ -70,7 +70,7 @@ export function workflowFindings(path, content) {
       errors.push("the reviewed three-platform standard-runner matrix changed");
     }
     const runners = [...text.matchAll(/^\s+runs-on:\s*(.+)$/gm)].map((m) => m[1].trim());
-    if (JSON.stringify(runners) !== JSON.stringify(["${{ matrix.runner }}"])) errors.push("unexpected runner selection");
+    if (JSON.stringify(runners) !== JSON.stringify(["${{ matrix.runner }}", "ubuntu-24.04"])) errors.push("unexpected runner selection");
     if (!text.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}")) errors.push("main verification must not be actively cancelled by PR cancellation policy");
     if (!text.includes("go.sum")) errors.push("Go dependency checksums are missing from the cache key inputs");
     const mask = text.indexOf('echo "::add-mask::$keychain_password"');

@@ -124,6 +124,41 @@ func TestLatestSourceLaunchIgnoresDefinitivelyAbandonedPreStartLaunch(t *testing
 	}
 }
 
+func TestLatestSourceLaunchDistinguishesRunningFromUncertainPreStartState(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		start bool
+		want  continuation.SourceState
+	}{
+		{name: "running", start: true, want: continuation.SourceRunning},
+		{name: "pending", start: false, want: continuation.SourceUncertain},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stateStore, _, profileID, home := readyLaunchStore(t)
+			defer func() { _ = stateStore.Close() }()
+			projectID := "project-1"
+			now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+			if err := stateStore.SaveProjectRecord(context.Background(), activity.ProjectRecord{ID: projectID, Alias: "Folio", Basename: "repository", CanonicalPath: home, CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: home, ProjectID: projectID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.start {
+				if err := stateStore.MarkManagedLaunchStarted(context.Background(), plan.LeaseID, 4001); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			latest, err := stateStore.LatestSourceLaunch(context.Background(), projectID)
+			if err != nil || latest.State != test.want || latest.ProfileID != profileID {
+				t.Fatalf("LatestSourceLaunch() = %#v, %v; want %s source %q", latest, err, test.want, profileID)
+			}
+		})
+	}
+}
+
 func TestLatestSourceLaunchUsesMostRecentlyExitedOverlappingLaunch(t *testing.T) {
 	clock := &mutableLaunchClock{now: time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)}
 	stateStore, _, workProfileID, home := readyLaunchStoreWithClock(t, clock)
@@ -393,6 +428,16 @@ func TestReconcilePendingHandoffRecoversOnlyAfterBootSessionChanges(t *testing.T
 	record, err = stateStore.GetManagedLaunch(context.Background(), plan.LeaseID)
 	if err != nil || record.State != launch.StateAbandoned {
 		t.Fatalf("recovered launch = %#v, %v", record, err)
+	}
+	retry, err := stateStore.PrepareLaunch(context.Background(), launch.PrepareRequest{
+		Alias: "Personal", Executable: filepath.Join(targetHome, "codex"), WorkingDirectory: projectPath, Arguments: []string{checkpoint.Metadata},
+		ProjectID: project.ID, CheckpointID: checkpoint.ID, CheckpointRevision: "revision-1", SourceProfileID: sourceProfileID, BootSessionID: "boot-b",
+	})
+	if err != nil {
+		t.Fatalf("PrepareLaunch(recovered checkpoint) error = %v", err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(context.Background(), retry.LeaseID, 4002); err != nil {
+		t.Fatalf("MarkManagedLaunchStarted(recovered checkpoint) error = %v", err)
 	}
 }
 

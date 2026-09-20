@@ -162,6 +162,12 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 			CorrelationState: record.Correlation.State, CorrelationManagedLaunchId: record.Correlation.ManagedLaunchID,
 			CorrelationEvidenceType: record.Correlation.EvidenceType, CorrelationConfidence: record.Correlation.Confidence,
 		}
+		if record.ContinuationCheckpointID != "" {
+			item.ContinuationCheckpointId = &record.ContinuationCheckpointID
+		}
+		if record.ContinuationRevision != "" {
+			item.ContinuationRevision = &record.ContinuationRevision
+		}
 		if record.ExitStatus != nil {
 			item.ExitStatus = strconv.Itoa(*record.ExitStatus)
 		}

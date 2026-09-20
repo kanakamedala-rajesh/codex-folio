@@ -279,6 +279,66 @@ func TestLastUsageObservationsRetainsLatestEvidencePerSource(t *testing.T) {
 	}
 }
 
+func TestLatestUsageProjectsFreshCurrentWindowAndRetainsHistoricalEvidence(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	metric := usage.Registry()[0]
+	save := func(value float64, capturedAt, windowStart, windowEnd time.Time, sourceVersion string) {
+		t.Helper()
+		snapshot := usage.Snapshot{
+			Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt,
+			Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerDashboardRefresh,
+			Observations: []usage.Observation{{
+				Metric: metric, Value: value, ObservedAt: capturedAt, CapturedAt: capturedAt,
+				WindowStart: &windowStart, WindowEnd: &windowEnd, WindowTimezone: "UTC",
+				Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion,
+				Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable,
+			}},
+			Availability: completeUsageAvailability(capturedAt, []usage.MetricAvailability{{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider}}),
+		}
+		if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(75, now.Add(-7*24*time.Hour), now.Add(-14*24*time.Hour), now.Add(-7*24*time.Hour), "0.153.3")
+	save(44, now, now.Add(-time.Hour), now.Add(4*time.Hour), "0.153.4")
+
+	history, err := stateStore.LastUsageObservations(context.Background(), target)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("retained observations = %#v/%v", history, err)
+	}
+	service, err := usage.NewService(stateStore, &schedulerCollector{}, schedulerClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.Latest(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryState := ""
+	for _, availability := range latest.Availability {
+		if availability.MetricKey == metric.Key {
+			primaryState = availability.State
+		}
+	}
+	if latest.Status != usage.AvailabilityPartial || primaryState != usage.AvailabilityAvailable || len(latest.Observations) != 1 || latest.Observations[0].Value != 44 {
+		t.Fatalf("current projection = %#v", latest)
+	}
+	history, err = stateStore.LastUsageObservations(context.Background(), target)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("projection changed retained observations = %#v/%v", history, err)
+	}
+}
+
 func completeUsageAvailability(checkedAt time.Time, items []usage.MetricAvailability) []usage.MetricAvailability {
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
@@ -359,5 +419,134 @@ func TestUsageProfilesAndSnapshotScopeSurviveRestart(t *testing.T) {
 	stored, err := stateStore.LatestUsageSnapshot(context.Background(), target)
 	if err != nil || stored.LoginIdentity != "login-1" || stored.Workspace != "workspace-1" {
 		t.Fatalf("stored source scope/error = %#v/%v", stored, err)
+	}
+}
+
+func TestRecentUsageSnapshotsBoundRawCapturesAndPreserveFailureGaps(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	addReadyProfile(t, state, "profile-recent", "Recent")
+	ctx := context.Background()
+	target, err := state.ResolveUsageProfile(ctx, "Recent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 14; i++ {
+		at := now.Add(time.Duration(i) * time.Minute)
+		snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+		snapshot.TriggerReason = usage.TriggerDashboardRefresh
+		if i != 12 {
+			metric := usage.Registry()[0]
+			snapshot.Availability[0].State = usage.AvailabilityAvailable
+			snapshot.Availability[0].Reason = ""
+			snapshot.Observations = []usage.Observation{{Metric: metric, Value: float64(i), ObservedAt: at, CapturedAt: at, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}}
+		}
+		if _, err := state.SaveUsageSnapshot(ctx, target, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recent, err := state.RecentUsageSnapshots(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 12 || len(recent[10].Observations) != 0 || recent[0].Observations[0].Value != 2 || recent[11].Observations[0].Value != 13 {
+		t.Fatalf("recent trace did not retain twelve raw captures with a failure gap: %#v", recent)
+	}
+	if !recent[0].CapturedAt.Equal(now.Add(2 * time.Minute)) {
+		t.Fatal("trace changed capture age")
+	}
+}
+
+func TestLatestSuccessfulUsageRefreshLooksBeyondRecentTrace(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	addReadyProfile(t, state, "profile-success", "Success")
+	ctx := context.Background()
+	target, err := state.ResolveUsageProfile(ctx, "Success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	success := usage.NewUnavailableSnapshot("0.153.4", now, usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+	success.TriggerReason = usage.TriggerDashboardRefresh
+	success.Availability[0].State, success.Availability[0].Reason = usage.AvailabilityAvailable, ""
+	success.Observations = []usage.Observation{{Metric: usage.Registry()[0], Value: 50, ObservedAt: now, CapturedAt: now, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}}
+	if _, err := state.SaveUsageSnapshot(ctx, target, success); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 13; index++ {
+		failure := usage.NewUnavailableSnapshot("0.153.4", now.Add(time.Duration(index)*time.Minute), usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+		failure.TriggerReason = usage.TriggerDashboardRefresh
+		if _, err := state.SaveUsageSnapshot(ctx, target, failure); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if recent, err := state.RecentUsageSnapshots(ctx, target); err != nil || len(recent) != 12 || !recent[0].CapturedAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("recent trace = %#v/%v", recent, err)
+	}
+	latest, err := state.LatestSuccessfulUsageRefresh(ctx, target)
+	if err != nil || !latest.Equal(now) {
+		t.Fatalf("LatestSuccessfulUsageRefresh() = %s/%v, want %s", latest, err, now)
+	}
+
+	emptyState, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer emptyState.Close()
+	addReadyProfile(t, emptyState, "profile-empty", "Empty")
+	emptyTarget, err := emptyState.ResolveUsageProfile(ctx, "Empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := emptyState.LatestSuccessfulUsageRefresh(ctx, emptyTarget); err != nil || !latest.IsZero() {
+		t.Fatalf("empty LatestSuccessfulUsageRefresh() = %s/%v", latest, err)
+	}
+}
+
+func TestUsageCaptureOrderingWithDifferentFractionalPrecision(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	addReadyProfile(t, state, "profile-fraction", "Fraction")
+	ctx := context.Background()
+	target, err := state.ResolveUsageProfile(ctx, "Fraction")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	for _, millis := range []int{0, 100, 110} {
+		at := base.Add(time.Duration(millis) * time.Millisecond)
+		snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+		snapshot.TriggerReason = usage.TriggerDashboardRefresh
+		snapshot.Availability[0].State = usage.AvailabilityAvailable
+		snapshot.Availability[0].Reason = ""
+		snapshot.Observations = []usage.Observation{{Metric: usage.Registry()[0], Value: float64(millis) / 10, ObservedAt: at, CapturedAt: at, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}}
+		if _, err := state.SaveUsageSnapshot(ctx, target, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest, err := state.LatestUsageSnapshot(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !latest.CapturedAt.Equal(base.Add(110*time.Millisecond)) || len(latest.Observations) != 1 || latest.Observations[0].Value != 11 {
+		t.Errorf("latest snapshot/observation did not select newest instant: %#v", latest)
+	}
+	recent, err := state.RecentUsageSnapshots(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 3 || !recent[0].CapturedAt.Equal(base) || !recent[2].CapturedAt.Equal(base.Add(110*time.Millisecond)) {
+		t.Errorf("recent snapshots are not chronological: %#v", recent)
 	}
 }

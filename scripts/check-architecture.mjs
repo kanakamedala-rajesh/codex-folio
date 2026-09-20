@@ -17,13 +17,16 @@ const featureModules = new Set([
   "internal/apperrors",
   "internal/application",
   "internal/configpack",
+  "internal/configbundle",
   "internal/continuation",
   "internal/diagnostics",
   "internal/launch",
   "internal/profile",
   "internal/settings",
   "internal/sharedhome",
+  "internal/telemetry",
   "internal/usage",
+  "internal/updates",
 ]);
 const supportPackages = new Set(["internal/buildinfo", "internal/vault"]);
 

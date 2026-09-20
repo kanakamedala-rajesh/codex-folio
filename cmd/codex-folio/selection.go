@@ -6,15 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
+	telemetryadapter "venkatasudha.com/codex-folio/internal/adapters/telemetry"
+	updatesadapter "venkatasudha.com/codex-folio/internal/adapters/updates"
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/profile"
+	"venkatasudha.com/codex-folio/internal/telemetry"
+	"venkatasudha.com/codex-folio/internal/updates"
 	"venkatasudha.com/codex-folio/internal/usage"
 )
 
@@ -205,11 +212,34 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	diagnosticService, err := newDiagnosticService(stateStore, false)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	updateService, err := updates.NewService(updates.ServiceOptions{Repository: stateStore, Source: updatesadapter.DisabledSource(), Clock: usageClock{}, CurrentVersion: buildinfo.Version})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	telemetryService, err := telemetry.NewService(context.Background(), telemetry.ServiceOptions{
+		Repository: stateStore, Prerequisites: telemetryadapter.DisabledPrerequisites{}, Transport: telemetryadapter.DisabledTransport{},
+		Clock: usageClock{}, IDGenerator: telemetryadapter.RandomIDGenerator{}, AppVersion: buildinfo.Version,
+		OSFamily: telemetryOSFamily(), Architecture: telemetry.Architecture(runtime.GOARCH),
+	})
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if closeErr := telemetryService.Close(closeCtx); closeErr != nil && resultCode == exitSuccess {
+			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
+		}
+	}()
 	commandToken, err := newCommandToken()
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

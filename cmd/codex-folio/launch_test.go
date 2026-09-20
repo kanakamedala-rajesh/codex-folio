@@ -690,6 +690,53 @@ func TestLaunchCLIProjectsAssignedConfigurationPackBeforeStartingCodex(t *testin
 	}
 }
 
+func TestLaunchCLIUsesSelectedProjectIdentity(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	repository := filepath.Join(paths.Root, "project")
+	if err := os.Mkdir(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repository, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := activity.NewProjectService(activity.ProjectServiceOptions{Repository: stateStore, Paths: platform.NewProjectPaths()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := projects.Resolve(context.Background(), repository, "Atlas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var launched launch.Plan
+	var stderr bytes.Buffer
+	code := runLaunchWithInputAndDependenciesAndOwnerOptions(
+		[]string{"work", "--project", project.ID, "--", "--model", "gpt-5"}, strings.NewReader(""), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "codex"), Version: "0.1.2"}},
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		},
+		func(plan launch.Plan, _ io.Reader, _ io.Writer, _ io.Writer) (foregroundProcess, error) {
+			launched = plan
+			return &launchTestProcess{pid: 7788, exitStatus: 0}, nil
+		},
+		nil,
+		platform.OwnerOptions{},
+	)
+	if code != exitSuccess || launched.WorkingDirectory != repository || !slices.Equal(launched.Arguments, []string{"--model", "gpt-5"}) {
+		t.Fatalf("launch = code:%d plan:%#v stderr:%q, want selected project %q", code, launched, stderr.String(), repository)
+	}
+}
+
 func TestLaunchCLIDoesNotStartCodexAfterProjectionFailure(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)

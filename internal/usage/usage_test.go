@@ -28,7 +28,7 @@ func TestServiceRefreshUsesResolvedIdentityHomeAndPersistsNormalizedSnapshot(t *
 	}
 }
 
-func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
+func TestServiceRefreshCoalescesConcurrentAliasVariantsForOneProfile(t *testing.T) {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	collector := &serialCollector{started: started, release: release}
@@ -39,10 +39,13 @@ func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
 
 	var group sync.WaitGroup
 	group.Add(2)
-	for _, trigger := range []string{TriggerDashboardOpen, TriggerDashboardRefresh} {
+	for _, request := range []struct{ alias, trigger string }{
+		{alias: "Work", trigger: TriggerDashboardOpen},
+		{alias: "work", trigger: TriggerDashboardRefresh},
+	} {
 		go func() {
 			defer group.Done()
-			_, _ = service.Refresh(context.Background(), "Work", "/usr/bin/codex", "0.153.4", trigger)
+			_, _ = service.Refresh(context.Background(), request.alias, "/usr/bin/codex", "0.153.4", request.trigger)
 		}()
 	}
 	<-started
@@ -55,6 +58,9 @@ func TestServiceRefreshSerializesConcurrentTriggers(t *testing.T) {
 	group.Wait()
 	if collector.maxActive != 1 {
 		t.Fatalf("maximum concurrent collections = %d, want 1", collector.maxActive)
+	}
+	if collector.calls != 1 {
+		t.Fatalf("collection calls = %d, want one coalesced refresh", collector.calls)
 	}
 }
 
@@ -123,6 +129,55 @@ func TestServiceRefreshDerivesPartialStaleAndContradictoryEvidence(t *testing.T)
 	}
 	if result.Observations[0].Freshness != FreshnessStale || result.Observations[0].CaptureAgeSeconds != 660 || result.Observations[1].Freshness != FreshnessFresh {
 		t.Fatalf("freshness = %#v", result.Observations)
+	}
+}
+
+func TestFinalizeSnapshotProjectsCurrentWindowWithoutDiscardingSameWindowConflicts(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	metric := Registry()[0]
+	expiredStart, expiredEnd := now.Add(-14*24*time.Hour), now.Add(-7*24*time.Hour)
+	currentStart, currentEnd := now.Add(-time.Hour), now.Add(4*time.Hour)
+	observation := func(value float64, capturedAt, start, end time.Time, version string) Observation {
+		return Observation{
+			Metric: metric, Value: value, ObservedAt: capturedAt, CapturedAt: capturedAt,
+			WindowStart: &start, WindowEnd: &end, WindowTimezone: "UTC",
+			Source: SourceCodexAppServer, SourceVersion: version, Provenance: ProvenanceProvider,
+			Availability: AvailabilityAvailable,
+		}
+	}
+	availability := func() []MetricAvailability {
+		return []MetricAvailability{{MetricKey: metric.Key, State: AvailabilityAvailable, CheckedAt: now, Provenance: ProvenanceProvider}}
+	}
+
+	snapshot := Snapshot{
+		Source: SourceCodexAppServer, SourceVersion: "0.153.4", CapturedAt: now,
+		Observations: []Observation{
+			observation(75, now.Add(-7*24*time.Hour), expiredStart, expiredEnd, "0.153.3"),
+			observation(44, now, currentStart, currentEnd, "0.153.4"),
+		},
+		Availability: availability(),
+	}
+	if err := finalizeSnapshot(&snapshot, now); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != AvailabilityAvailable || snapshot.Availability[0].State != AvailabilityAvailable {
+		t.Fatalf("current projection availability = %#v", snapshot)
+	}
+	if len(snapshot.Observations) != 1 || snapshot.Observations[0].Value != 44 || snapshot.Observations[0].SourceVersion != "0.153.4" {
+		t.Fatalf("current projection observations = %#v", snapshot.Observations)
+	}
+
+	conflict := snapshot
+	conflict.Observations = []Observation{
+		observation(44, now, currentStart, currentEnd, "0.153.4"),
+		observation(46, now.Add(-time.Minute), currentStart, currentEnd, "0.153.3"),
+	}
+	conflict.Availability = availability()
+	if err := finalizeSnapshot(&conflict, now); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.Status != AvailabilityContradictory || conflict.Availability[0].State != AvailabilityContradictory || len(conflict.Observations) != 2 {
+		t.Fatalf("same-window conflict = %#v", conflict)
 	}
 }
 
@@ -331,6 +386,7 @@ type serialCollector struct {
 	mu        sync.Mutex
 	active    int
 	maxActive int
+	calls     int
 	started   chan struct{}
 	release   chan struct{}
 }
@@ -338,6 +394,7 @@ type serialCollector struct {
 func (collector *serialCollector) Collect(_ context.Context, request CollectionRequest) (Snapshot, error) {
 	collector.mu.Lock()
 	collector.active++
+	collector.calls++
 	if collector.active > collector.maxActive {
 		collector.maxActive = collector.active
 	}

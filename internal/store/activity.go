@@ -218,7 +218,8 @@ func (store *Store) listObservedSessions(ctx context.Context, filters activity.F
 func (store *Store) listManagedLaunches(ctx context.Context, filters activity.Filters) ([]activity.TimelineRecord, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT ml.managed_launch_id, ml.profile_id, a.alias,
 		COALESCE(p.project_identity_id, ''), COALESCE(p.project_alias, ''), COALESCE(p.repository_basename, ''),
-		ml.state, ml.started_at, ml.ended_at, ml.exit_status, ce.observed_session_id, ce.evidence_type, ce.confidence
+		ml.state, ml.continuation_checkpoint_id, ml.continuation_revision,
+		ml.started_at, ml.ended_at, ml.exit_status, ce.observed_session_id, ce.evidence_type, ce.confidence
 		FROM managed_launches ml
 		JOIN cli_aliases a ON a.profile_id = ml.profile_id
 		LEFT JOIN project_identities p ON p.project_identity_id = ml.project_identity_id
@@ -235,12 +236,14 @@ func (store *Store) listManagedLaunches(ctx context.Context, filters activity.Fi
 		var startedAt string
 		var endedAt sql.NullString
 		var exitStatus sql.NullInt64
-		var observedID, evidenceType, confidence sql.NullString
+		var checkpointID, revision, observedID, evidenceType, confidence sql.NullString
 		if err := rows.Scan(&record.ID, &record.ProfileID, &record.ProfileAlias, &record.ProjectID, &record.ProjectAlias,
-			&record.ProjectBasename, &record.Lifecycle, &startedAt, &endedAt, &exitStatus, &observedID, &evidenceType, &confidence); err != nil {
+			&record.ProjectBasename, &record.Lifecycle, &checkpointID, &revision, &startedAt, &endedAt, &exitStatus,
+			&observedID, &evidenceType, &confidence); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, activity.ErrActivityUnavailable)
 		}
 		record.RecordType, record.Source, record.Provenance = activity.RecordTypeManagedLaunch, "codex_folio", activity.ProvenanceManagedLaunch
+		record.ContinuationCheckpointID, record.ContinuationRevision = checkpointID.String, revision.String
 		record.Correlation.State = activity.CorrelationUncorrelated
 		var parseErr error
 		record.StartedAt, parseErr = parseStoredTime(startedAt)

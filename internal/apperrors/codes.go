@@ -40,6 +40,7 @@ const (
 	ConfigurationPackAssignmentInvalid       = "CF_CONFIGPACK_ASSIGNMENT_INVALID"
 	ConfigurationPackProjectionFailed        = "CF_CONFIGPACK_PROJECTION_FAILED"
 	ConfigurationPackPromotionReviewRequired = "CF_CONFIGPACK_PROMOTION_REVIEW_REQUIRED"
+	AlertNotificationFailed                  = "CF_ALERT_NOTIFICATION_FAILED"
 	AnalyticsRequestInvalid                  = "CF_USAGE_ANALYTICS_REQUEST_INVALID"
 	AnalyticsConfirmationInvalid             = "CF_USAGE_ANALYTICS_CONFIRMATION_INVALID"
 	AnalyticsScopeTooLarge                   = "CF_USAGE_ANALYTICS_SCOPE_TOO_LARGE"
@@ -61,6 +62,15 @@ const (
 	ContinuationRepositoryInspectionFailed   = "CF_CONTINUATION_REPOSITORY_INSPECTION_FAILED"
 	DiagnosticsConfigurationInvalid          = "CF_DIAGNOSTICS_CONFIGURATION_INVALID"
 	DiagnosticsEventInvalid                  = "CF_DIAGNOSTICS_EVENT_INVALID"
+	DiagnosticsRequestInvalid                = "CF_DIAGNOSTICS_REQUEST_INVALID"
+	DiagnosticsConfirmationInvalid           = "CF_DIAGNOSTICS_CONFIRMATION_INVALID"
+	DiagnosticsExportFailed                  = "CF_DIAGNOSTICS_EXPORT_FAILED"
+	UpdateRequestInvalid                     = "CF_UPDATES_REQUEST_INVALID"
+	TelemetryRequestInvalid                  = "CF_TELEMETRY_REQUEST_INVALID"
+	TelemetryUnavailable                     = "CF_TELEMETRY_UNAVAILABLE"
+	ConfigurationBundleInvalid               = "CF_CONFIGBUNDLE_INVALID"
+	ConfigurationBundleConflict              = "CF_CONFIGBUNDLE_CONFLICT"
+	ConfigurationBundleStale                 = "CF_CONFIGBUNDLE_STALE"
 	PlatformStatePathInvalid                 = "CF_PLATFORM_STATE_PATH_INVALID"
 	PlatformStatePathUnsafe                  = "CF_PLATFORM_STATE_PATH_UNSAFE"
 	PlatformPermissionDenied                 = "CF_PLATFORM_PERMISSION_DENIED"
@@ -168,6 +178,7 @@ func IsRegistered(code string) bool {
 		ConfigurationPackAssignmentInvalid,
 		ConfigurationPackProjectionFailed,
 		ConfigurationPackPromotionReviewRequired,
+		AlertNotificationFailed,
 		AnalyticsRequestInvalid,
 		AnalyticsConfirmationInvalid,
 		AnalyticsScopeTooLarge,
@@ -189,6 +200,15 @@ func IsRegistered(code string) bool {
 		ContinuationRepositoryInspectionFailed,
 		DiagnosticsConfigurationInvalid,
 		DiagnosticsEventInvalid,
+		DiagnosticsRequestInvalid,
+		DiagnosticsConfirmationInvalid,
+		DiagnosticsExportFailed,
+		UpdateRequestInvalid,
+		TelemetryRequestInvalid,
+		TelemetryUnavailable,
+		ConfigurationBundleInvalid,
+		ConfigurationBundleConflict,
+		ConfigurationBundleStale,
 		PlatformStatePathInvalid,
 		PlatformStatePathUnsafe,
 		PlatformPermissionDenied,

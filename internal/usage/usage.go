@@ -49,6 +49,9 @@ const (
 	TriggerDashboardRefresh = "dashboard_refresh"
 	TriggerPreLaunch        = "pre_launch"
 	TriggerPostExit         = "post_exit"
+	TriggerPeriodicActive   = "periodic_active"
+	TriggerPeriodicIdle     = "periodic_idle"
+	TriggerPeriodicReset    = "periodic_reset"
 	AggregationSum          = "sum"
 	ScopeSelectedProfile    = "selected_profile"
 	ScopeCombinedIdentity   = "combined_identity"
@@ -306,29 +309,62 @@ type Clock interface {
 }
 
 type Service struct {
-	mu        sync.Mutex
-	store     Store
-	collector Collector
-	clock     Clock
+	mu           sync.Mutex
+	resolveMu    sync.Mutex
+	collectionMu sync.Mutex
+	store        Store
+	collector    Collector
+	clock        Clock
+	inflight     map[string]*refreshFlight
+}
+
+type refreshFlight struct {
+	done     chan struct{}
+	snapshot Snapshot
+	err      error
 }
 
 func NewService(store Store, collector Collector, clock Clock) (*Service, error) {
 	if store == nil || collector == nil || clock == nil {
 		return nil, ErrInvalid
 	}
-	return &Service{store: store, collector: collector, clock: clock}, nil
+	return &Service{store: store, collector: collector, clock: clock, inflight: make(map[string]*refreshFlight)}, nil
 }
 
 func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVersion, triggerReason string) (Snapshot, error) {
 	if service == nil || service.store == nil || service.collector == nil || service.clock == nil || alias == "" || executable == "" || sourceVersion == "" || !ValidTriggerReason(triggerReason) {
 		return Snapshot{}, ErrInvalid
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	service.resolveMu.Lock()
 	target, err := service.store.ResolveUsageProfile(ctx, alias)
+	service.resolveMu.Unlock()
 	if err != nil {
 		return Snapshot{}, err
 	}
+	service.mu.Lock()
+	if current := service.inflight[target.ID]; current != nil {
+		service.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		case <-current.done:
+			return current.snapshot, current.err
+		}
+	}
+	flight := &refreshFlight{done: make(chan struct{})}
+	service.inflight[target.ID] = flight
+	service.mu.Unlock()
+	flight.snapshot, flight.err = service.refresh(ctx, target, executable, sourceVersion, triggerReason)
+	service.mu.Lock()
+	delete(service.inflight, target.ID)
+	close(flight.done)
+	service.mu.Unlock()
+	return flight.snapshot, flight.err
+}
+
+func (service *Service) refresh(ctx context.Context, target ProfileTarget, executable, sourceVersion, triggerReason string) (Snapshot, error) {
+	service.collectionMu.Lock()
+	defer service.collectionMu.Unlock()
 	capturedAt := service.clock.Now().UTC()
 	if capturedAt.IsZero() {
 		return Snapshot{}, ErrInvalid
@@ -360,7 +396,7 @@ func (service *Service) Refresh(ctx context.Context, alias, executable, sourceVe
 }
 
 func ValidTriggerReason(value string) bool {
-	return value == TriggerExplicitRefresh || value == TriggerDashboardOpen || value == TriggerDashboardRefresh || value == TriggerPreLaunch || value == TriggerPostExit
+	return value == TriggerExplicitRefresh || value == TriggerDashboardOpen || value == TriggerDashboardRefresh || value == TriggerPreLaunch || value == TriggerPostExit || value == TriggerPeriodicActive || value == TriggerPeriodicIdle || value == TriggerPeriodicReset
 }
 
 func (service *Service) Latest(ctx context.Context, alias string) (Snapshot, error) {
@@ -489,10 +525,6 @@ func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
 			}
 		}
 	}
-	values := make(map[string]float64, len(snapshot.Observations))
-	seen := make(map[string]bool, len(snapshot.Observations))
-	fresh := make(map[string]bool, len(snapshot.Observations))
-	contradictory := make(map[string]bool, len(snapshot.Observations))
 	for index := range snapshot.Observations {
 		item := &snapshot.Observations[index]
 		if item.CapturedAt.IsZero() {
@@ -504,9 +536,6 @@ func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
 		}
 		item.CaptureAgeSeconds = age
 		item.Freshness = freshness
-		if freshness == FreshnessFresh {
-			fresh[item.Metric.Key] = true
-		}
 		if item.Source == "" {
 			item.Source = snapshot.Source
 		}
@@ -515,6 +544,17 @@ func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
 		}
 		if item.WindowTimezone == "" && (item.WindowStart != nil || item.WindowEnd != nil) {
 			item.WindowTimezone = "UTC"
+		}
+	}
+	snapshot.Observations = projectCurrentQuotaWindows(snapshot.Observations, now)
+	values := make(map[string]float64, len(snapshot.Observations))
+	seen := make(map[string]bool, len(snapshot.Observations))
+	fresh := make(map[string]bool, len(snapshot.Observations))
+	contradictory := make(map[string]bool, len(snapshot.Observations))
+	for index := range snapshot.Observations {
+		item := &snapshot.Observations[index]
+		if item.Freshness == FreshnessFresh {
+			fresh[item.Metric.Key] = true
 		}
 		if seen[item.Metric.Key] && values[item.Metric.Key] != item.Value {
 			contradictory[item.Metric.Key] = true
@@ -543,6 +583,44 @@ func finalizeSnapshot(snapshot *Snapshot, now time.Time) error {
 	}
 	snapshot.Status = snapshotStatus(snapshot.Availability)
 	return nil
+}
+
+// projectCurrentQuotaWindows keeps retained provider history from being
+// interpreted as simultaneous current capacity. Evidence for the selected
+// window remains intact so supported sources that disagree about that same
+// window still produce a contradictory state.
+func projectCurrentQuotaWindows(observations []Observation, now time.Time) []Observation {
+	type selectedWindow struct {
+		start, end time.Time
+		capturedAt time.Time
+		active     bool
+	}
+	selected := make(map[string]selectedWindow)
+	for _, observation := range observations {
+		if observation.Metric.Scope != "provider_quota_window" || observation.Provenance != ProvenanceProvider || observation.WindowStart == nil || observation.WindowEnd == nil {
+			continue
+		}
+		active := !now.Before(*observation.WindowStart) && now.Before(*observation.WindowEnd)
+		current, ok := selected[observation.Metric.Key]
+		if !ok || (active && !current.active) || active == current.active && observation.CapturedAt.After(current.capturedAt) {
+			selected[observation.Metric.Key] = selectedWindow{start: *observation.WindowStart, end: *observation.WindowEnd, capturedAt: observation.CapturedAt, active: active}
+		}
+	}
+	if len(selected) == 0 {
+		return observations
+	}
+	projected := observations[:0]
+	for _, observation := range observations {
+		window, ok := selected[observation.Metric.Key]
+		if !ok {
+			projected = append(projected, observation)
+			continue
+		}
+		if observation.WindowStart != nil && observation.WindowEnd != nil && observation.WindowStart.Equal(window.start) && observation.WindowEnd.Equal(window.end) {
+			projected = append(projected, observation)
+		}
+	}
+	return projected
 }
 
 func snapshotStatus(items []MetricAvailability) string {

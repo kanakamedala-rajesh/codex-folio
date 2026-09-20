@@ -584,6 +584,16 @@ func TestProfileLifecycleCLIQuarantinesRestoresAndPurgesManagedHome(t *testing.T
 	if err := runningStore.MarkManagedLaunchExited(ctx, plan.LeaseID, 0); err != nil {
 		t.Fatalf("MarkManagedLaunchExited() error = %v", err)
 	}
+	if _, err := httpapi.NewCommandClient(server.Origin(), token, nil).ApplyProfileLifecycle(ctx, "remove", "Work", "", "Work"); apperrors.Code(err) != apperrors.ProfileReplacementRequired {
+		t.Fatalf("missing replacement error = %v, want %s", err, apperrors.ProfileReplacementRequired)
+	}
+	{
+		work, workErr := runningStore.GetProfile(ctx, "Work")
+		personal, personalErr := runningStore.GetProfile(ctx, "Personal")
+		if workErr != nil || personalErr != nil || !work.Selected || personal.Selected {
+			t.Fatalf("rejected replacement changed profiles: Work=%#v/%v Personal=%#v/%v", work, workErr, personal, personalErr)
+		}
+	}
 	if _, err := runningStore.BeginProfileRemoval(ctx, "Work", "Personal"); err != nil {
 		t.Fatalf("BeginProfileRemoval() interruption fixture error = %v", err)
 	}

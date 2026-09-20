@@ -77,24 +77,26 @@ type Correlation struct {
 }
 
 type TimelineRecord struct {
-	RecordType      string      `json:"record_type"`
-	ID              string      `json:"id"`
-	SourceSessionID string      `json:"source_session_id,omitempty"`
-	ProfileID       string      `json:"profile_id"`
-	ProfileAlias    string      `json:"profile_alias"`
-	ProjectID       string      `json:"project_id,omitempty"`
-	ProjectAlias    string      `json:"project_alias,omitempty"`
-	ProjectBasename string      `json:"project_basename,omitempty"`
-	Source          string      `json:"source"`
-	SourceVersion   string      `json:"source_version,omitempty"`
-	Provenance      string      `json:"provenance"`
-	StartedAt       time.Time   `json:"started_at"`
-	LastObservedAt  time.Time   `json:"last_observed_at"`
-	Lifecycle       string      `json:"lifecycle,omitempty"`
-	ExitStatus      *int        `json:"exit_status,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	TokensUsed      *int64      `json:"tokens_used,omitempty"`
-	Correlation     Correlation `json:"correlation"`
+	RecordType               string      `json:"record_type"`
+	ID                       string      `json:"id"`
+	SourceSessionID          string      `json:"source_session_id,omitempty"`
+	ProfileID                string      `json:"profile_id"`
+	ProfileAlias             string      `json:"profile_alias"`
+	ProjectID                string      `json:"project_id,omitempty"`
+	ProjectAlias             string      `json:"project_alias,omitempty"`
+	ProjectBasename          string      `json:"project_basename,omitempty"`
+	Source                   string      `json:"source"`
+	SourceVersion            string      `json:"source_version,omitempty"`
+	Provenance               string      `json:"provenance"`
+	StartedAt                time.Time   `json:"started_at"`
+	LastObservedAt           time.Time   `json:"last_observed_at"`
+	Lifecycle                string      `json:"lifecycle,omitempty"`
+	ContinuationCheckpointID string      `json:"continuation_checkpoint_id,omitempty"`
+	ContinuationRevision     string      `json:"continuation_revision,omitempty"`
+	ExitStatus               *int        `json:"exit_status,omitempty"`
+	Model                    string      `json:"model,omitempty"`
+	TokensUsed               *int64      `json:"tokens_used,omitempty"`
+	Correlation              Correlation `json:"correlation"`
 }
 
 type Filters struct {

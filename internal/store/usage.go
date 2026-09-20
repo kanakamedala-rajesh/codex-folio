@@ -79,7 +79,7 @@ func (store *Store) ListUsageProfiles(ctx context.Context) ([]usage.ProfileTarge
 	rows, err := store.db.QueryContext(ctx, `SELECT ip.profile_id, a.alias,
 		CASE WHEN s.profile_id = ip.profile_id THEN 1 ELSE 0 END,
 		CASE WHEN ip.status = 'ready' AND h.location_ciphertext IS NOT NULL AND h.ownership IN ('managed', 'referenced')
-			AND COALESCE((SELECT us.status FROM usage_snapshots us WHERE us.profile_id = ip.profile_id AND us.status <> 'temporarily_unavailable' ORDER BY us.captured_at DESC, us.snapshot_id DESC LIMIT 1), '') <> 'reauthentication_required'
+			AND COALESCE((SELECT us.status FROM usage_snapshots us WHERE us.profile_id = ip.profile_id AND us.status <> 'temporarily_unavailable' ORDER BY rtrim(us.captured_at, 'Z') DESC, us.snapshot_id DESC LIMIT 1), '') <> 'reauthentication_required'
 			THEN 1 ELSE 0 END, h.identity_home_id, h.location_ciphertext
 		FROM identity_profiles ip
 		JOIN cli_aliases a ON a.profile_id = ip.profile_id
@@ -253,10 +253,14 @@ func (store *Store) LastUsageObservations(ctx context.Context, target usage.Prof
 	ctx = contextOrBackground(ctx)
 	store.operationMu.RLock()
 	defer store.operationMu.RUnlock()
-	return store.lastUsageObservations(ctx, target)
+	return store.lastUsageObservations(ctx, target, "")
 }
 
 func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.ProfileTarget) (usage.Snapshot, error) {
+	return store.usageSnapshot(ctx, target, "")
+}
+
+func (store *Store) usageSnapshot(ctx context.Context, target usage.ProfileTarget, snapshotID string) (usage.Snapshot, error) {
 	if store == nil || store.db == nil || target.ID == "" || target.Alias == "" {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageRequestInvalid, usage.ErrInvalid)
 	}
@@ -267,7 +271,7 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 	var capturedAt string
 	var loginCiphertext, workspaceCiphertext []byte
 	err := store.db.QueryRowContext(ctx, `SELECT snapshot_id, source, source_version, captured_at, status, trigger_reason, login_identity_ciphertext, workspace_ciphertext
-		FROM usage_snapshots WHERE profile_id = ? ORDER BY captured_at DESC, snapshot_id DESC LIMIT 1`, target.ID).
+		FROM usage_snapshots WHERE profile_id = ? AND (? = '' OR snapshot_id = ?) ORDER BY rtrim(captured_at, 'Z') DESC, snapshot_id DESC LIMIT 1`, target.ID, snapshotID, snapshotID).
 		Scan(&snapshot.ID, &snapshot.Source, &snapshot.SourceVersion, &capturedAt, &snapshot.Status, &snapshot.TriggerReason, &loginCiphertext, &workspaceCiphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageProfileUnavailable, usage.ErrProfileUnavailable)
@@ -318,26 +322,26 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 	if err := rows.Err(); err != nil {
 		return usage.Snapshot{}, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
-	snapshot.Observations, err = store.lastUsageObservations(ctx, target)
+	snapshot.Observations, err = store.lastUsageObservations(ctx, target, snapshotID)
 	if err != nil {
 		return usage.Snapshot{}, err
 	}
 	return snapshot, nil
 }
 
-func (store *Store) lastUsageObservations(ctx context.Context, target usage.ProfileTarget) ([]usage.Observation, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT o.observation_id, o.metric_key, o.value, o.observed_at, o.window_start, o.window_end,
+func (store *Store) lastUsageObservations(ctx context.Context, target usage.ProfileTarget, snapshotID string) ([]usage.Observation, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT * FROM (SELECT o.observation_id, o.metric_key, o.value, o.observed_at, o.window_start, o.window_end,
 		o.window_timezone, o.assumptions, o.uncertainty, p.source, COALESCE(p.source_version, ''), p.captured_at, p.provenance_label, p.freshness, a.condition
 		FROM usage_observations o JOIN metric_provenance p ON p.provenance_id = o.provenance_id
 		JOIN metric_availability a ON a.metric_availability_id = o.metric_availability_id
-		WHERE o.profile_id = ?
+		WHERE o.profile_id = ? AND (? = '' OR o.snapshot_id = ?)
  UNION ALL SELECT g.aggregate_id, g.metric_key, g.value, g.last_observed_at,
  CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_start ELSE NULL END,
  CASE WHEN g.bucket_kind = 'source_window' THEN g.bucket_end ELSE NULL END,
  g.timezone, g.assumptions, g.uncertainty, g.source, g.source_version, g.last_captured_at, g.provenance_label, 'stale',
  CASE WHEN g.availability = 'contradictory' THEN g.availability ELSE '' END
- FROM usage_aggregates g WHERE g.profile_id = ?
- ORDER BY 12 DESC`, target.ID, target.ID)
+ FROM usage_aggregates g WHERE g.profile_id = ? AND ? = ''
+ ) ORDER BY rtrim(captured_at, 'Z') DESC`, target.ID, snapshotID, snapshotID, target.ID, snapshotID)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
@@ -468,3 +472,64 @@ func usageScopeAAD(snapshotID, field string) []byte {
 }
 
 var _ usage.Store = (*Store)(nil)
+
+// LatestSuccessfulUsageRefresh returns the newest capture that persisted at
+// least one normalized observation. Unlike RecentUsageSnapshots, this query is
+// not bounded by the dashboard trace depth.
+func (store *Store) LatestSuccessfulUsageRefresh(ctx context.Context, target usage.ProfileTarget) (time.Time, error) {
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var capturedAt string
+	err := store.db.QueryRowContext(ctx, `SELECT s.captured_at FROM usage_snapshots s
+		WHERE s.profile_id = ? AND EXISTS (SELECT 1 FROM usage_observations o WHERE o.snapshot_id = s.snapshot_id)
+		ORDER BY rtrim(s.captured_at, 'Z') DESC, s.snapshot_id DESC LIMIT 1`, target.ID).Scan(&capturedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, coded(apperrors.StoreReadFailed, err)
+	}
+	result, err := parseStoredTime(capturedAt)
+	if err != nil {
+		return time.Time{}, coded(apperrors.StoreReadFailed, err)
+	}
+	return result, nil
+}
+
+// RecentUsageSnapshots returns the last twelve raw captures, including failed
+// captures as gaps. It never fills a historical gap with last-known evidence.
+func (store *Store) RecentUsageSnapshots(ctx context.Context, target usage.ProfileTarget) ([]usage.Snapshot, error) {
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	rows, err := store.db.QueryContext(ctx, `SELECT snapshot_id FROM usage_snapshots WHERE profile_id = ? ORDER BY rtrim(captured_at, 'Z') DESC, snapshot_id DESC LIMIT 12`, target.ID)
+	if err != nil {
+		store.operationMu.RUnlock()
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	store.operationMu.RUnlock()
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	result := make([]usage.Snapshot, 0, len(ids))
+	for i := len(ids) - 1; i >= 0; i-- {
+		snapshot, err := store.usageSnapshot(ctx, target, ids[i])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, snapshot)
+	}
+	return result, nil
+}

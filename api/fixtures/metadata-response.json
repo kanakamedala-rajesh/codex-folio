@@ -1,5 +1,16 @@
 {
   "api_version": "v1",
   "contract_version": "0.0.1-alpha",
-  "product": "VenkataSudha CodexFolio"
+  "product": "VenkataSudha CodexFolio",
+  "service_state": "ready",
+  "vault_state": "unlocked",
+  "database_state": "ready",
+  "error_code": "",
+  "guidance_commands": [],
+  "terminal_command_base": "codex-folio",
+  "terminal_command_suffix": "",
+  "enrollment_state": "not_installed",
+  "enrollment_mechanism": "systemd-user",
+  "enrollment_available": true,
+  "enrollment_guidance": ["codex-folio service status", "codex-folio service install"]
 }

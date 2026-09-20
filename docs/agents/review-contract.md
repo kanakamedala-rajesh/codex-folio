@@ -6,6 +6,13 @@ applicable AGENTS.md, this file, and the governing ticket. Use CONTEXT.md and
 relevant architecture/ADR sections to resolve terminology and constraints.
 Identify contradictions; never silently select the easier requirement.
 
+For milestone review, a qualification exception can receive completion credit
+only when the governing requirement explicitly permits an exception and the
+owner approval identifies its exact scope and retained limitation. Classify it
+`EXCEPTED`, never `VERIFIED`, and report evidence coverage separately. An
+exception cannot cover missing implementation, a security or privacy defect, a
+failed required check, or a requirement whose contract does not permit waiver.
+
 ## Identity, authority, and evidence
 
 The parent supplies repository, ticket/parent IDs, ticket base SHA, candidate
