@@ -36,6 +36,14 @@ _Avoid_: Imported home, managed home
 An experimental Codex home in which multiple Identity Profiles deliberately share sessions, configuration, skills, plugins, and custom agents while only one identity is active at a time.
 _Avoid_: Shared account, multi-login home
 
+**Persistent Browser Trust**:
+Explicit, revocable permission for a browser to reopen the local dashboard across ordinary restarts and renew short-lived Local Dashboard Sessions.
+_Avoid_: Permanent session, trusted localhost
+
+**Local Dashboard Session**:
+Short-lived authorization for browser access to the local dashboard, distinct from Persistent Browser Trust and from Codex authentication.
+_Avoid_: Codex session, browser trust
+
 ## Continuity
 
 **Shared Work Context**:
@@ -80,6 +88,14 @@ _Avoid_: Codex session
 Session metadata discovered through a supported Codex source, which may not share the same boundaries as a Managed Launch.
 _Avoid_: Managed process, CodexFolio session
 
+**Unassigned History**:
+Supported historical session metadata whose association with an Identity Profile has not been established. It remains distinct from profile-attributed history in overall views, is not a selectable Identity Profile, and is excluded from individual-profile totals and Combined Identity View.
+_Avoid_: Current-profile history, inferred ownership
+
+**History Assignment**:
+A reversible association of supported historical metadata with an Identity Profile, whose user-assigned or evidence-established provenance remains distinct from the source/session identity.
+_Avoid_: Verified ownership, current login
+
 **Project Identity**:
 An app-local association between a repository location and a user-editable Project Alias, used for local analytics without adding files to the repository.
 _Avoid_: Repository ID, project file
@@ -117,7 +133,7 @@ The Identity Profile currently materialized in the experimental Shared Work Home
 _Avoid_: Global active identity
 
 **Combined Identity View**:
-An explicitly selected aggregate of compatible metrics across multiple Identity Profiles while preserving each metric's source and provenance.
+An explicitly selected aggregate of compatible metrics across multiple Identity Profiles while preserving each metric's source and provenance, excluding Unassigned History.
 _Avoid_: Total account, merged account
 
 **Eligible Profile Count**:

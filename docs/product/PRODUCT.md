@@ -40,18 +40,20 @@ CodexFolio unifies three capabilities that neighboring account switchers or usag
 
 ## Operating Context
 
+These are governing product requirements. Milestone 5A (#82) adds the everyday-companion contract through successor ADRs 0035–0037; acceptance here does not claim shipped behavior or native qualification.
+
 - Runs locally on Windows AMD64, Linux AMD64, WSL2, and macOS ARM64 as tier-one MVP platforms.
 - Works without GUI access through the `codex-folio` CLI.
-- Opens an embedded responsive SPA in the system browser when a GUI is available.
+- Ordinary launches print a repeatable dashboard address without opening a browser; explicit dashboard use and required authentication may open it. Explicit, revocable browser trust survives ordinary restarts and renews short-lived sessions; new/private browsers need local-launcher authorization.
 - Supports ChatGPT subscription identities, effective workspace contexts, API-key identities, and later supported credential sources as Identity Profiles.
-- Uses Codex-managed persistent authentication for isolated profiles and a tiered encrypted vault only for experimental Shared Work Home switching.
-- Collects on demand by default; an explicitly installed user service may collect periodic snapshots and deliver limit alerts.
+- Codex owns persistent identity authentication; the application vault protects sensitive local state. M5A requires prompt-free everyday protection on qualified Windows DPAPI, macOS Keychain, supported Linux secure storage, and WSL2 Windows-user-backed integration. Native proof is required, including for the WSL bridge; unsupported headless environments are outside that guarantee. Explicit passphrase mode remains available, with recoverable migration and no plaintext or colocated-key downgrade.
+- Plain startup guides setup, starts or reuses one companion, and keeps it available after foreground Codex exits. Background collection is separately offered and remembered; refusal retains launching and on-demand refresh. OS-login enrollment is another explicit, optional choice. Explicit stop offers deferral during Managed Launches and never kills Codex.
 
 ## Capabilities and Constraints
 
 - Isolated Identity Homes are the recommended default; experimental Shared Work Home mode serializes identity use while sharing sessions, configuration, skills, plugins, and agents.
-- Dashboard metrics default to the active Identity Profile. Combined analytics is an explicit alternate scope.
-- Provider-reported, locally derived, estimated, and observed-during-session metrics are visibly distinguished.
+- Dashboard metrics default to Selected Profile. Combined Identity View is an explicit profile aggregate. Consented history import preserves unknown ownership as Unassigned History in overall history, excluded from profile and Combined Identity View totals. Single/bulk assignment, correction, and return to Unassigned preserve source/session identity and evidence versus user-assignment provenance, prevent duplicates, and recalculate totals without changing source files.
+- Provider-reported, locally derived, estimated, and observed-during-session metrics are visibly distinguished. Historical coverage, freshness, source, and units remain explicit; unavailable metrics are not zero or reconstructed past provider snapshots. Import consent is separate from profile registration, and imported records retain existing privacy, retention, purge, export, and project-path rules.
 - The dashboard may refresh, filter, compare, export, launch, hand off, diagnose, and manage local Identity Profiles.
 - Launch and handoff actions ultimately invoke the installed Codex application; CodexFolio does not execute prompts, tools, or model turns itself.
 - It cannot buy or consume credits, alter remote user/workspace/billing information, or change managed Codex policy.

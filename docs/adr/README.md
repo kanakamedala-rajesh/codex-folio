@@ -66,3 +66,6 @@ permission for release, deployment, credential use, or remote mutation.
 - [0032 — License under Apache-2.0 with DCO](0032-license-under-apache-2-0-with-dco.md)
 - [0033 — Export continuation checkpoints encrypted by default](0033-export-continuation-checkpoints-encrypted-by-default.md)
 - [0034 — Keep experiments off the stable-core critical path](0034-keep-experiments-off-the-stable-core-critical-path.md)
+- [0035 — Qualify prompt-free secure storage](0035-qualify-prompt-free-secure-storage.md)
+- [0036 — Remember explicitly trusted browsers](0036-remember-explicitly-trusted-browsers.md)
+- [0037 — Separate companion lifetime from consent and attribution](0037-separate-companion-lifetime-from-consent-and-attribution.md)
