@@ -745,6 +745,9 @@ export const profileCopy = {
   device: "Device code",
   continue: "Continue in Codex",
   saveClose: "Save and close",
+  reuseSignIn: "Use existing sign-in",
+  reuseSignInHelp:
+    "Check this home's existing Codex sign-in without starting a new login. If it is not usable, the profile stays Pending; you can resume setup with a sign-in method below.",
   setupStatus: "Setup status",
   installedCodex: "Installed Codex",
   found: "Found",

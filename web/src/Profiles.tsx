@@ -476,7 +476,19 @@ export function Profiles({
                   onChange={() => setForm({ ...form, authMethod: "device-code" })}
                 />
               </fieldset>
+              {!reauthentication && form.homeMode === "referenced" && (
+                <p className="mt-5 max-w-[75ch] text-muted">{c.reuseSignInHelp}</p>
+              )}
               <div className="mt-5 flex flex-wrap gap-3">
+                {!reauthentication && form.homeMode === "referenced" && (
+                  <button
+                    className={buttonClass}
+                    disabled={busy || !form.alias || !form.displayName}
+                    onClick={() => void runAuthentication("prepare")}
+                  >
+                    {c.reuseSignIn}
+                  </button>
+                )}
                 <button
                   className={primaryClass}
                   disabled={busy || !form.alias || (!reauthentication && !form.displayName)}

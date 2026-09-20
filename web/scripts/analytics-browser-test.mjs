@@ -139,6 +139,30 @@ export async function testAnalytics({
   await chart.waitFor();
   assert.ok(await chart.locator('path[stroke="var(--cyan)"][d*="L"]').count());
   assert.ok(await chart.locator('path[stroke="var(--magenta)"][d*="L"]').count());
+  const isolatedSamples = await chart.locator("g").evaluateAll((groups) =>
+    groups.flatMap((group) => {
+      const path = group.querySelector("path");
+      const point = /^M([\d.]+) ([\d.]+)$/.exec(path?.getAttribute("d") ?? "");
+      if (!point) return [];
+      const marker = group.querySelector("circle");
+      return [
+        {
+          x: Number(point[1]),
+          y: Number(point[2]),
+          cx: Number(marker?.getAttribute("cx")),
+          cy: Number(marker?.getAttribute("cy")),
+          radius: Number(marker?.getAttribute("r")),
+        },
+      ];
+    }),
+  );
+  assert.ok(isolatedSamples.length > 0, "fixture includes an isolated capacity sample");
+  for (const sample of isolatedSamples) {
+    assert.equal(sample.cx, sample.x);
+    assert.equal(sample.cy, sample.y);
+    assert.ok(sample.radius > 0, "isolated samples have a visible marker");
+  }
+  check("Isolated monthly capacity samples render visible markers without bridging gaps");
   const table = page.getByRole("table", {
     name: /The same monthly final samples as the chart/,
   });
@@ -215,7 +239,18 @@ export async function testAnalytics({
     .getByRole("combobox", { name: "Capacity window", exact: true })
     .selectOption("codex.primary.used_percent");
   assert.equal(await chart.locator('path[stroke="var(--magenta)"]').count(), 0);
+  const filterDisclosure = page
+    .locator("details")
+    .filter({ has: page.locator('option[value="13-months"]') });
+  const filterSummary = filterDisclosure.locator("summary");
+  await filterSummary.click();
+  assert.equal(await filterDisclosure.evaluate((element) => element.open), false);
+  assert.match(await filterSummary.innerText(), /Filters.*Primary window/);
+  assert.equal(await chart.isVisible(), true);
+  await filterSummary.click();
+  assert.equal(await filterDisclosure.evaluate((element) => element.open), true);
   await page.getByRole("combobox", { name: "Capacity window", exact: true }).selectOption("both");
+  check("Analytics filters collapse while retaining an active scope summary and visible data");
   const reload = page.waitForResponse(
     (item) =>
       item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
@@ -322,6 +357,41 @@ export async function testAnalytics({
   await projectDisclosure.focus();
   await projectDisclosure.press("Space");
   assert.equal(await projectDisclosure.evaluate((summary) => summary.parentElement.open), true);
+  const aliasesBeforeCancel = await (
+    await page.request.get(new URL("/api/v1/projects", link).href)
+  ).json();
+  await page.getByRole("button", { name: "Edit Project Alias", exact: true }).first().click();
+  await page.getByRole("textbox", { name: "Project Alias", exact: true }).fill("Cancelled alias");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  assert.deepEqual(
+    await (await page.request.get(new URL("/api/v1/projects", link).href)).json(),
+    aliasesBeforeCancel,
+  );
+  await page.getByRole("button", { name: "Edit Project Alias", exact: true }).first().click();
+  await page.getByRole("textbox", { name: "Project Alias", exact: true }).fill("   ");
+  const rejectedAlias = page.waitForResponse(
+    (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Save Alias", exact: true }).click();
+  const aliasRejection = await rejectedAlias;
+  assert.equal(aliasRejection.status(), 409);
+  assert.equal((await aliasRejection.json()).code, "CF_ACTIVITY_PROJECT_IDENTITY_INVALID");
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Project Alias could not be updated." })
+    .waitFor();
+  assert.equal(
+    await page.getByRole("textbox", { name: "Project Alias", exact: true }).inputValue(),
+    "   ",
+  );
+  assert.deepEqual(
+    await (await page.request.get(new URL("/api/v1/projects", link).href)).json(),
+    aliasesBeforeCancel,
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  check(
+    "Project Alias cancel and service-rejected whitespace preserve stored aliases with visible recoverable failure",
+  );
   const editResponse = page.waitForResponse(
     (item) => item.url().endsWith("/api/v1/projects") && item.request().method() === "PUT",
   );
@@ -474,6 +544,11 @@ export async function testAnalytics({
   assert.equal(zephyr.status(), 200);
   assert.equal(zephyrQuery.get("profile"), "Personal");
   assert.ok(zephyrQuery.get("project"));
+  await filterSummary.click();
+  assert.equal(await filterDisclosure.evaluate((element) => element.open), false);
+  assert.match(await filterSummary.innerText(), /Zephyr/);
+  assert.doesNotMatch(await filterSummary.innerText(), /All projects/);
+  await filterSummary.click();
   assert.match(await page.getByRole("table").innerText(), /Zephyr/);
   assert.doesNotMatch(await page.getByRole("table").innerText(), /Atlas Research/);
 

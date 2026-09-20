@@ -125,7 +125,10 @@ export function ConfigurationTransfer({ busy, manage, applied }: Props) {
       <p className="mb-5 max-w-[75ch] text-muted">{c.boundary}</p>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="border-t border-rule pt-4" aria-labelledby="configuration-export-title">
+        <section
+          className="min-w-0 border-t border-rule pt-4"
+          aria-labelledby="configuration-export-title"
+        >
           <h3 id="configuration-export-title" className="mb-2 text-[1.05rem] font-bold">
             {c.exportTitle}
           </h3>
@@ -178,16 +181,19 @@ export function ConfigurationTransfer({ busy, manage, applied }: Props) {
           ) : null}
         </section>
 
-        <section className="border-t border-rule pt-4" aria-labelledby="configuration-import-title">
+        <section
+          className="min-w-0 border-t border-rule pt-4"
+          aria-labelledby="configuration-import-title"
+        >
           <h3 id="configuration-import-title" className="mb-2 text-[1.05rem] font-bold">
             {c.importTitle}
           </h3>
-          <label className="mb-4 grid gap-2">
+          <label className="mb-4 grid min-w-0 gap-2">
             {c.file}
             <input
               type="file"
               accept="application/json,.json"
-              className="min-h-11 max-w-full rounded border border-rule bg-panel px-3 py-2 file:mr-3 file:rounded file:border file:border-rule file:bg-canvas file:px-3 file:py-1 file:text-ink"
+              className="block min-h-11 w-full min-w-0 max-w-full rounded border border-rule bg-panel px-3 py-2 file:mr-3 file:rounded file:border file:border-rule file:bg-canvas file:px-3 file:py-1 file:text-ink"
               onChange={(event) => void chooseImport(event.target.files?.[0])}
             />
           </label>

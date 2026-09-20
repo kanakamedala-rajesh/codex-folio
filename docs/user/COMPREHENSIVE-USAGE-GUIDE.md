@@ -21,10 +21,73 @@ The current preview includes:
 - an authenticated, loopback-only dashboard with Overview, Profiles, Sessions,
   and Capacity/Tokens/Projects/Models/Activity/Compare Analytics flows.
 
-Some dashboard destinations remain placeholders, persistent native service
-installation is not yet an end-user feature, and no supported binary release
-channel exists. Read [Compatibility](COMPATIBILITY.md) before using real
-identities and [Privacy](PRIVACY.md) before exporting data.
+All six dashboard destinations are implemented: Overview, Profiles, Sessions,
+Analytics, Alerts and Settings. Optional per-user native service enrollment is
+implemented. No supported stable binary release channel exists, and implemented
+features are not a claim of complete real-world or native-platform qualification.
+Read [Compatibility](COMPATIBILITY.md) before using real identities and [Privacy](PRIVACY.md) before exporting data.
+
+## Start from scratch: manual setup map
+
+Use the [short guide](USAGE-GUIDE.md) for the ordered WSL commands. This reference
+adds alternate-platform setup, existing history, full workflow checks and
+troubleshooting. A fresh setup means a **new CodexFolio state root**, not deleting
+Codex credentials or existing sessions.
+
+1. Build with the pinned toolchain and identify the binary and installed Codex.
+2. Stop the existing CodexFolio owner before switching state roots.
+3. Choose an unused absolute directory outside the checkout and Codex homes.
+4. Start that root, unlock its vault, and verify Profiles is empty.
+5. Add one account at a time; verify sign-in account/workspace and Ready status.
+6. Select a profile, refresh actual usage and inspect provider window details.
+7. Register a test repository and run an actual foreground Codex session.
+8. Collect activity from the same profile home; inspect Sessions and Analytics.
+9. Follow the manual checklist below, recording failures and untested states.
+10. Stop, restart the same root and verify persistence. Keep the old root intact
+    when starting a separate fresh run.
+
+### State-root discipline for every command
+
+The short guide uses `CF_STATE="$HOME/codex-folio-manual-01"` in **each** WSL
+terminal. This variable is only a shell convenience; the app does not read it
+automatically. Every stateful CLI command needs `--state-root "$CF_STATE"`.
+Reference examples later in this document omit that flag for readability and
+otherwise operate on default state. Append it before running those examples
+against your manual setup; for launch, insert it **before** the `--` separator.
+Do not copy bare reference commands into an isolated run unchanged.
+
+On Windows PowerShell, from the repository root, use these equivalents in both
+terminals (Terminal A runs start; Terminal B runs unlock/status):
+
+```powershell
+$CF_STATE = Join-Path $env:USERPROFILE 'codex-folio-manual-01'
+.\build\bin\codex-folio.exe service start --state-root "$CF_STATE" --vault-mode passphrase
+```
+
+```powershell
+$CF_STATE = Join-Path $env:USERPROFILE 'codex-folio-manual-01'
+.\build\bin\codex-folio.exe vault unlock --state-root "$CF_STATE"
+.\build\bin\codex-folio.exe service status --state-root "$CF_STATE" --json
+```
+
+Use the Windows executable and native Windows paths for the remaining commands.
+Do not mix a Windows service with WSL binaries/homes. On macOS, the short guide's
+shell syntax applies with a native build and macOS paths. Passphrase mode makes
+the explicit unlock steps consistent; platform-backed vault mode is an option
+when its prerequisites are available, as described below.
+
+### Expected empty starting state
+
+After first unlock, Profiles should contain no registered identities, Sessions
+no retained activity and Analytics no collected history. An empty state is not
+an error. Adding a Managed profile creates a separate home; even a remote account
+with extensive history will not automatically populate that new home with local
+sessions. Registering a repository adds a Project Identity, not a session.
+Usage refresh and activity refresh collect different evidence.
+
+A fresh root does not reset remote quotas, change the account's plan or workspace,
+copy default-home history, or enroll a native service. Foreground startup has no
+periodic scheduler; refresh manually unless you explicitly test enrollment.
 
 ## Build and identify the binary
 
@@ -55,9 +118,19 @@ CodexFolio keeps application state in the platform-specific user data location.
 Use `--state-root ABSOLUTE_PATH` to isolate a test. Supply the same override to
 every command that should share that state.
 
-Only one process owns writable state at a time. Commands use the running service
-when available or acquire the state owner directly when it is stopped. Do not
-copy an active database, run two different state owners, or edit runtime files.
+Only one process owns writable state per OS user, including across different
+state-root overrides. Commands use the matching running service when available
+or acquire the state owner directly when it is stopped. A different active root
+is an ownership conflict, not a way to start a parallel isolated service. Do not
+copy an active database, delete lock files, or edit runtime files.
+
+Before switching roots, exit active foreground Codex sessions and stop an
+on-demand owner with Ctrl-C in its service terminal. If the old owner is enrolled,
+run `service uninstall --state-root /absolute/path/to/old-state` to remove that
+enrollment, then inspect status and ensure its owner has stopped before starting
+the new root. Uninstall is not a reset and retains data. If a foreground owner is
+still running, stop it in its original terminal. Do not issue a blanket kill of
+Codex processes.
 
 Inspect or start the foreground owner:
 
@@ -228,7 +301,30 @@ Use an absolute existing home only when you understand its contents and ownershi
 ```sh
 ./build/bin/codex-folio profile add existing \
   --identity-home /absolute/path/to/existing/codex-home \
-  --browser
+  --non-interactive --yes --state-root "$CF_STATE"
+```
+
+This example deliberately omits `--browser` and `--device-code`: automatic mode
+first checks whether the referenced home is already authenticated and reuses it.
+`--yes` accepts the referenced-home confirmation; `--non-interactive` avoids
+interactive setup prompts. Check the owning account before registering it. If
+reuse fails, inspect the diagnostic before intentionally starting a new sign-in.
+Explicit browser/device flags request that authentication flow instead of the
+initial automatic reuse path. In Profiles → Add Identity Profile, choose
+Reference an existing Identity Home and **Use existing sign-in** to perform
+that noninteractive check without opening a new login. If authentication is
+unusable, the profile stays Pending; resume with the same alias/path and choose
+an explicit sign-in method when needed.
+
+For the usual WSL default home, substitute `"$HOME/.codex"` only if that is the
+home you actually use; an existing custom Codex home may be elsewhere. Do not
+change CODEX_HOME globally or copy auth files to make the example work. Register
+this as an additional clearly named profile, not as proof that it belongs to
+Work or Personal. Then collect its metadata:
+
+```sh
+./build/bin/codex-folio activity refresh existing --state-root "$CF_STATE"
+./build/bin/codex-folio activity list --profile existing --state-root "$CF_STATE"
 ```
 
 Referenced registration does not copy, own, quarantine, or delete external
@@ -889,24 +985,121 @@ URLs, and private repository content unless the field is explicitly safe.
 The [CLI conventions](../development/CLI-CONVENTIONS.md) define stream, exit,
 confirmation, and non-interactive behavior.
 
-## First-time tester checklist
+## Manual validation checklist
 
-Use a non-sensitive repository and, preferably, a disposable state root.
+Start with a fresh root and real accounts as described above. Use 1024×768 and
+1440×1000 browser viewports for the desktop pass. These are viewport dimensions,
+not necessarily the monitor resolution. Keep a log with one row per action:
 
-1. Run canonical verification and record the exact version JSON.
-2. Discover Codex, including an explicit override test if needed.
-3. Start the service and confirm the dashboard URL works only once.
-4. Add a Managed profile and confirm interrupted setup remains Pending.
-5. Add a Referenced profile only with a disposable existing home.
-6. Select a profile and confirm a running launch is not switched.
-7. Refresh usage and inspect source, availability, and capture time.
-8. Exercise browser reauthentication without entering credentials in the SPA.
-9. Stop the service with `Ctrl-C` and confirm `service status` reports stopped.
-10. Report only sanitized evidence.
+| Page/control | Profile and precondition | Steps/input | Expected | Actual | Result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Example: Overview Refresh | Work, Ready | Click Refresh, open details | Fresh source/window evidence | Fill after testing | Pass / Fail / Blocked / Not tested | Screenshot/time/version |
+
+Record the selected profile separately from dashboard/filter scope, plus the
+binary version, browser, viewport, local time and relevant source timestamp.
+Capture the exact page/dialog after the action. A screenshot of a different
+scope or earlier state is not evidence for the action. Redact credentials,
+bootstrap URLs and private repository/session content before sharing.
+
+### A. Establish real account and data expectations
+
+- Confirm each sign-in's account and workspace before testing. Local aliases,
+  display names and workspace labels do not authenticate that relationship.
+- For the supplied test accounts, expect Work weekly-only, Personal five-hour
+  plus weekly, and personal-free monthly-only. Confirm provider duration/reset
+  metadata; these expectations are not universal plan rules.
+- Keep same-workspace identities separate in Compare. Do not add their remaining
+  percentages or infer a shared allowance from their labels.
+- First collect actual usage. Then run a short real session in a registered test
+  repository and collect activity. Empty managed-home history is expected before
+  that; reference an existing authenticated home only if you want its history.
+
+### B. Page-by-page functional checks
+
+Perform each listed action separately, recording its own outcome. For a save,
+reopen or reload the view to check persistence, then restore the original value
+when the change was only a test. For Cancel, verify the prior value remains.
+
+| Surface | Actions to exercise | Expected behavior to compare |
+| --- | --- | --- |
+| Shared navigation | Open all six pages; use keyboard Tab/Shift-Tab, skip link and Enter; try Back/reload; change dashboard scope | Correct page/focus, usable controls, truthful authorization/re-entry guidance; scope does not silently switch a running launch |
+| Overview | Select each scope; Refresh; Open details; move history selector; dismiss guidance; Open Alerts; inspect alternatives | Correct account/source/window/time, explicit missing data, corresponding history values; do not treat Unsupported as zero or a second limit |
+| Profiles | Add/resume; expand details; edit/save/reopen; edit/cancel; Select; reauthenticate intentionally | Ready/Pending states reflect setup, local metadata persists, cancellation preserves values, future selection is explicit |
+| Shared Configuration Packs | Create a small nonsecret draft; inspect exact documents/digests; approve; assign; preview projection; test conflict review | Approval/version/assignment are distinct; preview identifies changes and preserves local conflicts. Apply only to a disposable managed test profile |
+| Sessions | Reload; profile/project/date/type filters; empty result; next/previous pages; open both record types; return and inspect filter retention | Records match filters and inclusive display dates; Managed Launch and Observed Session remain distinct; detail is metadata-only |
+| Analytics | Open Capacity, Tokens, Projects, Models, Activity, Compare; change filters; compare each chart with its table | Correct scope and units, explicit missing metadata, no summed incompatible quotas; include a single-month chart check |
+| Analytics management | Project alias save/cancel; JSON/CSV export preview/cancel/download; retention save/reopen; purge preview/cancel | Alias persists only on save; actual file matches chosen format/fields; paths excluded unless requested; no deletion from preview/cancel |
+| Alerts | Active/History; keyboard tabs; thresholds invalid/valid/save/reopen; acknowledge an actual active alert | Invalid thresholds cannot save, history remains truthful, acknowledgement does not conceal a still-active condition. No active alert means acknowledgement is not yet tested |
+| Settings | Light/Dark/System and reload; collection intervals invalid/valid/save; notification privacy; diagnostics preview/cancel/download | Changes persist independently; invalid values are rejected; downloaded JSON is an actual file, not just success feedback |
+| Settings data | Configuration export and import preview/cancel; checkpoint inventory/refresh, retention and export preview/cancel | Correct counts and exclusions; Cancel does not apply; each checkpoint identifies its state/revision. Import apply and plaintext export are separate choices |
+| Updates/telemetry | Manual update check; inspect separate automatic preference; expand telemetry prerequisites/schema | Manual check does not enable automatic checks; unconfigured production endpoints/telemetry remain explicitly unavailable |
+
+For downloads, inspect the resulting file locally and compare its selected
+format and fields with the preview. A browser toast alone does not establish a
+download. Keep raw exports private unless reviewed for sharing.
+
+### C. Launch and handoff end to end
+
+1. Register a test repository and choose its Project Identity in Launch Codex.
+2. Confirm Prepared / Not started before running the displayed terminal command.
+   Keep the command's state root and other arguments intact.
+3. Run it in a local terminal. Confirm the intended working directory/account,
+   complete a short actual interaction and observe Running then Exited. Exit
+   status alone does not establish quota exhaustion.
+4. While a launch is running, select another profile and verify the existing
+   launch retains its original profile. Exit the source normally before handoff.
+5. Prepare Handoff to a different Ready account for the same test repository.
+   Review Goal, Completed Work, Pending Work, Known Validation, Risks and Next
+   Action; exercise path and exact-text redaction, save and inspect the revision.
+6. Approve only once the source is definitively exited. First test Cancel before
+   terminal execution and verify no target process starts.
+7. Prepare/review/approve again and run the displayed terminal command to test
+   actual continuation. Verify the target account, repository and checkpoint
+   context in the new foreground session. A prepared command is not a completed
+   handoff.
+8. Inspect Settings → Safe Continuation data and the final checkpoint state.
+   If a start is uncertain, follow recovery guidance; do not force a second launch.
+
+Transcript assistance is an additional, explicit per-handoff consent flow.
+Use a session you are willing to expose to that workflow; test candidate review,
+redaction, cancel and approval separately. Repository-first handoff does not
+establish that transcript assistance works.
+
+### D. Destructive, native and unavailable-state checks
+
+Use disposable profiles/homes, nonsecret packs and test data for actual profile
+removal/replacement, quarantine/restore/purge, referenced unregister, pack
+projection and configuration-import conflict resolution/apply. A preview or
+disabled confirmation is only a guard check, not proof that Apply works. Never
+use the normal Codex home to test deletion or deliberately corrupt real state.
+
+Test lock/restart with the chosen test root; each new passphrase service session
+starts locked and needs unlock. Recovery/corruption and deliberate transport
+failures need a separately prepared disposable environment. Record them as not
+tested if you have not created the required state.
+
+Native enrollment, notifications and OS credential integration need the actual
+platform. Windows browser screen readers and browser-native 200% zoom can be
+checked manually even when the service runs in WSL. Record the browser/reader
+and actual method; changing viewport or CSS scale is not equivalent to native
+zoom or spoken-reader testing. Do not label unavailable checks Pass.
+
+Finally restart the same root, unlock, obtain a new dashboard entry and verify
+profiles, settings and history persist. Restore any test preferences and record
+retained test profiles, sessions, files and checkpoints.
+
+### Current known issues relevant to manual testing
+
+The audit identified historical-data capacity conflicts, Alerts keyboard/error
+handling, a missing isolated chart marker, referenced-home authentication reuse,
+and narrow layout/focus defects. Corrections passed isolated regression checks; see the [sanitized audit summary](../validation/milestone-5/REPORT.md)
+for their status and remaining qualification limits. A fresh root is a clean
+baseline, not a milestone qualification claim. Never include credentials, private
+session content or account screenshots in a shared test report.
 
 Automated development checks use fake Codex and isolated SQLite/vault fixtures.
-They do not establish live-provider, native screen-reader, native high-contrast,
-signed-release, or every-platform runtime qualification.
+They do not establish live-provider, spoken-reader, native high-contrast,
+signed-release or every-platform runtime qualification.
 
 ## Troubleshooting
 

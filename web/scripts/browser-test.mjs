@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 import axe from "axe-core";
 import { testSessions } from "./sessions-browser-test.mjs";
 import { testAnalytics } from "./analytics-browser-test.mjs";
+import { testSettingsNarrowReflow, testNarrowFocusVisibility } from "./narrow-browser-checks.mjs";
 
 const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
 assert.ok(
@@ -134,6 +135,7 @@ async function profileAction(name) {
   await page.getByRole("button", { name, exact: true }).click();
   const response = await completed;
   assert.equal(response.status(), 200, await response.text());
+  return response;
 }
 async function lifecycleAction(name, action) {
   const completed = page.waitForResponse(
@@ -321,14 +323,25 @@ try {
       await page.keyboard.press("End");
       assert.match(await page.locator("tr[data-current]").innerText(), /75%/);
       check("provider capacity and raw trace/table values agree; keyboard sample inspection");
-      const projectId = (
+      const launchProjects = (
         await (await page.request.get(new URL("/api/v1/projects", link).href)).json()
-      ).projects[0].project_id;
+      ).projects;
+      const projectId = launchProjects.find((project) => project.alias === "Atlas").project_id;
       const launchesBefore = (
         await (await page.request.get(new URL("/api/v1/analytics", link).href)).json()
       ).activity.length;
       await page.getByRole("button", { name: "Launch Codex", exact: true }).click();
       await assertFocusedHeading("Launch prepared in your terminal");
+      const alternateProject = launchProjects.find((project) => project.alias === "Zephyr");
+      await page
+        .getByRole("combobox", { name: "Project", exact: true })
+        .selectOption(alternateProject.project_id);
+      assert.match(await page.locator("main").innerText(), /Zephyr · zephyr/);
+      assert.ok(
+        (await page.locator("main code").innerText()).includes(
+          `--project ${alternateProject.project_id}`,
+        ),
+      );
       await page
         .getByRole("combobox", { name: "Project", exact: true })
         .selectOption({ label: "Atlas · atlas" });
@@ -337,6 +350,9 @@ try {
         `codex-folio launch Personal --project ${projectId} --`,
       );
       assert.match(await page.locator("main").innerText(), /Prepared · Not started/);
+      check(
+        "prepared Launch project choice updates alternate and original project guidance without starting Codex",
+      );
       // Axe is injected by the test harness, never shipped as a runtime app asset.
       await page.evaluate(axe.source);
       await scanAccessibility("launch");
@@ -574,6 +590,74 @@ try {
       writeFileSync(control, "handoff-exit-0");
       await page.getByText("Exited · Status · 0", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await choose("Personal");
+      await prepareHandoff();
+      const repositoryFields = {
+        goal: "Review repository-only continuation",
+        completed_work: "Inspected local repository",
+        pending_work: "Review remaining implementation",
+        known_validation: "Browser fixture validation",
+        risks: "Review before executing",
+        next_action: "Continue after explicit terminal launch",
+      };
+      for (const [field, value] of Object.entries(repositoryFields)) {
+        await page.locator(`#handoff-${field}`).fill(value);
+      }
+      assert.equal(
+        await page.getByRole("button", { name: "Approve this revision", exact: true }).isDisabled(),
+        true,
+      );
+      await page.getByText("Repository evidence and redaction", { exact: true }).click();
+      await page.getByRole("checkbox", { name: "handoff-notes.txt", exact: true }).check();
+      const repositoryEdit = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "edit",
+      );
+      await page.getByRole("button", { name: "Save sanitized draft", exact: true }).click();
+      const editedRepository = await repositoryEdit;
+      assert.equal(editedRepository.status(), 200, await editedRepository.text());
+      assert.deepEqual(editedRepository.request().postDataJSON().fields, repositoryFields);
+      assert.deepEqual(editedRepository.request().postDataJSON().redact_paths, [
+        "handoff-notes.txt",
+      ]);
+      const repositoryDraft = (await editedRepository.json()).handoff;
+      assert.equal(repositoryDraft.source, "repository-first");
+      assert.equal(repositoryDraft.source_state, "exited");
+      assert.equal(repositoryDraft.target_eligible, true, repositoryDraft.target_caution);
+      assert.ok(!JSON.stringify(repositoryDraft.repository).includes("handoff-notes.txt"));
+      await page
+        .getByText("Sanitized draft saved · Approval applies only to this revision", {
+          exact: true,
+        })
+        .waitFor();
+      assert.equal(
+        await page.getByRole("checkbox", { name: "handoff-notes.txt", exact: true }).count(),
+        0,
+      );
+      const repositoryApproval = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "approve",
+      );
+      await page.getByRole("button", { name: "Approve this revision", exact: true }).click();
+      const approvedRepository = await repositoryApproval;
+      assert.equal(approvedRepository.status(), 200, await approvedRepository.text());
+      assert.equal(approvedRepository.request().postDataJSON().revision, repositoryDraft.revision);
+      assert.equal((await approvedRepository.json()).handoff.source, "repository-first");
+      await page.getByText("Approved · Terminal launch not started", { exact: true }).waitFor();
+      const activityBeforeRepositoryCancel = await (
+        await page.request.get(new URL("/api/v1/activity", link).href)
+      ).json();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      const activityAfterRepositoryCancel = await (
+        await page.request.get(new URL("/api/v1/activity", link).href)
+      ).json();
+      assert.deepEqual(activityAfterRepositoryCancel, activityBeforeRepositoryCancel);
+      check(
+        "repository-only fields save, path redaction, revision approval and cancellation do not launch Codex",
+      );
+      await choose("Work");
       writeFileSync(control, "handoff-restore-running");
       await page.waitForTimeout(100);
       await page.getByRole("button", { name: "Open details", exact: true }).click();
@@ -584,8 +668,11 @@ try {
       );
       await capture("running-wide", 1440, 1000);
       await choose("Work");
+      await page.getByRole("heading", { name: "5-hour window", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Weekly window", exact: true }).waitFor();
+      check("Overview names actual reported quota durations instead of provider slots");
       await capture("overview-wide", 1440, 1000);
-      await testSessions({ page, context, link, capture, scanAccessibility, check });
+      await testSessions({ page, context, link, control, capture, scanAccessibility, check });
       await testAnalytics({
         page,
         link,
@@ -620,6 +707,25 @@ try {
         .filter({ visible: true })
         .click();
       await assertFocusedHeading("Operational alerts");
+      const activeTab = page.getByRole("tab", { name: /^Active/ });
+      const historyTab = page.getByRole("tab", { name: "History", exact: true });
+      await activeTab.focus();
+      await activeTab.press("ArrowRight");
+      assert.equal(
+        await historyTab.evaluate((element) => element === document.activeElement),
+        true,
+      );
+      assert.equal(await historyTab.getAttribute("aria-selected"), "true");
+      assert.equal(await activeTab.getAttribute("tabindex"), "-1");
+      assert.equal(
+        await page.getByRole("tabpanel").getAttribute("aria-labelledby"),
+        await historyTab.getAttribute("id"),
+      );
+      await historyTab.press("Home");
+      await activeTab.press("End");
+      await historyTab.press("ArrowLeft");
+      assert.equal(await activeTab.evaluate((element) => element === document.activeElement), true);
+      check("Alerts tabs support roving focus, arrows, Home/End and panel relationships");
       assert.match(await page.locator("main").innerText(), /No active operational conditions/);
       const thresholdDetails = page.locator("details").filter({ hasText: "Capacity thresholds" });
       await thresholdDetails.locator("summary").click();
@@ -633,6 +739,17 @@ try {
       await thresholdSelects.first().selectOption({ label: "Work" });
       await thresholdInputs.first().fill("70");
       await thresholdInputs.nth(1).fill("60");
+      // A rejected action must show feedback without an unhandled page error or clearing edits.
+      await page.route("**/api/v1/alerts", async (route) => {
+        if (route.request().method() === "POST")
+          await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        else await route.continue();
+      });
+      await page.getByRole("button", { name: "Save thresholds", exact: true }).click();
+      await page.getByRole("alert").filter({ hasText: "Alert change was not applied." }).waitFor();
+      assert.equal(await thresholdInputs.first().inputValue(), "70");
+      await page.unroute("**/api/v1/alerts");
+      check("Rejected alert saves retain edits and show feedback without unhandled rejection");
       const thresholdSaved = page.waitForResponse(
         (response) =>
           response.url().endsWith("/api/v1/alerts") &&
@@ -643,6 +760,13 @@ try {
       assert.equal((await thresholdSaved).status(), 200);
       await page.getByRole("heading", { name: "Capacity at warning threshold" }).waitFor();
       assert.match(await page.locator("main").innerText(), /65% remaining/);
+      await page
+        .getByRole("button", { name: "Overview", exact: true })
+        .filter({ visible: true })
+        .click();
+      await page.getByRole("button", { name: "Open Alerts", exact: true }).click();
+      await assertFocusedHeading("Operational alerts");
+      check("Overview Open Alerts opens focused Operational alerts");
       const acknowledged = page.waitForResponse(
         (response) =>
           response.url().endsWith("/api/v1/alerts") &&
@@ -943,6 +1067,51 @@ try {
         .waitFor();
 
       await configurationFile.setInputFiles({
+        name: "replace-preferences-configuration.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(conflictingConfiguration)),
+      });
+      const replacementPreviewed = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_preview",
+      );
+      await portableSection
+        .getByRole("button", { name: "Preview configuration import", exact: true })
+        .click();
+      assert.equal((await replacementPreviewed).status(), 200);
+      await portableSection
+        .getByRole("combobox", { name: "Resolution for profile:work", exact: true })
+        .selectOption("keep_local");
+      await portableSection
+        .getByRole("combobox", { name: "Resolution for preferences:operational", exact: true })
+        .selectOption("use_imported");
+      const replacementApplied = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/configuration") &&
+          response.request().method() === "POST" &&
+          response.request().postDataJSON().action === "import_apply",
+      );
+      await portableSection
+        .getByRole("button", { name: "Apply reviewed configuration", exact: true })
+        .click();
+      assert.equal((await replacementApplied).status(), 200);
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+      const replacementExport = await page.request.get(new URL("/api/v1/configuration", link).href);
+      const replacedBundle = (await replacementExport.json()).preview.bundle;
+      assert.equal(replacedBundle.operational_preferences.appearance, "dark");
+      assert.equal(
+        replacedBundle.profiles.find((profile) => profile.alias === "Work").display_name,
+        "Work",
+      );
+      check(
+        "portable configuration can explicitly replace imported preferences while preserving a keep-local profile",
+      );
+      await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+
+      await configurationFile.setInputFiles({
         name: "new-device-configuration.json",
         mimeType: "application/json",
         buffer: Buffer.from(
@@ -1186,6 +1355,24 @@ try {
       await scanAccessibility("diagnostics-settings");
       check("Settings persists independent diagnostic controls and previews before local download");
       await page.getByText("Checkpoint inventory loaded.", { exact: true }).waitFor();
+      const checkpointSection = page.locator('section[aria-labelledby="checkpoint-data-title"]');
+      const inventoryBeforeRefresh = await checkpointSection.locator("article").allTextContents();
+      const refreshedInventory = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/handoff") &&
+          response.request().postDataJSON().action === "list",
+      );
+      await page.getByRole("button", { name: "Refresh inventory", exact: true }).click();
+      assert.equal((await refreshedInventory).status(), 200);
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("button")].some(
+          (button) => button.textContent?.trim() === "Refresh inventory" && !button.disabled,
+        ),
+      );
+      assert.deepEqual(
+        await checkpointSection.locator("article").allTextContents(),
+        inventoryBeforeRefresh,
+      );
       assert.match(await page.locator("main").innerText(), /Completed/);
       assert.match(await page.locator("main").innerText(), /Retained/);
       assert.match(await page.locator("main").innerText(), /Expired/);
@@ -1210,7 +1397,31 @@ try {
       await page.setViewportSize({ width: 390, height: 844 });
 
       await page.getByLabel("Encrypted .cfolio", { exact: true }).check();
-      await page.getByRole("button", { name: "Preview export", exact: true }).first().click();
+      const assistedCheckpoint = checkpointSection
+        .locator("article")
+        .filter({ hasText: approved.revision.slice(0, 12) })
+        .filter({ hasText: "Completed" });
+      await assistedCheckpoint.getByRole("button", { name: "Preview export", exact: true }).click();
+      await page
+        .getByLabel("Export passphrase", { exact: true })
+        .fill("cancelled-fixture-passphrase");
+      await page.getByRole("button", { name: "Cancel export", exact: true }).click();
+      assert.equal(
+        await page.getByRole("button", { name: "Download export", exact: true }).count(),
+        0,
+      );
+      const inventoryAfterCancellation = await checkpointSection
+        .locator("article")
+        .allTextContents();
+      await assistedCheckpoint.getByRole("button", { name: "Preview export", exact: true }).click();
+      assert.equal(await page.getByLabel("Export passphrase", { exact: true }).inputValue(), "");
+      assert.deepEqual(
+        await checkpointSection.locator("article").allTextContents(),
+        inventoryAfterCancellation,
+      );
+      check(
+        "checkpoint inventory refresh preserves records; export cancellation clears passphrase and preview",
+      );
       await page
         .getByLabel("Export · Atlas")
         .getByText(/Always excluded/)
@@ -1234,7 +1445,7 @@ try {
       assert.doesNotMatch(encryptedContents, /transcript-private-sentinel|browser-fixture-command/);
 
       await page.getByLabel("Plaintext JSON", { exact: true }).check();
-      await page.getByRole("button", { name: "Preview export", exact: true }).first().click();
+      await assistedCheckpoint.getByRole("button", { name: "Preview export", exact: true }).click();
       const plaintextDownloadButton = page.getByRole("button", {
         name: "Download export",
         exact: true,
@@ -1275,6 +1486,18 @@ try {
         "checkpoint retention, encrypted and acknowledged plaintext export, cancel and exact purge",
       );
       await page.setViewportSize({ width: 390, height: 844 });
+      await page
+        .getByRole("navigation", { name: "Settings sections", exact: true })
+        .getByRole("link", { name: "Appearance", exact: true })
+        .click();
+      assert.equal(
+        await page
+          .getByRole("heading", { name: "Appearance", exact: true })
+          .evaluate((element) => element === document.activeElement),
+        true,
+      );
+      check("Settings section navigation moves keyboard focus directly to Appearance");
+      await testSettingsNarrowReflow(page, check);
       await capture("settings-light", 390, 844);
       await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
       await page.emulateMedia({
@@ -1345,9 +1568,80 @@ try {
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
+      const profileLaunchBefore = await (
+        await page.request.get(new URL("/api/v1/activity", link).href)
+      ).json();
+      await page.getByRole("button", { name: "Launch Codex", exact: true }).click();
+      await assertFocusedHeading("Launch prepared in your terminal");
+      assert.match(await page.locator("main").innerText(), /Launch Profile[\s\S]*Work/);
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await assertFocusedHeading("Profiles");
+      assert.deepEqual(
+        await (await page.request.get(new URL("/api/v1/activity", link).href)).json(),
+        profileLaunchBefore,
+      );
+      check("Profiles Launch entry prepares the chosen profile and Back starts no process");
       await page.getByRole("button", { name: "Manage Shared Configuration", exact: true }).click();
       await assertFocusedHeading("Shared Configuration Packs");
       assert.doesNotMatch(await page.locator("main").innerText(), /model =|gpt-5-mini/);
+      await page.getByText("Create a declarative draft", { exact: true }).click();
+      const draftDocuments = [
+        { kind: "config", label: "config.toml (optional)", content: 'model = "gpt-5-mini"\n' },
+        {
+          kind: "agents",
+          label: "AGENTS.md (optional)",
+          content: "Review repository changes before continuing.\n",
+        },
+        { kind: "plugins", label: "plugins.lock (optional)", content: "version = 1\n" },
+      ];
+      assert.equal(
+        await page.getByRole("button", { name: "Save draft", exact: true }).isDisabled(),
+        true,
+      );
+      await page.getByLabel("Pack ID", { exact: true }).fill("browser-reviewed-draft");
+      await page.getByLabel("Version", { exact: true }).fill("1");
+      for (const item of draftDocuments)
+        await page.getByLabel(item.label, { exact: true }).fill(item.content);
+      const createdDraftResponse = await configurationAction("Save draft", "create");
+      assert.equal(createdDraftResponse.status(), 200, await createdDraftResponse.text());
+      const createdDraft = (await createdDraftResponse.json()).pack;
+      assert.equal(createdDraft.state, "draft");
+      assert.deepEqual(
+        createdDraftResponse.request().postDataJSON().documents,
+        draftDocuments.map(({ kind, content }) => ({ kind, content })),
+      );
+      const draftItem = page.locator("li").filter({ hasText: "browser-reviewed-draft · 1" });
+      await draftItem.getByText(createdDraft.digest, { exact: true }).waitFor();
+      for (const item of draftDocuments) {
+        const disclosure = draftItem
+          .locator("details")
+          .filter({ has: page.locator("summary", { hasText: item.kind }) });
+        await disclosure.locator("summary").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await disclosure.locator("pre").isVisible(), true);
+        assert.equal(await disclosure.locator("pre").textContent(), item.content);
+      }
+      const draftApproval = await configurationAction("Approve reviewed draft", "approve");
+      assert.equal(draftApproval.status(), 200, await draftApproval.text());
+      assert.equal((await draftApproval.json()).pack.state, "approved");
+      await page.getByText("Reviewed pack version approved.", { exact: true }).waitFor();
+      assert.equal(
+        await draftItem
+          .getByRole("button", { name: "Approve reviewed draft", exact: true })
+          .count(),
+        0,
+      );
+      const approvedPackChoices = page.getByRole("combobox", {
+        name: "Approved pack version",
+        exact: true,
+      });
+      assert.equal(
+        await approvedPackChoices.locator('option[value="browser-reviewed-draft@1"]').count(),
+        1,
+      );
+      check(
+        "pack draft creation reviews every exact document by keyboard before explicit approval",
+      );
       const projectionPreview = await configurationAction("Preview projection", "preview");
       const projectionPreviewBody = await projectionPreview.text();
       assert.equal(projectionPreview.status(), 200, projectionPreviewBody);
@@ -1423,7 +1717,8 @@ try {
       await page.getByLabel("CLI Alias", { exact: true }).fill("Referenced");
       await page.getByLabel("Reference an existing Identity Home", { exact: true }).check();
       await page.getByLabel("Existing Identity Home path", { exact: true }).fill(referencedHome);
-      await profileAction("Continue in Codex");
+      const reusedSignIn = await profileAction("Use existing sign-in");
+      assert.equal(reusedSignIn.request().postDataJSON().action, "prepare");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       assert.doesNotMatch(await page.locator("main").innerText(), new RegExp(referencedHome));
@@ -1459,6 +1754,7 @@ try {
       assert.match(await page.locator("main").innerText(), /Pending · Resume setup/);
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
+      await testNarrowFocusVisibility(page, check);
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.getByLabel("Display Name", { exact: true }).fill("Work Studio");
       await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -1517,7 +1813,7 @@ try {
           assert.match(text, /Conflicting observations|Contradictory/);
           assert.match(
             await page
-              .getByRole("heading", { name: "Secondary window", exact: true })
+              .getByRole("heading", { name: "Weekly window", exact: true })
               .first()
               .locator("..")
               .innerText(),
@@ -1652,6 +1948,15 @@ try {
       );
       check("expired authorization hides protected evidence and offers local relaunch");
       writeFileSync(control, "supported");
+      await page.reload();
+      await page
+        .getByText("Open a one-time dashboard link from your terminal.", { exact: true })
+        .waitFor();
+      assert.equal(
+        await page.getByRole("heading", { name: "Current capacity", exact: true }).count(),
+        0,
+      );
+      check("reloading the stripped dashboard URL requires explicit one-time terminal re-entry");
       const replay = await context.newPage();
       await replay.goto(link);
       await replay.getByRole("heading", { name: "Relaunch CodexFolio", exact: true }).waitFor();

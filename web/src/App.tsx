@@ -1,3 +1,4 @@
+import { quotaWindowLabel } from "./quotaWindow";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   createCodexFolioApiClient,
@@ -132,9 +133,17 @@ function Capacity({ snapshot, now }: { snapshot?: UsageSnapshotResponse; now: nu
       <div className="mt-6 grid grid-cols-2 gap-[0.85rem] md:gap-6">
         {metrics.map((metric, i) => {
           const r = reading(snapshot, metric);
+          if (
+            r.state === "unsupported" &&
+            !r.observation &&
+            snapshot?.observations.some((item) => metrics.includes(item.metric_key))
+          )
+            return null;
           return (
             <section className="relative min-w-0 [&_p]:wrap-anywhere" key={metric}>
-              <h3 className="mb-4 text-[1.05rem] font-bold">{i === 0 ? c.primary : c.secondary}</h3>
+              <h3 className="mb-4 text-[1.05rem] font-bold">
+                {quotaWindowLabel(r.observation, i === 0 ? c.primary : c.secondary)}
+              </h3>
               {r.value !== null ? (
                 <>
                   <svg
@@ -1512,8 +1521,37 @@ export function App() {
                 ) : null}
                 {route === "Settings" ? (
                   <section>
+                    <nav
+                      aria-label="Settings sections"
+                      className="mb-6 flex flex-wrap gap-2 border-b border-rule pb-4"
+                    >
+                      {[
+                        ["settings-top", serviceHealthCopy.vaultAndRecovery],
+                        ["settings-configuration", "Configuration transfer"],
+                        ["settings-background", c.backgroundService],
+                        ["settings-schedule", c.collectionSchedule],
+                        ["settings-appearance", c.appearance],
+                        ["settings-data", c.analyticsRetention],
+                      ].map(([id, title]) => (
+                        <a
+                          key={id}
+                          href={`#${id}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            document.getElementById(id)?.focus();
+                          }}
+                          className="min-h-11 rounded border border-rule px-3 py-2 hover:border-accent"
+                        >
+                          {title}
+                        </a>
+                      ))}
+                    </nav>
                     <section className="border-b border-rule pb-6">
-                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                      <h2
+                        id="settings-top"
+                        tabIndex={-1}
+                        className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                      >
                         {serviceHealthCopy.vaultAndRecovery}
                       </h2>
                       <p className="mb-4 max-w-[75ch]">
@@ -1532,13 +1570,19 @@ export function App() {
                     {telemetry ? (
                       <Telemetry data={telemetry} busy={busy} manage={manageTelemetry} />
                     ) : null}
-                    <ConfigurationTransfer
-                      busy={busy}
-                      manage={managePortableConfiguration}
-                      applied={applyPortableConfiguration}
-                    />
+                    <div id="settings-configuration" tabIndex={-1}>
+                      <ConfigurationTransfer
+                        busy={busy}
+                        manage={managePortableConfiguration}
+                        applied={applyPortableConfiguration}
+                      />
+                    </div>
                     <section className="border-b border-rule py-6">
-                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                      <h2
+                        id="settings-background"
+                        tabIndex={-1}
+                        className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                      >
                         {c.backgroundService}
                       </h2>
                       <p className="mb-4 max-w-[75ch]" role="status" aria-live="polite">
@@ -1565,7 +1609,11 @@ export function App() {
                       </div>
                     </section>
                     <section className="border-b border-rule py-6">
-                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                      <h2
+                        id="settings-schedule"
+                        tabIndex={-1}
+                        className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                      >
                         {c.collectionSchedule}
                       </h2>
                       <p className="mb-4 max-w-[75ch]">
@@ -1625,7 +1673,11 @@ export function App() {
                         </button>
                       </form>
                     </section>
-                    <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                    <h2
+                      id="settings-appearance"
+                      tabIndex={-1}
+                      className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                    >
                       {c.appearance}
                     </h2>
                     <label className="grid min-w-0 gap-[0.4rem]">
@@ -1651,7 +1703,11 @@ export function App() {
                       {c.osLocale} · {navigator.language} · {zone}
                     </p>
                     <section className="border-t border-rule py-6">
-                      <h2 className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]">
+                      <h2
+                        id="settings-data"
+                        tabIndex={-1}
+                        className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                      >
                         {c.analyticsRetention}
                       </h2>
                       <p className="mb-4 max-w-[75ch] text-muted">{c.analyticsRetentionDetail}</p>

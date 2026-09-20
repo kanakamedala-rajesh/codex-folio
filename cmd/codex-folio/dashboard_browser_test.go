@@ -704,6 +704,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		go func() {
 			seeded := false
 			activitySeeded := false
+			paginationStart := time.Now().UTC().Truncate(24 * time.Hour).Add(-36 * time.Hour)
 			for {
 				select {
 				case <-stopLaunches:
@@ -713,6 +714,18 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				mode, readErr := os.ReadFile(control)
 				if readErr != nil {
 					continue
+				}
+				if string(mode) == "sessions-page-seed" || string(mode) == "sessions-page-clean" {
+					action := string(mode)
+					if seedErr := dashboardPaginationRecords(state, paginationStart, action == "sessions-page-seed"); seedErr != nil {
+						analyticsSeedErrors <- seedErr
+						_ = os.WriteFile(control, []byte(action+"-failed"), 0600)
+						return
+					}
+					if writeErr := os.WriteFile(control, []byte(action+"-done"), 0600); writeErr != nil {
+						analyticsSeedErrors <- writeErr
+						return
+					}
 				}
 				if string(mode) == "analytics-seed" && !seeded {
 					if seedErr := seedDashboardAnalyticsHistory(state); seedErr != nil {
@@ -877,6 +890,34 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser selection changed the running Work launch")
 	}
 	return nil
+}
+
+func dashboardPaginationRecords(state *store.Store, start time.Time, seed bool) error {
+	ctx := context.Background()
+	target, err := state.ResolveActivityProfile(ctx, "Work")
+	if err != nil {
+		return err
+	}
+	if seed {
+		records := make([]activity.ObservedSessionRecord, 26)
+		for index := range records {
+			at := start.Add(time.Duration(index) * time.Minute)
+			records[index] = activity.ObservedSessionRecord{
+				SourceSessionID: fmt.Sprintf("pagination-fixture-%02d", index),
+				ProfileID:       target.ID, ProfileAlias: target.Alias,
+				Source: activity.SourceLocalMetadata, SourceVersion: "pagination-fixture-v1",
+				StartedAt: at, LastObservedAt: at,
+			}
+		}
+		return state.SaveObservedSessions(ctx, records)
+	}
+	scope := usage.HistoryScope{ProfileID: target.ID, ProjectID: "*", From: start.Format(time.RFC3339), To: start.Add(time.Hour).Format(time.RFC3339), Classes: []string{"observed_sessions"}}
+	preview, err := state.PurgeAnalytics(ctx, scope, "")
+	if err != nil {
+		return err
+	}
+	_, err = state.PurgeAnalytics(ctx, scope, preview.Confirmation)
+	return err
 }
 
 func seedDashboardAnalyticsHistory(state *store.Store) error {

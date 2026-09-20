@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from "react";
+import { useMemo, useRef, useState, type RefObject } from "react";
 
 import type {
   AlertActionRequest,
@@ -151,6 +151,8 @@ export function Alerts({
   manage: (request: AlertActionRequest) => Promise<AlertsResponse>;
 }) {
   const [tab, setTab] = useState<"active" | "history">("active");
+  const tabButtons = useRef<Array<HTMLButtonElement | null>>([]);
+  const [actionError, setActionError] = useState("");
   const [profileId, setProfileId] = useState(profiles[0]?.profile_id ?? "");
   const [metricKey, setMetricKey] = useState("codex.primary.used_percent");
   const configured = useMemo(
@@ -167,7 +169,12 @@ export function Alerts({
   const records = tab === "active" ? data.active : data.history;
 
   async function acknowledge(id: string) {
-    await manage({ action: "acknowledge", alert_id: id });
+    setActionError("");
+    try {
+      await manage({ action: "acknowledge", alert_id: id });
+    } catch {
+      setActionError(c.failed);
+    }
   }
 
   return (
@@ -184,11 +191,27 @@ export function Alerts({
       </header>
 
       <div className="mb-5 flex gap-2 border-b border-rule" role="tablist" aria-label={c.views}>
-        {(["active", "history"] as const).map((value) => (
+        {(["active", "history"] as const).map((value, index) => (
           <button
             key={value}
             type="button"
             role="tab"
+            id={`alerts-tab-${value}`}
+            aria-controls="alerts-panel"
+            ref={(element) => {
+              tabButtons.current[index] = element;
+            }}
+            tabIndex={tab === value ? 0 : -1}
+            onKeyDown={(event) => {
+              let next: number;
+              if (event.key === "ArrowRight" || event.key === "ArrowLeft") next = 1 - index;
+              else if (event.key === "Home") next = 0;
+              else if (event.key === "End") next = 1;
+              else return;
+              event.preventDefault();
+              setTab(next === 0 ? "active" : "history");
+              tabButtons.current[next]?.focus();
+            }}
             aria-selected={tab === value}
             onClick={() => setTab(value)}
             className="min-h-11 border-0 border-b-3 border-transparent bg-transparent px-3 py-2 font-semibold aria-selected:border-accent aria-selected:text-accent"
@@ -198,7 +221,15 @@ export function Alerts({
         ))}
       </div>
 
-      <section aria-live="polite" aria-atomic="false">
+      {actionError && <p role="alert">{actionError}</p>}
+      <section
+        id="alerts-panel"
+        role="tabpanel"
+        aria-labelledby={`alerts-tab-${tab}`}
+        tabIndex={0}
+        aria-live="polite"
+        aria-atomic="false"
+      >
         <h2 className="sr-only">{tab === "active" ? c.active : c.history}</h2>
         {records.length ? (
           records.map((alert) => (
@@ -218,16 +249,19 @@ export function Alerts({
           className="grid max-w-2xl gap-4 sm:grid-cols-2"
           onSubmit={(event) => {
             event.preventDefault();
+            setActionError("");
             void manage({
               action: "set_threshold",
               profile_id: profileId,
               metric_key: metricKey,
               warning_percent: warningValue,
               critical_percent: criticalValue,
-            }).then(() => {
-              setWarning(null);
-              setCritical(null);
-            });
+            })
+              .then(() => {
+                setWarning(null);
+                setCritical(null);
+              })
+              .catch(() => setActionError(c.failed));
           }}
         >
           <label className="grid gap-2">

@@ -1,352 +1,178 @@
-# Usage guide
+# Usage guide: set up from scratch
 
-This guide is the shortest path for a first-time tester. CodexFolio is still a
-development preview: build it from source, use a test repository, and avoid
-important accounts until you have read the
-[compatibility notes](COMPATIBILITY.md).
+This is a fresh, manual setup for the development preview. It creates a new
+CodexFolio state directory without deleting your existing setup. CodexFolio
+organizes local profiles and launches your installed Codex; Codex owns account
+sign-in and provider communication.
 
-CodexFolio does not replace Codex. It organizes local Identity Profiles,
-launches your installed Codex executable, and displays supported local usage
-evidence. Codex still owns authentication and provider communication.
+The commands below use **WSL/Linux with bash or zsh**, two terminals, and a
+browser. Run them from the CodexFolio repository root. For Windows/macOS and the
+full feature reference, see the [comprehensive guide](COMPREHENSIVE-USAGE-GUIDE.md).
 
-## 1. Build the preview
+## 1. Build and check prerequisites
 
-Install the pinned Go, Node.js, and npm versions listed in the
-[build guide](../development/BUILDING.md). From the repository root, run:
+Install Git and the pinned toolchain: Go **1.27.0**, Node.js **24.18.0**, npm
+**11.16.0**. Codex must be installed separately and available in this WSL
+environment, not only on the Windows side. See [Building](../development/BUILDING.md)
+and [Compatibility](COMPATIBILITY.md).
 
 ```sh
 node scripts/verify.mjs
-./build/bin/codex-folio version
-```
-
-On Windows PowerShell, use:
-
-```powershell
-node scripts/verify.mjs
-.\build\bin\codex-folio.exe version
-```
-
-The verifier installs the locked frontend packages, runs the repository checks,
-and builds the native development binary.
-
-## 2. Check your Codex installation
-
-```sh
+./build/bin/codex-folio version --json
 ./build/bin/codex-folio codex discover
 ```
 
-If Codex is not on `PATH`, provide its absolute path:
+Continue after verification succeeds and discovery identifies the intended
+Codex executable. If discovery is ambiguous, use
+`codex discover --codex-bin /absolute/path/to/codex` and supply that same
+`--codex-bin` to profile setup and launch commands.
+
+## 2. Stop the previous service and choose fresh state
+
+If your old service is running, stop it with `Ctrl-C` in its original terminal.
+For an enrolled service, follow the [service ownership instructions](COMPREHENSIVE-USAGE-GUIDE.md#state-service-ownership-and-vault-mode).
+There is one writable service owner per OS user: a different state root does
+not allow a second concurrent owner. Do not delete owner locks to bypass this.
+
+In **both terminals**, set the same new, absolute path outside this repository:
 
 ```sh
-./build/bin/codex-folio codex discover --codex-bin /absolute/path/to/codex
+CF_STATE="$HOME/codex-folio-manual-01"
 ```
 
-Use the Windows executable path and quote paths containing spaces.
+Choose a name you have never used. Do not point it at `~/.codex`, a repository,
+or your existing CodexFolio state. Keep `--state-root "$CF_STATE"` on every
+stateful command below; omitting it targets the default setup.
 
-## 3. Start the dashboard
+## 3. Start and unlock
 
-On Windows, macOS, or a Linux desktop with an unlocked Secret Service:
+In **Terminal A**:
 
 ```sh
-./build/bin/codex-folio service start
+./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode passphrase
 ```
 
-On WSL or headless Linux, explicitly choose the passphrase vault:
+Keep Terminal A open. In **Terminal B**:
 
 ```sh
-./build/bin/codex-folio service start --vault-mode passphrase
+./build/bin/codex-folio vault unlock --state-root "$CF_STATE"
+./build/bin/codex-folio service status --state-root "$CF_STATE" --json
+./build/bin/codex-folio profile list --state-root "$CF_STATE"
 ```
 
-The service starts locked without asking for a passphrase, but still publishes
-the dashboard. In a second local terminal, unlock that running session:
+For a new state directory, the first unlock initializes its vault using the
+passphrase you enter privately. Remember it: later unlocks use the same value.
+There is no browser passphrase field. Never put the passphrase in a command,
+screenshot, report, or environment variable.
+
+Open the one-time URL printed in Terminal A. Confirm the vault is unlocked and
+Profiles is empty. If the link expires or was already used, run this in Terminal B
+and open the new URL:
 
 ```sh
-./build/bin/codex-folio vault unlock
+./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode passphrase
 ```
 
-The unlock command uses private terminal input with echo disabled. It sends the
-passphrase only to the authenticated loopback command endpoint; the dashboard
-never accepts or receives it. A wrong passphrase leaves the service locked, and
-stopping or restarting the service requires a new unlock.
+This reuses the owner and exits after printing a fresh link. Treat that URL as
+a private credential.
 
-CodexFolio does not silently fall back to plaintext or infer passphrase mode
-from a missing Secret Service.
+## 4. Add and verify your three accounts
 
-The start command prints a one-time local dashboard URL. Open it in your browser
-and keep this terminal running. A locked dashboard shows only safe unlock or
-recovery guidance and does not run profile, usage, launch, analytics, or
-continuation workflows. Press `Ctrl-C` when you want to stop the service.
-Running `service start` again while the service is active prints a fresh URL.
-
-The dashboard is loopback-only. Do not share its URL: the bootstrap value is a
-short-lived, single-use local authorization credential.
-
-## 4. Add your first Identity Profile
-
-Open **Profiles**, then choose **Add Identity Profile**.
-
-1. Enter a display name and CLI Alias, such as `Personal` and `personal`.
-2. Keep **Managed Identity Home** for the safest first run.
-3. Choose browser sign-in or device-code authentication.
-4. Continue through the installed Codex authentication flow.
-5. If the dashboard gives you a terminal command, run that exact command in a
-   local terminal and return to Profiles afterward.
-
-CodexFolio never asks for your password. An unfinished profile remains Pending
-and cannot be selected or launched; reopen it from Profiles to resume.
-
-You can also create a managed profile directly from the CLI:
+Create **Managed Identity Homes**, one at a time. Complete the sign-in before
+starting the next command. Check the account and workspace in each Codex sign-in
+flow; the browser may remember the previous account.
 
 ```sh
-./build/bin/codex-folio profile add personal --browser
+./build/bin/codex-folio profile add work --display-name Work --browser --state-root "$CF_STATE"
+./build/bin/codex-folio profile add personal --display-name Personal --browser --state-root "$CF_STATE"
+./build/bin/codex-folio profile add personal-free --display-name personal-free --browser --state-root "$CF_STATE"
+./build/bin/codex-folio profile list --state-root "$CF_STATE"
+./build/bin/codex-folio select work --state-root "$CF_STATE"
 ```
 
-When the service is stopped on WSL/headless Linux, add
-`--vault-mode passphrase` to vault-dependent commands and enter the same
-passphrase. Keeping the unlocked service running avoids reopening the vault for
-each command because the CLI routes operations through that owner.
+You can instead use **Profiles → Add Identity Profile**, with the same aliases
+and Managed home choice. For device-code sign-in, use `--device-code` instead
+of `--browser`. Finish authentication through installed Codex, never through a
+CodexFolio credential form. If setup remains Pending, resume the same alias.
 
-Use a Referenced Identity Home only when you intentionally want to register an
-existing Codex home. CodexFolio does not own or delete referenced files.
+All three profiles should become Ready. An alias is a local label, not proof
+of which remote account was authenticated.
 
-## 5. Select, inspect, and launch
+## 5. Refresh and compare real limits
 
 ```sh
-./build/bin/codex-folio profile list
-./build/bin/codex-folio select personal
-./build/bin/codex-folio usage refresh personal
-./build/bin/codex-folio usage show
-./build/bin/codex-folio launch personal --
-./build/bin/codex-folio project resolve . --alias MyProject
-./build/bin/codex-folio launch personal --project PROJECT_ID --
+./build/bin/codex-folio usage refresh work --state-root "$CF_STATE"
+./build/bin/codex-folio usage refresh personal --state-root "$CF_STATE"
+./build/bin/codex-folio usage refresh personal-free --state-root "$CF_STATE"
+./build/bin/codex-folio usage show --combined --state-root "$CF_STATE"
 ```
 
-Selecting a profile affects future interactive launches. It does not switch or
-stop an already-running Codex process. `launch` keeps Codex in the foreground so
-normal terminal input, signals, and exit status are preserved.
+Open Overview and inspect each profile using Dashboard Scope and Open details.
+For the accounts described for this manual test, compare against:
 
-In the dashboard:
+| Account | Expected windows |
+| --- | --- |
+| Work — business premium | Weekly only |
+| Personal — business standard | Five-hour and weekly |
+| personal-free — free | Monthly only |
 
-- **Overview** shows current or last-known usage evidence and eligible profiles.
-- **Profiles** lets you add, resume, edit, select, reauthenticate, remove, restore,
-  purge, or manage Shared Configuration Packs. Pack actions show immutable
-  version health, fixed declarative document slots, assignment, projection
-  conflicts, and reviewed promotion. Removal requires the exact CLI Alias;
-  selected profiles need a replacement, and running Managed Launches block
-  removal.
-- **Refresh** requests new supported usage evidence.
-- **Sessions** filters recorded Managed Launches and Observed Sessions by
-  profile, project, date, and record type. Open a row for metadata-only details;
-  **Back to Sessions** retains your filters.
-- **Analytics** provides Capacity, Tokens, Projects, Models, Activity, and
-  Compare. The profile, history, and project filters are shared across the
-  detailed tabs. Charts have equivalent semantic tables; absent token/model
-  metadata stays explicitly unsupported. Projects uses app-local aliases and
-  basenames, lets you edit an alias, and never displays the canonical repository
-  path. Compare does not pool quotas or change Selected Profile. **Local
-  analytics data** previews exact export fields and record counts before a JSON
-  or CSV browser download, configures retention from 30 days through unlimited,
-  and dry-runs fully scoped purge counts before confirmation. Canonical project
-  paths require explicit inclusion.
-- **Alerts** shows active capacity, reset, reauthentication, stale-evidence,
-  repeated-collection-failure, and compatibility conditions plus bounded,
-  deduplicated history. Acknowledge an active condition or change the default
-  20% warning and 10% critical remaining thresholds for one profile/window.
-  Missing or contradictory evidence never becomes a capacity or exact-reset
-  alert. Overview shows only decision-relevant notices; Alerts remains
-  available without native service enrollment. An explicitly enrolled service
-  can deliver supported native notifications. Notification text is generic by
-  default; choose **Notification privacy → Include identity and quota details
-  on this device** only if aliases and capacity may safely appear on shared or
-  locked screens. This per-device choice is separate from service enrollment,
-  update checks, and telemetry, and can be revoked by selecting **Generic
-  notifications** again. Delivery failure never disables Alerts or collection.
-- **Launch Codex** displays an explicit terminal command; it does not start a
-  hidden browser process. Choose a registered Project Identity, then run that
-  command to keep the selected working directory in the service-validated
-  Launch Plan.
-- **Prepare Handoff** on an eligible alternative captures a repository-first
-  checkpoint for review. Edit the six handoff fields, inspect repository and
-  validation evidence, redact selected paths or exact text, save the sanitized
-  revision, and approve only after the source process is definitively exited.
-  Optional transcript assistance remains off until you consent for that one
-  handoff and provide a thread ID. Its candidates are transient: edit and
-  redact them, review the sanitized preview, then use the separate approval
-  action. Canceling restores the repository-first draft.
-  Run the resulting terminal command to start a fresh foreground Codex process;
-  canceling before that point starts nothing.
-- **Settings → Safe Continuation data** lists retained, completed, recoverable,
-  expired, and uncertain-start checkpoint states using safe project labels.
-  Repository-first retention defaults to 30 days and transcript-assisted
-  retention to 7 days; each accepts one or more days or `unlimited`. Export is
-  previewed before an encrypted `.cfolio` browser download. Plaintext JSON needs
-  a separate acknowledgement. Purge previews and confirms one exact revision.
-- **Settings → Local diagnostics** controls diagnostic collection independently
-  from the service, notifications, updates, and telemetry. The default is
-  enabled at Info level for 14 days, with a 50 MB bundle ceiling. Preview the
-  exact redacted field list and record count before choosing **Download
-  reviewed JSON**; canceling downloads nothing.
-- **Settings → Updates** keeps network access off by default. **Check for
-  updates** performs one check and does not enable later checks. The separate
-  **Check automatically** preference can be saved or revoked at any time.
-  Valid evidence may show only the available version, release notes, verified
-  download location, and installer guidance; CodexFolio never downloads,
-  executes, or installs the update. Development builds report the production
-  source as unconfigured until a release endpoint is approved.
-- **Settings → Optional telemetry** shows the complete public field list,
-  exclusions, retention policy, and each operational prerequisite. Consent is
-  tied to an exact schema version and can be revoked independently; the random
-  installation ID can be reset without displaying it. Development builds show
-  **Off · Enablement unavailable** because no production backend is configured.
-- **Settings → Portable configuration** previews a versioned nonsecret bundle
-  before download or import. It can carry profile names, approved immutable
-  pack versions, alert thresholds, collection intervals, appearance, and
-  optional path-free Project Aliases. Imported profiles stay Pending until you
-  choose a local Identity Home and authenticate through installed Codex.
+These are account-specific expectations, not a universal mapping of plans to
+limits. Confirm actual provider duration, reset, source and capture time.
+Work and Personal sharing a workspace does not justify pooling their quotas.
+Work/free may still show a Secondary window labeled Unsupported/Unavailable;
+that does not mean a second allowance exists.
 
-The launch view stays at **Prepared · Not started** until the terminal command
-reports a real process start. It then reports running, exit status, or failed
-start; a nonzero exit is not quota evidence by itself.
+**Known unresolved issue:** older observations can cause false “Conflicting
+observations.” Fresh state avoids importing old local readings, but does not
+fix that defect. If it occurs, record the source/version/window details rather
+than treating it as a sign-in failure or deleting evidence.
 
-The handoff view treats running and uncertain source-process state as blockers.
-Target capacity and eligibility are guidance until the terminal command repeats
-source, repository, target-home, authentication, usage, revision, and expiry
-checks immediately before launch. A service restart never turns an uncertain
-start into authorization: recovery becomes available only after storage,
-repository, source-exit, target, revision, and expiry checks pass. CodexFolio
-does not kill Codex during recovery or purge.
+## 6. Create a real session and collect history
 
-For Shared Configuration Packs, assign only an approved version, preview every
-projection, then explicitly apply that exact preview. Profile-local conflicts
-are shown and preserved. Promotion creates a reviewed immutable version and
-does not change the current profile assignment automatically. Browser pack
-drafts accept only `config.toml`, `AGENTS.md`, and `plugins.lock`; use the CLI
-for other supported declarative pack paths.
+Fresh managed homes start with **no existing sessions**. They do not inherit
+history from your default `~/.codex` home.
 
-Unavailable or stale evidence is not zero usage. Check its state, source, and
-capture time before acting on it.
-
-Managed Identity Homes remain recoverable in Profiles for seven days after
-removal. Referenced Identity Homes are only unregistered: CodexFolio never
-deletes or rewrites their external files or the remote OpenAI identity.
-
-Analytics purge is separate from profile removal. Its confirmation is bound to
-the complete scope and the records counted by the preview; changing the scope
-or matching data makes that confirmation stale and requires a new preview.
-
-## 6. Stop or try again safely
-
-Press `Ctrl-C` in the service terminal. Your local state remains available for
-the next run.
-
-For a disposable test, pass the same absolute `--state-root` directory to every
-command. This isolates the preview from your normal CodexFolio state. Do not use
-your normal Codex home as the state root, and do not remove directories
-recursively to unregister a profile.
-
-Useful checks:
+Register a repository you intend to use for testing; replace the path below:
 
 ```sh
-./build/bin/codex-folio service status
-./build/bin/codex-folio vault unlock
-./build/bin/codex-folio profile list --json
-./build/bin/codex-folio --help
+./build/bin/codex-folio project resolve /absolute/path/to/test-repository --alias ManualTest --state-root "$CF_STATE"
+./build/bin/codex-folio project list --state-root "$CF_STATE"
 ```
 
-Background startup remains optional. To enroll this exact development build
-for the current user, inspect it, and remove only that enrollment:
+Copy its Project ID, then replace `PROJECT_ID` below:
 
 ```sh
-./build/bin/codex-folio service install
-./build/bin/codex-folio service status --json
-./build/bin/codex-folio service uninstall
+./build/bin/codex-folio launch work --project PROJECT_ID --state-root "$CF_STATE" --
 ```
 
-Review or change local diagnostic policy, then preview before choosing a local
-destination:
+Complete a short real interaction, then exit Codex normally. This uses the Work
+account and its quota. A `--help` launch only proves process startup, not a model
+session. All CodexFolio options belong **before** `--`.
 
 ```sh
-./build/bin/codex-folio diagnostics settings
-./build/bin/codex-folio diagnostics settings --enabled false --level warning --retention-days 7
-./build/bin/codex-folio diagnostics export --dry-run
-./build/bin/codex-folio diagnostics export --output ./codex-folio-diagnostics.json
+./build/bin/codex-folio activity refresh work --state-root "$CF_STATE"
+./build/bin/codex-folio activity list --profile work --state-root "$CF_STATE"
 ```
 
-Check update state or manage the separate network consent from the CLI:
+Reload Sessions. Inspect Managed Launch and Observed Session records separately;
+they are not necessarily one-to-one. **Reload timeline** reads retained data;
+`activity refresh` collects supported metadata from the registered home.
+For existing real history, use **Use existing sign-in** after choosing a referenced
+home in Profiles, or follow [Referenced Identity Home setup](COMPREHENSIVE-USAGE-GUIDE.md#register-a-referenced-identity-home).
 
-```sh
-./build/bin/codex-folio updates status
-./build/bin/codex-folio updates check
-./build/bin/codex-folio updates settings --automatic true
-./build/bin/codex-folio updates settings --automatic false
-```
+## 7. Validate manually, then restart
 
-Inspect the telemetry schema and production availability without enabling it:
+Use a medium or large browser window. Work through the
+[manual validation checklist](COMPREHENSIVE-USAGE-GUIDE.md#manual-validation-checklist).
+It covers all six pages, dialogs, saves/cancels, real launches and handoff,
+with separate destructive and platform checks. Record actual results; the
+checklist is not a claim that every feature currently passes.
 
-```sh
-./build/bin/codex-folio telemetry status
-./build/bin/codex-folio telemetry schema --json
-```
+To stop, exit any Codex session and press `Ctrl-C` in Terminal A. Restart with
+the same state root and vault mode, unlock in Terminal B, and open the new URL.
+Profiles and retained history should still be present. A new service session
+requires a fresh unlock.
 
-`telemetry enable --schema-version 1`, `telemetry revoke`, and
-`telemetry reset-id` are explicit, separate actions. Enable fails closed while
-any privacy prerequisite is unavailable.
-
-The explicit check never changes the automatic preference. Until a
-project-controlled production endpoint is configured, checks safely report
-`unconfigured` and local features continue normally.
-
-The export command requires the displayed confirmation and never replaces an
-existing file. It does not upload, open an issue, enable telemetry, or include
-analytics, checkpoints, configuration payloads, identities, paths, usage, or
-Codex/repository content.
-
-Portable configuration also uses preview-before-write and preview-before-apply:
-
-```sh
-./build/bin/codex-folio configuration export --json
-./build/bin/codex-folio configuration export --write --output ./portable.json --confirmation-digest DIGEST
-./build/bin/codex-folio configuration import --input ./portable.json --json
-```
-
-Use the digest printed by the preview. Import apply additionally requires
-`--apply --reviewed --confirmation-digest DIGEST`; supply each displayed
-conflict as `--resolve KEY=keep_local`, `use_imported`, or `skip`. Export never
-overwrites an existing destination. Authentication, Identity Homes, paths,
-consent, telemetry identity, service enrollment, automatic update checks,
-notification detail, histories, sessions, and credentials are always excluded.
-
-Only an explicitly installed native service runs periodic usage collection.
-Opening the dashboard or using `service start` on demand does not enroll or
-enable it. The default interval is five minutes while a Managed Launch is
-running and 30 minutes while idle. Review or change both intervals in
-**Settings → Periodic collection schedule**, or from a terminal:
-
-```sh
-./build/bin/codex-folio settings collection
-./build/bin/codex-folio settings collection --active-minutes 10 --idle-minutes 60
-```
-
-Intervals cannot be shorter than five minutes. Known provider reset times can
-trigger a collection near that boundary; missing or unknown reset metadata is
-never guessed. A passphrase-backed enrolled service stays paused while locked.
-
-CodexFolio uses Task Scheduler on Windows, a LaunchAgent on macOS, and
-`systemd --user` on Linux or systemd-enabled WSL2. These commands do not request
-administrator/root access, remove app data, change Codex, or fall back to a
-different startup mechanism. If the native mechanism is unavailable, continue
-with the existing on-demand `service start` workflow.
-
-If a bare command on WSL reports `CF_VAULT_UNAVAILABLE`, rerun the service with
-`--vault-mode passphrase`. This error normally means Linux Secret Service is not
-available in that session; it does not authorize a plaintext fallback.
-
-If authentication expires, use Profiles → **Reauthenticate**, or run:
-
-```sh
-./build/bin/codex-folio profile reauthenticate personal --browser
-```
-
-For every command, lifecycle operation, JSON format, and troubleshooting detail,
-continue with the [Comprehensive usage guide](COMPREHENSIVE-USAGE-GUIDE.md).
-Read [Privacy](PRIVACY.md) before exporting or sharing any diagnostics.
+For another completely fresh run, stop the owner and choose a new path such as
+`$HOME/codex-folio-manual-02`. Preserve the previous directory for comparison.
+This guide does not require deleting your normal setup, Codex home, or history.

@@ -279,6 +279,66 @@ func TestLastUsageObservationsRetainsLatestEvidencePerSource(t *testing.T) {
 	}
 }
 
+func TestLatestUsageProjectsFreshCurrentWindowAndRetainsHistoricalEvidence(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	metric := usage.Registry()[0]
+	save := func(value float64, capturedAt, windowStart, windowEnd time.Time, sourceVersion string) {
+		t.Helper()
+		snapshot := usage.Snapshot{
+			Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion, CapturedAt: capturedAt,
+			Status: usage.AvailabilityPartial, TriggerReason: usage.TriggerDashboardRefresh,
+			Observations: []usage.Observation{{
+				Metric: metric, Value: value, ObservedAt: capturedAt, CapturedAt: capturedAt,
+				WindowStart: &windowStart, WindowEnd: &windowEnd, WindowTimezone: "UTC",
+				Source: usage.SourceCodexAppServer, SourceVersion: sourceVersion,
+				Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable,
+			}},
+			Availability: completeUsageAvailability(capturedAt, []usage.MetricAvailability{{MetricKey: metric.Key, State: usage.AvailabilityAvailable, CheckedAt: capturedAt, Provenance: usage.ProvenanceProvider}}),
+		}
+		if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(75, now.Add(-7*24*time.Hour), now.Add(-14*24*time.Hour), now.Add(-7*24*time.Hour), "0.153.3")
+	save(44, now, now.Add(-time.Hour), now.Add(4*time.Hour), "0.153.4")
+
+	history, err := stateStore.LastUsageObservations(context.Background(), target)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("retained observations = %#v/%v", history, err)
+	}
+	service, err := usage.NewService(stateStore, &schedulerCollector{}, schedulerClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.Latest(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryState := ""
+	for _, availability := range latest.Availability {
+		if availability.MetricKey == metric.Key {
+			primaryState = availability.State
+		}
+	}
+	if latest.Status != usage.AvailabilityPartial || primaryState != usage.AvailabilityAvailable || len(latest.Observations) != 1 || latest.Observations[0].Value != 44 {
+		t.Fatalf("current projection = %#v", latest)
+	}
+	history, err = stateStore.LastUsageObservations(context.Background(), target)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("projection changed retained observations = %#v/%v", history, err)
+	}
+}
+
 func completeUsageAvailability(checkedAt time.Time, items []usage.MetricAvailability) []usage.MetricAvailability {
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {

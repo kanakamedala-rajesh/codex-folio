@@ -1,8 +1,18 @@
 /* global document */
 import { URL } from "node:url";
 import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { setTimeout } from "node:timers/promises";
 
-export async function testSessions({ page, context, link, capture, scanAccessibility, check }) {
+export async function testSessions({
+  page,
+  context,
+  link,
+  control,
+  capture,
+  scanAccessibility,
+  check,
+}) {
   const nav = (name) =>
     page
       .getByRole("navigation", { name: "Primary", exact: true })
@@ -163,6 +173,73 @@ export async function testSessions({ page, context, link, capture, scanAccessibi
   assert.equal(
     await page.getByRole("combobox", { name: "Record type", exact: true }).inputValue(),
     "observed_session",
+  );
+  const paginationControl = async (action) => {
+    writeFileSync(control, action);
+    for (let attempt = 0; attempt < 3000; attempt++) {
+      const state = readFileSync(control, "utf8");
+      assert.notEqual(state, `${action}-failed`);
+      if (state === `${action}-done`) return;
+      await setTimeout(10);
+    }
+    assert.fail(`pagination fixture did not complete ${action}`);
+  };
+  await paginationControl("sessions-page-seed");
+  const seededTimeline = page.waitForResponse(
+    (item) =>
+      new URL(item.url()).pathname === "/api/v1/activity" && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Reload timeline", exact: true }).click();
+  const seededResponse = await seededTimeline;
+  assert.equal(seededResponse.status(), 200);
+  const seededRecords = (await seededResponse.json()).records;
+  assert.equal(seededRecords.length, records.length + 26);
+  const paginationRecord = seededRecords.find(
+    (record) => record.source_version === "pagination-fixture-v1",
+  );
+  assert.ok(paginationRecord);
+  const paginationDay = await page.evaluate((value) => {
+    const date = new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }, paginationRecord.started_at);
+  await select("Date range", "custom");
+  await page.getByLabel("From date", { exact: true }).fill(paginationDay);
+  await page.getByLabel("Through date", { exact: true }).fill(paginationDay);
+  await page.getByRole("status").filter({ hasText: "26 matching records" }).waitFor();
+  assert.equal(await rows().count(), 25);
+  const pageKeys = () =>
+    rows()
+      .locator("button[data-session-key]")
+      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-session-key")));
+  const firstPageKeys = await pageKeys();
+  const previous = page.getByRole("button", { name: "Previous page", exact: true });
+  const next = page.getByRole("button", { name: "Next page", exact: true });
+  assert.equal(await previous.isDisabled(), true);
+  await next.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await rows().count(), 1);
+  const secondPageKeys = await pageKeys();
+  assert.equal(new Set([...firstPageKeys, ...secondPageKeys]).size, 26);
+  assert.equal(await next.isDisabled(), true);
+  await previous.click();
+  assert.deepEqual(await pageKeys(), firstPageKeys);
+  await next.click();
+  await select("Date range", "all");
+  assert.equal(await previous.isDisabled(), true);
+  assert.equal(await rows().count(), 25);
+  await paginationControl("sessions-page-clean");
+  const cleanedTimeline = page.waitForResponse(
+    (item) =>
+      new URL(item.url()).pathname === "/api/v1/activity" && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Reload timeline", exact: true }).click();
+  const cleanedResponse = await cleanedTimeline;
+  assert.equal(cleanedResponse.status(), 200);
+  assert.deepEqual((await cleanedResponse.json()).records, records);
+  await page.getByRole("status").filter({ hasText: "4 matching records" }).waitFor();
+  assert.equal(await next.count(), 0);
+  check(
+    "real-service Sessions pagination covers 26 independent records, keyboard Next, Previous, boundary disabling, filter reset and exact fixture cleanup",
   );
   await nav("Overview").click();
   check(

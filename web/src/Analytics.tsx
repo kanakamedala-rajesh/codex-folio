@@ -1,3 +1,4 @@
+import { quotaWindowLabel } from "./quotaWindow";
 import { useEffect, useEffectEvent, useMemo, useState, type RefObject } from "react";
 import type {
   AnalyticsResponse,
@@ -340,19 +341,35 @@ function HistoryChart({ samples }: { samples: HistorySample[] }) {
         <text x="12" y="225" fill="var(--muted)" fontSize="16">
           0
         </text>
-        {primary.map((path) => (
-          <path key={path} d={path} stroke="var(--cyan)" strokeWidth="3" fill="none" />
-        ))}
-        {secondary.map((path) => (
-          <path
-            key={path}
-            d={path}
-            stroke="var(--magenta)"
-            strokeWidth="3"
-            strokeDasharray="9 6"
-            fill="none"
-          />
-        ))}
+        {[
+          { paths: primary, color: "var(--cyan)", dashed: false },
+          { paths: secondary, color: "var(--magenta)", dashed: true },
+        ].map(({ paths, color, dashed }) =>
+          paths.map((path) => {
+            const isolated = /^M([\d.]+) ([\d.]+)$/.exec(path);
+            return (
+              <g key={`${color}-${path}`}>
+                <path
+                  d={path}
+                  stroke={color}
+                  strokeWidth="3"
+                  strokeDasharray={dashed ? "9 6" : undefined}
+                  fill="none"
+                />
+                {isolated && (
+                  <circle
+                    cx={Number(isolated[1])}
+                    cy={Number(isolated[2])}
+                    r="5"
+                    stroke={color}
+                    strokeWidth="3"
+                    fill={dashed ? "var(--bg)" : color}
+                  />
+                )}
+              </g>
+            );
+          }),
+        )}
         <text x="42" y="252" fill="var(--muted)" fontSize="16">
           {month.format(samples[0].at)}
         </text>
@@ -1029,6 +1046,7 @@ export function Analytics({
 
   const samples = useMemo(() => samplesFor(aggregates, windowFilter), [aggregates, windowFilter]);
   const profile = data.candidates.find((item) => item.profile_id === profileId);
+  const selectedProject = projects.find((item) => item.project_id === projectId);
   const snapshot = data.profiles.find((item) => item.profile_id === profileId);
   const primary = currentReading(snapshot, metricKeys[0]);
   const secondary = currentReading(snapshot, metricKeys[1]);
@@ -1126,76 +1144,101 @@ export function Analytics({
         <Compare data={data} selection={selection} now={now} />
       ) : (
         <>
-          <div className="mb-6 flex flex-wrap gap-3 [&_label]:grid [&_label]:min-w-[min(100%,12rem)] [&_label]:gap-[0.4rem]">
-            <label>
-              {c.scope}
-              <select
-                value={profileId}
-                onChange={(event) => {
-                  setStatus(c.loading);
-                  setActivityStatus(c.activityLoading);
-                  setProfileId(event.target.value);
-                }}
-                className={field}
-              >
-                {data.candidates.map((item) => (
-                  <option key={item.profile_id} value={item.profile_id}>
-                    {item.alias}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {c.history}
-              <select
-                value={range}
-                onChange={(event) => {
-                  setStatus(c.loading);
-                  setActivityStatus(c.activityLoading);
-                  setRange(event.target.value as HistoryRange);
-                }}
-                className={field}
-              >
-                <option value="30-days">{c.last30Days}</option>
-                <option value="90-days">{c.last90Days}</option>
-                <option value="13-months">{c.last13Months}</option>
-                <option value="all">{c.allHistory}</option>
-              </select>
-            </label>
-            <label>
-              {c.project}
-              <select
-                value={projectId}
-                onChange={(event) => {
-                  setStatus(c.loading);
-                  setActivityStatus(c.activityLoading);
-                  setProjectId(event.target.value);
-                }}
-                className={field}
-              >
-                <option value="">{c.allProjects}</option>
-                {projects.map((item) => (
-                  <option key={item.project_id} value={item.project_id}>
-                    {item.alias || item.basename}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {tab === "capacity" ? (
+          <details open className="mb-6 border-b border-rule pb-4">
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">
+              Filters · {profile?.alias ?? c.none} ·{" "}
+              {range === "30-days"
+                ? c.last30Days
+                : range === "90-days"
+                  ? c.last90Days
+                  : range === "13-months"
+                    ? c.last13Months
+                    : c.allHistory}{" "}
+              ·{" "}
+              {selectedProject ? selectedProject.alias || selectedProject.basename : c.allProjects}
+              {tab === "capacity" && (
+                <>
+                  {" "}
+                  ·{" "}
+                  {windowFilter === "both"
+                    ? c.bothWindows
+                    : windowFilter === metricKeys[0]
+                      ? c.primary
+                      : c.secondary}
+                </>
+              )}
+            </summary>
+            <div className="mb-6 flex flex-wrap gap-3 [&_label]:grid [&_label]:min-w-[min(100%,12rem)] [&_label]:gap-[0.4rem]">
               <label>
-                {c.window}
+                {c.scope}
                 <select
-                  value={windowFilter}
-                  onChange={(event) => setWindowFilter(event.target.value as WindowFilter)}
+                  value={profileId}
+                  onChange={(event) => {
+                    setStatus(c.loading);
+                    setActivityStatus(c.activityLoading);
+                    setProfileId(event.target.value);
+                  }}
                   className={field}
                 >
-                  <option value="both">{c.bothWindows}</option>
-                  <option value={metricKeys[0]}>{c.primary}</option>
-                  <option value={metricKeys[1]}>{c.secondary}</option>
+                  {data.candidates.map((item) => (
+                    <option key={item.profile_id} value={item.profile_id}>
+                      {item.alias}
+                    </option>
+                  ))}
                 </select>
               </label>
-            ) : null}
-          </div>
+              <label>
+                {c.history}
+                <select
+                  value={range}
+                  onChange={(event) => {
+                    setStatus(c.loading);
+                    setActivityStatus(c.activityLoading);
+                    setRange(event.target.value as HistoryRange);
+                  }}
+                  className={field}
+                >
+                  <option value="30-days">{c.last30Days}</option>
+                  <option value="90-days">{c.last90Days}</option>
+                  <option value="13-months">{c.last13Months}</option>
+                  <option value="all">{c.allHistory}</option>
+                </select>
+              </label>
+              <label>
+                {c.project}
+                <select
+                  value={projectId}
+                  onChange={(event) => {
+                    setStatus(c.loading);
+                    setActivityStatus(c.activityLoading);
+                    setProjectId(event.target.value);
+                  }}
+                  className={field}
+                >
+                  <option value="">{c.allProjects}</option>
+                  {projects.map((item) => (
+                    <option key={item.project_id} value={item.project_id}>
+                      {item.alias || item.basename}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {tab === "capacity" ? (
+                <label>
+                  {c.window}
+                  <select
+                    value={windowFilter}
+                    onChange={(event) => setWindowFilter(event.target.value as WindowFilter)}
+                    className={field}
+                  >
+                    <option value="both">{c.bothWindows}</option>
+                    <option value={metricKeys[0]}>{c.primary}</option>
+                    <option value={metricKeys[1]}>{c.secondary}</option>
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          </details>
           {tab !== "capacity" ? (
             <p role="status" className="mb-4 max-w-[75ch] text-muted">
               {activityStatus} {projectStatus}
@@ -1206,11 +1249,13 @@ export function Analytics({
               <p className="mb-6 border-b border-rule pb-5">
                 {c.current}:{" "}
                 <strong>
-                  {formatRemaining(primary.remaining)} {c.primaryShort}
+                  {formatRemaining(primary.remaining)}{" "}
+                  {quotaWindowLabel(primary.observations[0], c.primary)}
                 </strong>{" "}
                 ·{" "}
                 <strong>
-                  {formatRemaining(secondary.remaining)} {c.secondaryShort}
+                  {formatRemaining(secondary.remaining)}{" "}
+                  {quotaWindowLabel(secondary.observations[0], c.secondary)}
                 </strong>{" "}
                 · {label(primary.availability)} · {label(secondary.availability)}
                 <small className="mt-2 block text-sm text-muted">

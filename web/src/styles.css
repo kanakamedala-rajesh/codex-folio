@@ -28,3 +28,9 @@
     }
   }
 }
+
+@media (max-width: 43.749rem) {
+  html {
+    scroll-padding-bottom: 7rem;
+  }
+}
