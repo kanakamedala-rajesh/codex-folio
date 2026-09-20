@@ -176,7 +176,11 @@ func TestBootstrapExchangeAuthorizesMetadataAndCannotReplay(t *testing.T) {
 	if got.EnrollmentState != "not_installed" || got.EnrollmentMechanism != "systemd-user" || !got.EnrollmentAvailable {
 		t.Fatalf("metadata enrollment = %#v", got)
 	}
-	if len(got.EnrollmentGuidance) != 2 || got.EnrollmentGuidance[0] != "codex-folio service status" {
+	commandPrefix := ""
+	if runtime.GOOS == "windows" {
+		commandPrefix = "& "
+	}
+	if len(got.EnrollmentGuidance) != 2 || got.EnrollmentGuidance[0] != commandPrefix+"codex-folio service status" || got.EnrollmentGuidance[1] != commandPrefix+"codex-folio service install" {
 		t.Fatalf("metadata enrollment guidance = %#v", got.EnrollmentGuidance)
 	}
 
