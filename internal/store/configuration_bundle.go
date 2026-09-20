@@ -85,7 +85,7 @@ func (store *Store) exportConfiguration(ctx context.Context, q bundleQuerier, in
 	if err = rows.Close(); err != nil {
 		return b, coded(apperrors.StoreReadFailed, err)
 	}
-	rows, err = q.QueryContext(ctx, `SELECT a.alias,t.metric_key,t.warning_percent,t.critical_percent FROM alert_thresholds t JOIN cli_aliases a ON a.profile_id=t.profile_id ORDER BY a.alias COLLATE NOCASE,t.metric_key`)
+	rows, err = q.QueryContext(ctx, `SELECT a.alias,t.metric_key,t.warning_percent,t.critical_percent FROM alert_thresholds t JOIN cli_aliases a ON a.profile_id=t.profile_id WHERE NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id=t.profile_id) ORDER BY a.alias COLLATE NOCASE,t.metric_key`)
 	if err != nil {
 		return b, coded(apperrors.StoreReadFailed, err)
 	}
@@ -154,12 +154,31 @@ func (store *Store) previewConfigurationImport(ctx context.Context, q bundleQuer
 		return configbundle.Preview{}, err
 	}
 	conflicts := []configbundle.Conflict{}
+	quarantinedProfiles := map[string]bool{}
+	rows, err := q.QueryContext(ctx, `SELECT a.alias FROM cli_aliases a JOIN profile_quarantine q ON q.profile_id=a.profile_id ORDER BY a.alias COLLATE NOCASE`)
+	if err != nil {
+		return configbundle.Preview{}, coded(apperrors.StoreReadFailed, err)
+	}
+	for rows.Next() {
+		var alias string
+		if err = rows.Scan(&alias); err != nil {
+			rows.Close()
+			return configbundle.Preview{}, coded(apperrors.StoreReadFailed, err)
+		}
+		quarantinedProfiles[strings.ToLower(alias)] = true
+	}
+	if err = rows.Close(); err != nil {
+		return configbundle.Preview{}, coded(apperrors.StoreReadFailed, err)
+	}
 	localProfiles := map[string]configbundle.Profile{}
 	for _, p := range local.Profiles {
 		localProfiles[strings.ToLower(p.Alias)] = p
 	}
 	for _, p := range b.Profiles {
-		if current, ok := localProfiles[strings.ToLower(p.Alias)]; ok && current.DisplayName != p.DisplayName {
+		key := strings.ToLower(p.Alias)
+		if quarantinedProfiles[key] {
+			conflicts = append(conflicts, configbundle.Conflict{Key: "profile:" + key, Kind: "quarantined_profile", Detail: "A quarantined local profile already reserves this alias; restore or purge it before importing the profile definition.", Resolutions: []string{configbundle.ResolutionSkip}})
+		} else if current, ok := localProfiles[key]; ok && current.DisplayName != p.DisplayName {
 			conflicts = append(conflicts, configbundle.Conflict{Key: "profile:" + strings.ToLower(p.Alias), Kind: "existing_profile", Detail: fmt.Sprintf("A local profile already uses this alias; imported display name is %q.", p.DisplayName), Resolutions: []string{configbundle.ResolutionKeepLocal, configbundle.ResolutionUseImported}})
 		}
 	}
@@ -248,12 +267,19 @@ func (store *Store) ApplyConfigurationImport(ctx context.Context, b configbundle
 	now := formatStoredTime(store.clock.Now())
 	result := configbundle.ApplyResult{Applied: true, Skipped: []string{}}
 	resolved := map[string]string{}
+	skippedProfiles := map[string]bool{}
 	for _, p := range b.Profiles {
-		key := "profile:" + strings.ToLower(p.Alias)
+		aliasKey := strings.ToLower(p.Alias)
+		key := "profile:" + aliasKey
 		var id string
 		err = tx.QueryRowContext(ctx, `SELECT profile_id FROM cli_aliases WHERE alias=? COLLATE NOCASE`, p.Alias).Scan(&id)
 		if err == nil {
-			resolved[strings.ToLower(p.Alias)] = id
+			if _, conflicted := conflictKeys[key]; conflicted && request.Resolutions[key] == configbundle.ResolutionSkip {
+				skippedProfiles[aliasKey] = true
+				result.Skipped = append(result.Skipped, key)
+				continue
+			}
+			resolved[aliasKey] = id
 			if _, conflicted := conflictKeys[key]; conflicted && request.Resolutions[key] == configbundle.ResolutionUseImported {
 				if _, err = tx.ExecContext(ctx, `UPDATE identity_profiles SET display_name=?,updated_at=? WHERE profile_id=?`, p.DisplayName, now, id); err == nil {
 					_, err = tx.ExecContext(ctx, `UPDATE pending_profiles SET display_name=?,updated_at=? WHERE pending_profile_id=?`, p.DisplayName, now, id)
@@ -283,7 +309,7 @@ func (store *Store) ApplyConfigurationImport(ctx context.Context, b configbundle
 				return configbundle.ApplyResult{}, coded(apperrors.StoreWriteFailed, err)
 			}
 		}
-		resolved[strings.ToLower(p.Alias)] = id
+		resolved[aliasKey] = id
 		result.Counts.Profiles++
 	}
 	for _, p := range b.ConfigurationPacks {
@@ -314,12 +340,17 @@ func (store *Store) ApplyConfigurationImport(ctx context.Context, b configbundle
 		result.Counts.ConfigurationPacks++
 	}
 	for _, t := range b.AlertThresholds {
-		key := "threshold:" + strings.ToLower(t.ProfileAlias) + ":" + t.MetricKey
+		aliasKey := strings.ToLower(t.ProfileAlias)
+		key := "threshold:" + aliasKey + ":" + t.MetricKey
+		if skippedProfiles[aliasKey] {
+			result.Skipped = append(result.Skipped, key)
+			continue
+		}
 		if _, conflicted := conflictKeys[key]; conflicted && request.Resolutions[key] != configbundle.ResolutionUseImported {
 			result.Skipped = append(result.Skipped, key)
 			continue
 		}
-		id := resolved[strings.ToLower(t.ProfileAlias)]
+		id := resolved[aliasKey]
 		threshold := alerts.Threshold{ProfileID: id, MetricKey: t.MetricKey, WarningPercent: t.WarningPercent, CriticalPercent: t.CriticalPercent}
 		if !threshold.Valid() {
 			return configbundle.ApplyResult{}, apperrors.New(apperrors.ConfigurationBundleInvalid, configbundle.ErrInvalid)

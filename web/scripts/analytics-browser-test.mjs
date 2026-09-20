@@ -599,7 +599,7 @@ export async function testAnalytics({
     })
     .waitFor();
   check(
-    "all analytics tabs share profile, history, and Project Alias filters, send supported service filters, preserve exact zeroes, and state absent dimensions explicitly",
+    "project-aware analytics tabs share profile, history, and Project Alias filters, send supported service filters, preserve exact zeroes, and state absent dimensions explicitly",
   );
   check(
     "Project Alias editing uses the authenticated generated client and never projects canonical paths",
@@ -616,7 +616,15 @@ export async function testAnalytics({
       item.url().endsWith("/api/v1/analytics/history") && item.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Capacity", exact: true }).click();
-  assert.equal((await capacityHistory).status(), 200);
+  const capacityResponse = await capacityHistory;
+  assert.equal(capacityResponse.status(), 200);
+  assert.equal(capacityResponse.request().postDataJSON().scope.project_id, "*");
+  assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).count(), 0);
+  assert.match(await filterSummary.innerText(), /All projects/);
+  assert.doesNotMatch(await filterSummary.innerText(), /Atlas Research/);
+  check(
+    "Capacity remains profile/window scoped when a Project Identity filter is retained for other tabs",
+  );
 
   await page.getByRole("button", { name: "Preview analytics export", exact: true }).click();
   await page

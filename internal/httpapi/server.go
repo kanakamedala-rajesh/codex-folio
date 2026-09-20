@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -335,13 +336,27 @@ func (server *Server) terminalCommand(arguments ...string) string {
 	}
 	all := append(append([]string(nil), base...), arguments...)
 	if server != nil {
-		all = append(all, server.terminalCommandSuffix...)
+		all = append(all, terminalCommandSuffix(arguments, server.terminalCommandSuffix)...)
 	}
-	parts := make([]string, 0, len(all))
-	for _, argument := range all {
-		parts = append(parts, terminalArgument(argument))
+	return terminalCommandForOS(runtime.GOOS, all, true)
+}
+
+func terminalCommandSuffix(arguments, suffix []string) []string {
+	if len(arguments) != 2 || arguments[0] != "vault" || arguments[1] != "unlock" {
+		return suffix
 	}
-	return strings.Join(parts, " ")
+	filtered := make([]string, 0, len(suffix))
+	for index := 0; index < len(suffix); index++ {
+		if suffix[index] == "--vault-mode" {
+			index++
+			continue
+		}
+		if strings.HasPrefix(suffix[index], "--vault-mode=") {
+			continue
+		}
+		filtered = append(filtered, suffix[index])
+	}
+	return filtered
 }
 
 func (server *Server) terminalCommandBaseString() string {
@@ -349,22 +364,14 @@ func (server *Server) terminalCommandBaseString() string {
 	if server != nil && len(server.terminalCommandBase) > 0 {
 		base = server.terminalCommandBase
 	}
-	parts := make([]string, 0, len(base))
-	for _, argument := range base {
-		parts = append(parts, terminalArgument(argument))
-	}
-	return strings.Join(parts, " ")
+	return terminalCommandForOS(runtime.GOOS, base, true)
 }
 
 func (server *Server) terminalCommandSuffixString() string {
 	if server == nil {
 		return ""
 	}
-	parts := make([]string, 0, len(server.terminalCommandSuffix))
-	for _, argument := range server.terminalCommandSuffix {
-		parts = append(parts, terminalArgument(argument))
-	}
-	return strings.Join(parts, " ")
+	return terminalCommandForOS(runtime.GOOS, server.terminalCommandSuffix, false)
 }
 
 // Listen binds exclusively to an IPv4 loopback address. It deliberately does

@@ -435,7 +435,7 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
 	serverOptions.TerminalCommandBase = []string{executable}
-	serverOptions.TerminalCommandSuffix = []string{"--state-root=" + paths.Root}
+	serverOptions.TerminalCommandSuffix = serviceTerminalCommandSuffix(paths, options.vaultMode)
 	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
 		serverOptions.ServiceEnrollment = func() (state, mechanism string, available bool) {
 			status, statusErr := enrollment.Status()
@@ -636,12 +636,21 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 		CollectionSettings: services.CollectionSettings,
 		Projects:           services.Projects, Activities: services.Activities, History: services.History,
 		Exports: services.Exports, Checkpoints: services.Checkpoints, CheckpointHistory: services.CheckpointHistory,
-		Alerts:            services.Alerts,
-		DiagnosticService: services.DiagnosticService,
-		Updates:           services.Updates,
-		Telemetry:         services.Telemetry,
-		CommandToken:      commandToken,
+		Alerts:               services.Alerts,
+		DiagnosticService:    services.DiagnosticService,
+		Updates:              services.Updates,
+		Telemetry:            services.Telemetry,
+		ConfigurationBundles: services.ConfigurationBundles,
+		CommandToken:         commandToken,
 	}
+}
+
+func serviceTerminalCommandSuffix(paths platform.Paths, mode platform.VaultMode) []string {
+	suffix := []string{"--state-root=" + paths.Root}
+	if mode == platform.VaultModePassphrase {
+		suffix = append(suffix, "--vault-mode="+string(mode))
+	}
+	return suffix
 }
 
 func newProfileLifecycle(paths platform.Paths, stateStore *store.Store) (*profile.Lifecycle, error) {
@@ -909,7 +918,11 @@ func writeServiceStateWithEnrollment(stdout, stderr io.Writer, jsonOutput bool, 
 			_, _ = fmt.Fprintf(stdout, "; dashboard: %s", dashboardURL)
 		}
 		_, _ = io.WriteString(stdout, "\n")
-		_, _ = io.WriteString(stdout, "run 'codex-folio vault unlock' in this terminal session\n")
+		if len(health.GuidanceCommands) > 0 {
+			_, _ = fmt.Fprintf(stdout, "run this in terminal: %s\n", health.GuidanceCommands[0])
+		} else {
+			_, _ = io.WriteString(stdout, "run 'codex-folio vault unlock' in this terminal session\n")
+		}
 	} else if health.ServiceState == httpapi.ServiceStateRecoveryRequired {
 		_, _ = io.WriteString(stdout, "service owner running; local data needs recovery")
 		if dashboardURL != "" {

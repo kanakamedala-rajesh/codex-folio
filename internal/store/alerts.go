@@ -170,7 +170,8 @@ func (store *Store) SyncAlerts(ctx context.Context, profileID string, conditions
 	for _, condition := range conditions {
 		active[condition.Key] = true
 		var existingID, state string
-		err := tx.QueryRowContext(ctx, `SELECT alert_id, state FROM alerts WHERE condition_key = ?`, condition.Key).Scan(&existingID, &state)
+		var previousEvidence sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT alert_id, state, evidence_captured_at FROM alerts WHERE condition_key = ?`, condition.Key).Scan(&existingID, &state, &previousEvidence)
 		if errors.Is(err, sql.ErrNoRows) {
 			existingID, err = newStoreIdentifier("alert")
 			if err == nil {
@@ -178,8 +179,15 @@ func (store *Store) SyncAlerts(ctx context.Context, profileID string, conditions
 					VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, existingID, condition.Key, nullableAlertProfile(condition.ProfileID), condition.Category, condition.Kind, condition.Severity, condition.Title, condition.Guidance, condition.MetricKey, nullableAlertTime(condition.WindowStart), nullableAlertTime(condition.WindowEnd), condition.RemainingPercent, condition.Source, condition.SourceVersion, condition.Provenance, condition.Scope, condition.Freshness, condition.AvailabilityReason, nullableAlertTimeValue(condition.EvidenceCapturedAt), formatStoredTime(condition.ObservedAt), formatStoredTime(now), formatStoredTime(now))
 			}
 		} else if err == nil {
+			incomingEvidence := nullableAlertTimeValue(condition.EvidenceCapturedAt)
+			incomingEvidenceText, incomingEvidenceValid := incomingEvidence.(string)
+			newEvidence := state == alerts.StateResolved || previousEvidence.Valid != incomingEvidenceValid || (previousEvidence.Valid && previousEvidence.String != incomingEvidenceText)
+			increment := 0
+			if newEvidence {
+				increment = 1
+			}
 			_, err = tx.ExecContext(ctx, `UPDATE alerts SET category = ?, kind = ?, severity = ?, title = ?, guidance = ?, metric_key = ?, window_start = ?, window_end = ?, remaining_percent = ?, source = ?, source_version = ?, provenance = ?, scope = ?, freshness = ?, availability_reason = ?, evidence_captured_at = ?, observed_at = ?,
-				last_seen_at = ?, occurrence_count = occurrence_count + 1, state = CASE WHEN state = 'resolved' THEN 'open' ELSE state END,
+				last_seen_at = CASE WHEN ? = 1 THEN ? ELSE last_seen_at END, occurrence_count = occurrence_count + ?, state = CASE WHEN state = 'resolved' THEN 'open' ELSE state END,
 				acknowledged_at = CASE WHEN state = 'resolved' THEN NULL ELSE acknowledged_at END, resolved_at = NULL,
 				delivery_state = CASE WHEN state = 'resolved' THEN 'pending' ELSE delivery_state END,
 				delivery_attempts = CASE WHEN state = 'resolved' THEN 0 ELSE delivery_attempts END,
@@ -187,7 +195,7 @@ func (store *Store) SyncAlerts(ctx context.Context, profileID string, conditions
 				next_delivery_attempt_at = CASE WHEN state = 'resolved' THEN NULL ELSE next_delivery_attempt_at END,
 				delivered_at = CASE WHEN state = 'resolved' THEN NULL ELSE delivered_at END,
 				delivery_error_code = CASE WHEN state = 'resolved' THEN '' ELSE delivery_error_code END WHERE alert_id = ?`,
-				condition.Category, condition.Kind, condition.Severity, condition.Title, condition.Guidance, condition.MetricKey, nullableAlertTime(condition.WindowStart), nullableAlertTime(condition.WindowEnd), condition.RemainingPercent, condition.Source, condition.SourceVersion, condition.Provenance, condition.Scope, condition.Freshness, condition.AvailabilityReason, nullableAlertTimeValue(condition.EvidenceCapturedAt), formatStoredTime(condition.ObservedAt), formatStoredTime(now), existingID)
+				condition.Category, condition.Kind, condition.Severity, condition.Title, condition.Guidance, condition.MetricKey, nullableAlertTime(condition.WindowStart), nullableAlertTime(condition.WindowEnd), condition.RemainingPercent, condition.Source, condition.SourceVersion, condition.Provenance, condition.Scope, condition.Freshness, condition.AvailabilityReason, incomingEvidence, formatStoredTime(condition.ObservedAt), increment, formatStoredTime(now), increment, existingID)
 		}
 		if err != nil {
 			rollback()
@@ -269,7 +277,10 @@ func (store *Store) ListAlerts(ctx context.Context, limit int) ([]alerts.Record,
 		a.title, a.guidance, a.metric_key, a.window_start, a.window_end, a.remaining_percent, a.source, a.source_version, a.provenance, a.scope, a.freshness, a.availability_reason, a.evidence_captured_at, a.observed_at, a.first_seen_at, a.last_seen_at, a.acknowledged_at, a.resolved_at, a.occurrence_count
 		, a.delivery_state, a.delivery_attempts, a.last_delivery_attempt_at, a.next_delivery_attempt_at, a.delivered_at, a.delivery_error_code
 		FROM alerts a LEFT JOIN cli_aliases c ON c.profile_id = a.profile_id
-		ORDER BY CASE a.state WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END, rtrim(a.last_seen_at, 'Z') DESC, a.alert_id DESC LIMIT ?`, limit)
+		WHERE a.state <> 'resolved' OR a.alert_id IN (
+			SELECT alert_id FROM alerts WHERE state = 'resolved' ORDER BY rtrim(last_seen_at, 'Z') DESC, alert_id DESC LIMIT ?
+		)
+		ORDER BY CASE a.state WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END, rtrim(a.last_seen_at, 'Z') DESC, a.alert_id DESC`, limit)
 	if err != nil {
 		return nil, coded(apperrors.StoreReadFailed, err)
 	}

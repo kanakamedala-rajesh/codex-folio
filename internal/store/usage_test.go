@@ -461,6 +461,56 @@ func TestRecentUsageSnapshotsBoundRawCapturesAndPreserveFailureGaps(t *testing.T
 	}
 }
 
+func TestLatestSuccessfulUsageRefreshLooksBeyondRecentTrace(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	addReadyProfile(t, state, "profile-success", "Success")
+	ctx := context.Background()
+	target, err := state.ResolveUsageProfile(ctx, "Success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	success := usage.NewUnavailableSnapshot("0.153.4", now, usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+	success.TriggerReason = usage.TriggerDashboardRefresh
+	success.Availability[0].State, success.Availability[0].Reason = usage.AvailabilityAvailable, ""
+	success.Observations = []usage.Observation{{Metric: usage.Registry()[0], Value: 50, ObservedAt: now, CapturedAt: now, Source: usage.SourceCodexAppServer, SourceVersion: "0.153.4", Provenance: usage.ProvenanceProvider, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable}}
+	if _, err := state.SaveUsageSnapshot(ctx, target, success); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 13; index++ {
+		failure := usage.NewUnavailableSnapshot("0.153.4", now.Add(time.Duration(index)*time.Minute), usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed)
+		failure.TriggerReason = usage.TriggerDashboardRefresh
+		if _, err := state.SaveUsageSnapshot(ctx, target, failure); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if recent, err := state.RecentUsageSnapshots(ctx, target); err != nil || len(recent) != 12 || !recent[0].CapturedAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("recent trace = %#v/%v", recent, err)
+	}
+	latest, err := state.LatestSuccessfulUsageRefresh(ctx, target)
+	if err != nil || !latest.Equal(now) {
+		t.Fatalf("LatestSuccessfulUsageRefresh() = %s/%v, want %s", latest, err, now)
+	}
+
+	emptyState, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer emptyState.Close()
+	addReadyProfile(t, emptyState, "profile-empty", "Empty")
+	emptyTarget, err := emptyState.ResolveUsageProfile(ctx, "Empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest, err := emptyState.LatestSuccessfulUsageRefresh(ctx, emptyTarget); err != nil || !latest.IsZero() {
+		t.Fatalf("empty LatestSuccessfulUsageRefresh() = %s/%v", latest, err)
+	}
+}
+
 func TestUsageCaptureOrderingWithDifferentFractionalPrecision(t *testing.T) {
 	state, err := openProfileTestStore(t)
 	if err != nil {

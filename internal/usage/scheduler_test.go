@@ -57,6 +57,38 @@ func TestSchedulerUsesActiveIdleAndKnownResetWithoutInventingUnknownBoundaries(t
 	}
 }
 
+func TestSchedulerRefreshesAtApproachingResetBoundaryBeforeLongIdleInterval(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(2 * time.Hour)
+	settings := CollectionSettings{ActiveInterval: DefaultActiveInterval, IdleInterval: MaximumInterval, ProviderMinimum: ProviderSafeMinimum}
+	store := &scheduleStoreStub{settings: settings, targets: []ScheduleTarget{{
+		Profile: ProfileTarget{ID: "idle", Alias: "Idle"},
+		Latest:  Snapshot{CapturedAt: now, Observations: []Observation{{WindowEnd: &reset}}},
+	}}}
+	collector := &scheduledRefresherStub{}
+	scheduler, err := NewScheduler(store, collector, scheduleClock{now: now}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := scheduler.Tick(context.Background()); err != nil || result.Collected != 0 {
+		t.Fatalf("initial Tick() = %#v/%v", result, err)
+	}
+	warningBoundary := reset.Add(-ResetApproachingLead)
+	if got := store.states["idle"].NextAttemptAt; !got.Equal(warningBoundary) {
+		t.Fatalf("next attempt = %s, want approaching-reset boundary %s", got, warningBoundary)
+	}
+
+	store.targets[0].State = store.states["idle"]
+	collector.snapshot = Snapshot{CapturedAt: warningBoundary, Observations: []Observation{{WindowEnd: &reset}}}
+	scheduler.clock = scheduleClock{now: warningBoundary}
+	if result, err := scheduler.Tick(context.Background()); err != nil || result.Collected != 1 || len(collector.calls) != 1 || collector.calls[0].trigger != TriggerPeriodicReset {
+		t.Fatalf("boundary Tick() = %#v/%v, calls %#v", result, err, collector.calls)
+	}
+	if got := store.states["idle"].NextAttemptAt; !got.Equal(reset) {
+		t.Fatalf("post-warning next attempt = %s, want reset %s", got, reset)
+	}
+}
+
 func TestSchedulerPersistsExponentialBackoffWithBoundedJitterAndRecovers(t *testing.T) {
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	store := &scheduleStoreStub{settings: DefaultCollectionSettings(), targets: []ScheduleTarget{{Profile: ProfileTarget{ID: "work", Alias: "Work"}}}}

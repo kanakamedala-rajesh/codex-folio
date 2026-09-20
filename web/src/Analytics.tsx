@@ -1027,7 +1027,9 @@ export function Analytics({
   useEffect(() => {
     if (tab !== "capacity" || !profileId) return;
     let cancelled = false;
-    loadHistory(profileId, projectId || "*", historyStart(range, historyNow))
+    // Provider capacity is profile/window scoped. A Project Identity selected
+    // for the other analytics tabs must not exclude that shared quota history.
+    loadHistory(profileId, "*", historyStart(range, historyNow))
       .then((result) => {
         if (cancelled) return;
         setAggregates(result.aggregates ?? []);
@@ -1155,7 +1157,11 @@ export function Analytics({
                     ? c.last13Months
                     : c.allHistory}{" "}
               ·{" "}
-              {selectedProject ? selectedProject.alias || selectedProject.basename : c.allProjects}
+              {tab === "capacity"
+                ? c.allProjects
+                : selectedProject
+                  ? selectedProject.alias || selectedProject.basename
+                  : c.allProjects}
               {tab === "capacity" && (
                 <>
                   {" "}
@@ -1204,25 +1210,27 @@ export function Analytics({
                   <option value="all">{c.allHistory}</option>
                 </select>
               </label>
-              <label>
-                {c.project}
-                <select
-                  value={projectId}
-                  onChange={(event) => {
-                    setStatus(c.loading);
-                    setActivityStatus(c.activityLoading);
-                    setProjectId(event.target.value);
-                  }}
-                  className={field}
-                >
-                  <option value="">{c.allProjects}</option>
-                  {projects.map((item) => (
-                    <option key={item.project_id} value={item.project_id}>
-                      {item.alias || item.basename}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {tab !== "capacity" ? (
+                <label>
+                  {c.project}
+                  <select
+                    value={projectId}
+                    onChange={(event) => {
+                      setStatus(c.loading);
+                      setActivityStatus(c.activityLoading);
+                      setProjectId(event.target.value);
+                    }}
+                    className={field}
+                  >
+                    <option value="">{c.allProjects}</option>
+                    {projects.map((item) => (
+                      <option key={item.project_id} value={item.project_id}>
+                        {item.alias || item.basename}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               {tab === "capacity" ? (
                 <label>
                   {c.window}

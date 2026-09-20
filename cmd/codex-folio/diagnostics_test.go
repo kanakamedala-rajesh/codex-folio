@@ -86,7 +86,12 @@ func TestDiagnosticsCLIConsumesPriorPreviewFromRunningOwner(t *testing.T) {
 		return code, stdout.String(), stderr.String()
 	}
 
-	code, output, diagnostic := run([]string{"export", "--dry-run", "--json"})
+	code, output, diagnostic := run([]string{"export", "--output", filepath.Join(t.TempDir(), "unconfirmed.json"), "--non-interactive", "--json"})
+	if code == exitSuccess || output != "" || !strings.Contains(diagnostic, apperrors.DiagnosticsConfirmationInvalid) {
+		t.Fatalf("unconfirmed JSON = %d/%q/%q", code, output, diagnostic)
+	}
+
+	code, output, diagnostic = run([]string{"export", "--dry-run", "--json"})
 	if code != exitSuccess || diagnostic != "" {
 		t.Fatalf("preview = %d/%s/%s", code, output, diagnostic)
 	}

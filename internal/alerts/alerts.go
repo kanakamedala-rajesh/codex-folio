@@ -15,7 +15,7 @@ const (
 	DefaultWarningPercent  = 20
 	DefaultCriticalPercent = 10
 	StaleAfter             = 10 * time.Minute
-	ResetApproachingWithin = 30 * time.Minute
+	ResetApproachingWithin = usage.ResetApproachingLead
 	RepeatedFailureCount   = 3
 	HistoryLimit           = 200
 

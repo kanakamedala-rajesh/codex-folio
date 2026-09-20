@@ -1929,6 +1929,7 @@ try {
           { exact: true },
         )
         .waitFor();
+      assert.equal(await scope().inputValue(), "Work");
       assert.match(await page.locator("main").innerText(), /Work Studio/);
       check(
         "managed quarantine, restore and purge; referenced non-ownership; running, selection, exact-confirmation and cancellation protections",

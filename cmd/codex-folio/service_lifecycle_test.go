@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
+	"venkatasudha.com/codex-folio/internal/configbundle"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
@@ -27,6 +28,98 @@ import (
 type vaultCommandLifecycle struct {
 	health     httpapi.ServiceHealth
 	passphrase string
+}
+
+func TestServiceServerOptionsPreserveConfigurationBundles(t *testing.T) {
+	bundles := new(configbundle.Service)
+	options := serviceServerOptions(nil, "configuration-bundle-fixture", httpapi.OperationalServices{ConfigurationBundles: bundles})
+	if options.ConfigurationBundles != bundles {
+		t.Fatal("service server options dropped portable configuration service")
+	}
+}
+
+func TestPassphraseServiceGuidancePreservesVaultModeAndGeneratedUnlockCommand(t *testing.T) {
+	paths := platform.Paths{Root: filepath.Join("root", "state with $name")}
+	if got := serviceTerminalCommandSuffix(paths, platform.VaultModePassphrase); len(got) != 2 || got[0] != "--state-root="+paths.Root || got[1] != "--vault-mode=passphrase" {
+		t.Fatalf("passphrase terminal suffix = %#v", got)
+	}
+	if got := serviceTerminalCommandSuffix(paths, platform.VaultModeSecretService); len(got) != 1 || got[0] != "--state-root="+paths.Root {
+		t.Fatalf("secret-service terminal suffix = %#v", got)
+	}
+
+	var stdout, stderr bytes.Buffer
+	health := httpapi.ServiceHealth{
+		ServiceState:     httpapi.ServiceStateLocked,
+		GuidanceCommands: []string{`'/source build/codex-folio' vault unlock '--state-root=/tmp/custom state'`},
+	}
+	status := platform.OwnerStatus{Running: true}
+	if err := writeServiceStateWithEnrollment(&stdout, &stderr, false, status, false, "", health, platform.ServiceEnrollmentStatus{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "run this in terminal: "+health.GuidanceCommands[0]) || strings.Contains(stdout.String(), "run 'codex-folio vault unlock'") {
+		t.Fatalf("locked service output = %q", stdout.String())
+	}
+}
+
+func TestGeneratedVaultUnlockGuidanceIsAcceptedByVaultParser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the PowerShell rendering is covered by the platform-neutral renderer test")
+	}
+	root := testServiceTempDir(t)
+	stateRoot := filepath.Join(root, "state with $name")
+	probe := filepath.Join(root, "codex-folio probe")
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &vaultCommandLifecycle{health: httpapi.ServiceHealth{
+		ServiceState: httpapi.ServiceStateLocked, VaultState: httpapi.VaultStateLocked, DatabaseState: httpapi.DatabaseStateNotChecked,
+	}}
+	server, err := httpapi.NewServer(httpapi.Options{
+		CommandToken:          "generated-guidance-command",
+		ServiceLifecycle:      lifecycle,
+		StartLocked:           true,
+		TerminalCommandBase:   []string{probe},
+		TerminalCommandSuffix: serviceTerminalCommandSuffix(platform.Paths{Root: stateRoot}, platform.VaultModePassphrase),
+		ServiceEnrollment: func() (string, string, bool) {
+			return platform.EnrollmentNotInstalled, "systemd-user", true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := server.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+
+	health, err := httpapi.NewCommandClient(server.Origin(), "generated-guidance-command", nil).ServiceHealth(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(health.GuidanceCommands) != 1 {
+		t.Fatalf("unlock guidance = %#v", health.GuidanceCommands)
+	}
+	invocation := exec.Command("sh", "-c", health.GuidanceCommands[0])
+	output, err := invocation.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated unlock guidance failed: %v; output = %q", err, output)
+	}
+	arguments := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
+	if len(arguments) != 3 || arguments[0] != "vault" || arguments[1] != "unlock" {
+		t.Fatalf("generated unlock arguments = %#v", arguments)
+	}
+	parsed, err := parseVaultCommandOptions(arguments[2:])
+	if err != nil {
+		t.Fatalf("generated unlock arguments rejected by parser: %v; arguments = %#v", err, arguments)
+	}
+	if parsed.stateRoot == nil || *parsed.stateRoot != stateRoot {
+		t.Fatalf("generated unlock state root = %#v, want %q", parsed.stateRoot, stateRoot)
+	}
+	if len(health.EnrollmentGuidance) != 2 || !strings.Contains(health.EnrollmentGuidance[1], "--vault-mode=passphrase") {
+		t.Fatalf("passphrase enrollment guidance = %#v", health.EnrollmentGuidance)
+	}
 }
 
 func (lifecycle *vaultCommandLifecycle) Health() httpapi.ServiceHealth { return lifecycle.health }

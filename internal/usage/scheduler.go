@@ -16,6 +16,7 @@ const (
 	MaximumBackoff        = 6 * time.Hour
 	MaxCollectionsPerTick = 4
 	MaxScheduleTargets    = 64
+	ResetApproachingLead  = 30 * time.Minute
 
 	ScheduleOutcomeSucceeded = "succeeded"
 	ScheduleOutcomeFailed    = "failed"
@@ -188,7 +189,7 @@ func nextScheduledAttempt(target ScheduleTarget, settings CollectionSettings, no
 		return scheduledAttemptFromEvidence(target, settings, now)
 	}
 	for _, observation := range target.Latest.Observations {
-		if observation.WindowEnd != nil && observation.WindowEnd.UTC().Equal(target.State.NextAttemptAt.UTC()) {
+		if observation.WindowEnd != nil && (observation.WindowEnd.UTC().Equal(target.State.NextAttemptAt.UTC()) || observation.WindowEnd.UTC().Add(-ResetApproachingLead).Equal(target.State.NextAttemptAt.UTC())) {
 			return target.State.NextAttemptAt, TriggerPeriodicReset
 		}
 	}
@@ -233,8 +234,12 @@ func scheduledAttemptFromEvidence(target ScheduleTarget, settings CollectionSett
 			continue
 		}
 		reset := observation.WindowEnd.UTC()
-		if reset.After(now) && reset.Before(dueAt) {
-			dueAt, trigger = reset, TriggerPeriodicReset
+		resetBoundary := reset
+		if alertBoundary := reset.Add(-ResetApproachingLead); alertBoundary.After(now) || (alertBoundary.Equal(now) && target.Latest.CapturedAt.Before(now)) {
+			resetBoundary = alertBoundary
+		}
+		if resetBoundary.After(now) && resetBoundary.Before(dueAt) {
+			dueAt, trigger = resetBoundary, TriggerPeriodicReset
 		}
 	}
 	if dueAt.Before(floorAt) {

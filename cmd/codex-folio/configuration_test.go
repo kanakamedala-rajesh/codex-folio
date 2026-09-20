@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/configbundle"
@@ -53,6 +54,13 @@ func TestConfigurationCLIUsesRunningCommandServiceAndCreatesExclusivePrivateExpo
 		t.Fatalf("preview=%#v err=%v", preview, err)
 	}
 	stdout.Reset()
+	stderr.Reset()
+	code = runConfiguration([]string{"export", "--write", "--output", destination, "--confirmation-digest", strings.Repeat("0", 64), "--json"}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil })
+	if code == exitSuccess || stdout.Len() != 0 {
+		t.Fatalf("stale confirmation=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 	code = runConfiguration([]string{"export", "--write", "--output", destination, "--confirmation-digest", preview.Preview.ConfirmationDigest}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil })
 	if code != exitSuccess || stderr.Len() != 0 {
 		t.Fatalf("export=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -74,8 +82,8 @@ func TestConfigurationCLIUsesRunningCommandServiceAndCreatesExclusivePrivateExpo
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code = runConfiguration([]string{"export", "--write", "--output", destination, "--confirmation-digest", preview.Preview.ConfirmationDigest}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }); code == exitSuccess {
-		t.Fatal("export overwrote existing destination")
+	if code = runConfiguration([]string{"export", "--write", "--output", destination, "--confirmation-digest", preview.Preview.ConfirmationDigest, "--json"}, &stdout, &stderr, func(*string) (platform.Paths, error) { return paths, nil }); code == exitSuccess || stdout.Len() != 0 {
+		t.Fatalf("existing destination=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
 

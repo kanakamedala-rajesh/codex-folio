@@ -827,6 +827,7 @@ export function App() {
     )
       return;
     let cancelled = false;
+    let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       let terminal = false;
@@ -848,9 +849,10 @@ export function App() {
           return record ? { ...current, record } : current;
         });
       } catch (error) {
+        stopped = true;
         if (!cancelled) failure(error);
       } finally {
-        if (!cancelled && !terminal) timer = setTimeout(() => void poll(), 500);
+        if (!cancelled && !stopped && !terminal) timer = setTimeout(() => void poll(), 500);
       }
     };
     timer = setTimeout(() => void poll(), 500);
@@ -1037,6 +1039,7 @@ export function App() {
           current.filter((record) => record.profile.profile_id !== result.profile.profile_id),
         );
       }
+      if (request.action !== "preview") await load(true);
       return result;
     } catch (error) {
       if (

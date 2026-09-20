@@ -146,3 +146,72 @@ func TestConfigurationBundleRequiresConflictResolutionAndRejectsStalePreview(t *
 		t.Fatalf("state changed: %q", display)
 	}
 }
+
+func TestConfigurationBundleExcludesAndExplicitlySkipsQuarantinedProfiles(t *testing.T) {
+	state, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	addReadyProfile(t, state, "profile-quarantined", "Work")
+	now := formatStoredTime(state.clock.Now())
+	if _, err = state.db.Exec(`INSERT INTO alert_thresholds(profile_id,metric_key,warning_percent,critical_percent,updated_at) VALUES('profile-quarantined','codex.primary.used_percent',20,10,?); INSERT INTO profile_quarantine(profile_id,state,was_selected,quarantined_at,purge_after,updated_at) VALUES('profile-quarantined','quarantined',0,?,?,?)`, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	exported, err := state.ExportConfiguration(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exported.Profiles) != 0 || len(exported.AlertThresholds) != 0 {
+		t.Fatalf("quarantined export=%#v", exported)
+	}
+	service, err := configbundle.NewService(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.ExportPreview(ctx, false); err != nil {
+		t.Fatalf("export preview with quarantined threshold: %v", err)
+	}
+
+	bundle := configbundle.Bundle{
+		SchemaVersion:      configbundle.SchemaVersion,
+		Profiles:           []configbundle.Profile{{Alias: "Work", DisplayName: "Imported Work"}},
+		ConfigurationPacks: []configbundle.Pack{},
+		AlertThresholds:    []configbundle.Threshold{{ProfileAlias: "Work", MetricKey: "codex.primary.used_percent", WarningPercent: 25, CriticalPercent: 15}},
+		OperationalPreferences: configbundle.Preferences{
+			CollectionActiveSeconds: 300,
+			CollectionIdleSeconds:   1800,
+			Appearance:              "system",
+		},
+	}
+	preview, err := state.PreviewConfigurationImport(ctx, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Conflicts) != 1 || preview.Conflicts[0].Key != "profile:work" || preview.Conflicts[0].Kind != "quarantined_profile" || len(preview.Conflicts[0].Resolutions) != 1 || preview.Conflicts[0].Resolutions[0] != configbundle.ResolutionSkip {
+		t.Fatalf("quarantined preview=%#v", preview)
+	}
+	if _, err = state.ApplyConfigurationImport(ctx, bundle, configbundle.ApplyRequest{ConfirmationDigest: preview.ConfirmationDigest, Reviewed: true}); !errors.Is(err, configbundle.ErrConflict) {
+		t.Fatalf("unresolved quarantine conflict=%v", err)
+	}
+	result, err := state.ApplyConfigurationImport(ctx, bundle, configbundle.ApplyRequest{ConfirmationDigest: preview.ConfirmationDigest, Reviewed: true, Resolutions: map[string]string{"profile:work": configbundle.ResolutionSkip}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Counts.Profiles != 0 || result.Counts.AlertThresholds != 0 || len(result.Skipped) != 2 {
+		t.Fatalf("quarantined import result=%#v", result)
+	}
+	var display string
+	var warning, critical float64
+	if err = state.db.QueryRow(`SELECT display_name FROM identity_profiles WHERE profile_id='profile-quarantined'`).Scan(&display); err != nil {
+		t.Fatal(err)
+	}
+	if err = state.db.QueryRow(`SELECT warning_percent,critical_percent FROM alert_thresholds WHERE profile_id='profile-quarantined' AND metric_key='codex.primary.used_percent'`).Scan(&warning, &critical); err != nil {
+		t.Fatal(err)
+	}
+	if display != "Work" || warning != 20 || critical != 10 {
+		t.Fatalf("quarantined state changed: display=%q threshold=%v/%v", display, warning, critical)
+	}
+}

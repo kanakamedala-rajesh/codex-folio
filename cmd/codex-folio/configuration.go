@@ -39,24 +39,23 @@ func runConfiguration(args []string, stdout, stderr io.Writer, resolvePaths serv
 			if response.Preview == nil || response.Preview.Bundle == nil {
 				return errors.New("configuration export preview is incomplete")
 			}
-			if options.json {
-				if err = writeServiceJSON(stdout, response); err != nil {
+			if options.write {
+				if options.digest != response.Preview.ConfirmationDigest {
+					return configbundle.ErrReviewRequired
+				}
+				encoded, encodeErr := configbundle.CanonicalJSON(*response.Preview.Bundle)
+				if encodeErr != nil {
+					return encodeErr
+				}
+				if err = writeExclusiveConfiguration(options.path, append(encoded, '\n')); err != nil {
 					return err
 				}
-			} else {
-				writeConfigurationPreview(stdout, *response.Preview)
 			}
-			if !options.write {
-				return nil
+			if options.json {
+				return writeServiceJSON(stdout, response)
 			}
-			if options.digest != response.Preview.ConfirmationDigest {
-				return configbundle.ErrReviewRequired
-			}
-			encoded, err := configbundle.CanonicalJSON(*response.Preview.Bundle)
-			if err != nil {
-				return err
-			}
-			return writeExclusiveConfiguration(options.path, append(encoded, '\n'))
+			writeConfigurationPreview(stdout, *response.Preview)
+			return nil
 		}
 		file, err := os.Open(options.path)
 		if err != nil {

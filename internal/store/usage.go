@@ -473,6 +473,30 @@ func usageScopeAAD(snapshotID, field string) []byte {
 
 var _ usage.Store = (*Store)(nil)
 
+// LatestSuccessfulUsageRefresh returns the newest capture that persisted at
+// least one normalized observation. Unlike RecentUsageSnapshots, this query is
+// not bounded by the dashboard trace depth.
+func (store *Store) LatestSuccessfulUsageRefresh(ctx context.Context, target usage.ProfileTarget) (time.Time, error) {
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var capturedAt string
+	err := store.db.QueryRowContext(ctx, `SELECT s.captured_at FROM usage_snapshots s
+		WHERE s.profile_id = ? AND EXISTS (SELECT 1 FROM usage_observations o WHERE o.snapshot_id = s.snapshot_id)
+		ORDER BY rtrim(s.captured_at, 'Z') DESC, s.snapshot_id DESC LIMIT 1`, target.ID).Scan(&capturedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, coded(apperrors.StoreReadFailed, err)
+	}
+	result, err := parseStoredTime(capturedAt)
+	if err != nil {
+		return time.Time{}, coded(apperrors.StoreReadFailed, err)
+	}
+	return result, nil
+}
+
 // RecentUsageSnapshots returns the last twelve raw captures, including failed
 // captures as gaps. It never fills a historical gap with last-known evidence.
 func (store *Store) RecentUsageSnapshots(ctx context.Context, target usage.ProfileTarget) ([]usage.Snapshot, error) {

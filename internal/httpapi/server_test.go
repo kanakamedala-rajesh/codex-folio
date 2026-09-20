@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -800,6 +802,22 @@ func TestLockedServiceExposesSafeHealthAndCommandOnlyUnlock(t *testing.T) {
 	}
 	if bytes.Contains(encoded, []byte(passphrase)) {
 		t.Fatalf("health response contains passphrase: %s", encoded)
+	}
+}
+
+func TestTerminalGuidanceOmitsVaultModeOnlyForVaultUnlock(t *testing.T) {
+	base := []string{filepath.Join("source build", "codex-folio")}
+	suffix := []string{"--state-root=" + filepath.Join("custom state", "$folio"), "--vault-mode=passphrase"}
+	server := &Server{terminalCommandBase: base, terminalCommandSuffix: suffix}
+
+	if got, want := server.terminalCommand("vault", "unlock"), terminalCommandForOS(runtime.GOOS, append(append([]string(nil), base...), "vault", "unlock", suffix[0]), true); got != want {
+		t.Fatalf("vault unlock guidance = %q, want %q", got, want)
+	}
+	for _, arguments := range [][]string{{"service", "install"}, {"service", "recovery", "verify"}} {
+		wantArguments := append(append(append([]string(nil), base...), arguments...), suffix...)
+		if got, want := server.terminalCommand(arguments...), terminalCommandForOS(runtime.GOOS, wantArguments, true); got != want {
+			t.Fatalf("%v guidance = %q, want %q", arguments, got, want)
+		}
 	}
 }
 

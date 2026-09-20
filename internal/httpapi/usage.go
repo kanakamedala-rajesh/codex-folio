@@ -23,6 +23,7 @@ type CommandUsageService interface {
 	Latest(context.Context, string) (usage.Snapshot, error)
 	View(context.Context, string) (usage.DashboardView, []activity.TimelineRecord, error)
 	Recent(context.Context, usage.ProfileTarget) ([]usage.Snapshot, error)
+	LatestSuccessfulRefresh(context.Context, usage.ProfileTarget) (time.Time, error)
 }
 
 func (client *CommandClient) Analytics(ctx context.Context, scope string) (AnalyticsResponse, error) {

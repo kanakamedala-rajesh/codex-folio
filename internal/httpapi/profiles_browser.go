@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"runtime"
 	"strings"
 	"time"
 
@@ -276,15 +275,26 @@ func (server *Server) profileTerminalCommand(action, alias, codexOverride string
 	return server.terminalCommand(arguments...)
 }
 
-func terminalArgument(value string) string {
+func terminalArgumentForOS(goos, value string) string {
 	if value != "" && !strings.ContainsAny(value, " \t\r\n\"'`$%&|<>()^!") {
 		return value
 	}
-	if runtime.GOOS == "windows" {
-		value = strings.NewReplacer("^", "^^", "%", "%%", `"`, `^"`).Replace(value)
-		return `"` + value + `"`
+	if goos == "windows" {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 	}
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func terminalCommandForOS(goos string, arguments []string, invoke bool) string {
+	parts := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		parts = append(parts, terminalArgumentForOS(goos, argument))
+	}
+	command := strings.Join(parts, " ")
+	if goos == "windows" && invoke {
+		return "& " + command
+	}
+	return command
 }
 
 func validBrowserProfileAuthentication(input ProfileAuthenticationRequest) bool {
@@ -353,16 +363,8 @@ func (server *Server) browserProfile(request *http.Request, item profile.Identit
 		}
 	}
 	if server.usage != nil {
-		snapshots, err := server.usage.Recent(request.Context(), usage.ProfileTarget{ID: item.ID, Alias: item.Alias})
+		latest, err := server.usage.LatestSuccessfulRefresh(request.Context(), usage.ProfileTarget{ID: item.ID, Alias: item.Alias})
 		if err == nil {
-			var latest time.Time
-			for _, snapshot := range snapshots {
-				for _, observation := range snapshot.Observations {
-					if observation.CapturedAt.After(latest) {
-						latest = observation.CapturedAt
-					}
-				}
-			}
 			result.LastSuccessfulRefresh = formatUsageTime(latest)
 		} else if !errors.Is(err, usage.ErrProfileUnavailable) && !errors.Is(err, usage.ErrSourceInvalid) {
 			return ProfileSummary{}, err

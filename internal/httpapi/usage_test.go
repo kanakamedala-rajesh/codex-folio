@@ -130,6 +130,7 @@ type recordingUsageService struct {
 	activity      []activity.TimelineRecord
 	scope         string
 	err           error
+	lastSuccess   time.Time
 }
 
 func (service *recordingUsageService) Refresh(_ context.Context, alias, triggerReason string) (usage.Snapshot, error) {
@@ -150,4 +151,8 @@ func (service *recordingUsageService) View(_ context.Context, scope string) (usa
 
 func (service *recordingUsageService) Recent(context.Context, usage.ProfileTarget) ([]usage.Snapshot, error) {
 	return []usage.Snapshot{}, nil
+}
+
+func (service *recordingUsageService) LatestSuccessfulRefresh(context.Context, usage.ProfileTarget) (time.Time, error) {
+	return service.lastSuccess, service.err
 }

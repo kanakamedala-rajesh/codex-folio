@@ -30,27 +30,36 @@ func TestAlertHistoryDeduplicatesAcknowledgesResolvesAndReopens(t *testing.T) {
 		t.Fatalf("second SyncAlerts() error = %v", err)
 	}
 	records, err := state.ListAlerts(context.Background(), alerts.HistoryLimit)
-	if err != nil || len(records) != 1 || records[0].OccurrenceCount != 2 || records[0].State != alerts.StateOpen {
+	if err != nil || len(records) != 1 || records[0].OccurrenceCount != 1 || records[0].State != alerts.StateOpen || !records[0].LastSeenAt.Equal(now) {
 		t.Fatalf("ListAlerts() = %#v/%v", records, err)
 	}
-	if records[0].Source != usage.SourceCodexAppServer || records[0].SourceVersion != "2.7.0" || records[0].Provenance != usage.ProvenanceProvider || records[0].Scope != "provider_quota_window" || records[0].Freshness != usage.FreshnessFresh || records[0].AvailabilityReason != usage.ReasonStale || !records[0].EvidenceCapturedAt.Equal(now.Add(-time.Minute)) || !records[0].ObservedAt.Equal(now.Add(-time.Minute)) {
+	condition.EvidenceCapturedAt = now
+	condition.ObservedAt = now
+	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now.Add(2*time.Minute), alerts.HistoryLimit); err != nil {
+		t.Fatalf("new-evidence SyncAlerts() error = %v", err)
+	}
+	records, _ = state.ListAlerts(context.Background(), alerts.HistoryLimit)
+	if records[0].OccurrenceCount != 2 || !records[0].LastSeenAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("new evidence did not advance occurrence metadata: %#v", records[0])
+	}
+	if records[0].Source != usage.SourceCodexAppServer || records[0].SourceVersion != "2.7.0" || records[0].Provenance != usage.ProvenanceProvider || records[0].Scope != "provider_quota_window" || records[0].Freshness != usage.FreshnessFresh || records[0].AvailabilityReason != usage.ReasonStale || !records[0].EvidenceCapturedAt.Equal(now) || !records[0].ObservedAt.Equal(now) {
 		t.Fatalf("retained evidence = %#v", records[0].Condition)
 	}
-	if err := state.AcknowledgeAlert(context.Background(), records[0].ID, now.Add(2*time.Minute)); err != nil {
+	if err := state.AcknowledgeAlert(context.Background(), records[0].ID, now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("AcknowledgeAlert() error = %v", err)
 	}
-	if err := state.SyncAlerts(context.Background(), "profile-1", nil, now.Add(3*time.Minute), alerts.HistoryLimit); err != nil {
+	if err := state.SyncAlerts(context.Background(), "profile-1", nil, now.Add(4*time.Minute), alerts.HistoryLimit); err != nil {
 		t.Fatalf("resolve SyncAlerts() error = %v", err)
 	}
 	records, _ = state.ListAlerts(context.Background(), alerts.HistoryLimit)
 	if records[0].State != alerts.StateResolved || records[0].AcknowledgedAt == nil || records[0].ResolvedAt == nil {
 		t.Fatalf("resolved record = %#v", records[0])
 	}
-	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now.Add(4*time.Minute), alerts.HistoryLimit); err != nil {
+	if err := state.SyncAlerts(context.Background(), "profile-1", []alerts.Condition{condition}, now.Add(5*time.Minute), alerts.HistoryLimit); err != nil {
 		t.Fatalf("reopen SyncAlerts() error = %v", err)
 	}
 	records, _ = state.ListAlerts(context.Background(), alerts.HistoryLimit)
-	if records[0].State != alerts.StateOpen || records[0].AcknowledgedAt != nil || records[0].ResolvedAt != nil {
+	if records[0].State != alerts.StateOpen || records[0].AcknowledgedAt != nil || records[0].ResolvedAt != nil || records[0].OccurrenceCount != 3 {
 		t.Fatalf("reopened record = %#v", records[0])
 	}
 }
@@ -81,6 +90,47 @@ func TestAlertHistoryPrunesResolvedRecordsToBound(t *testing.T) {
 		if record.Key == "condition-0" {
 			t.Fatalf("oldest resolved alert was retained: %#v", records)
 		}
+	}
+}
+
+func TestListAlertsReturnsEveryActiveConditionAndBoundsResolvedHistory(t *testing.T) {
+	now := time.Date(2026, time.September, 19, 12, 0, 0, 0, time.UTC)
+	state, err := Open(filepath.Join(t.TempDir(), "alerts.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = state.Close() }()
+	seedAlertProfile(t, state)
+	if err := state.SyncAlerts(context.Background(), "", []alerts.Condition{
+		{Key: "resolved-1", Category: alerts.CategoryCompatibility, Kind: alerts.KindCompatibilityChanged, Severity: alerts.SeverityWarning, Title: "Changed", Guidance: "Refresh", ObservedAt: now},
+		{Key: "resolved-2", Category: alerts.CategoryCompatibility, Kind: alerts.KindCompatibilityChanged, Severity: alerts.SeverityWarning, Title: "Changed", Guidance: "Refresh", ObservedAt: now.Add(time.Minute)},
+	}, now, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SyncAlerts(context.Background(), "", nil, now.Add(time.Minute), 2); err != nil {
+		t.Fatal(err)
+	}
+	conditions := make([]alerts.Condition, 0, 4)
+	for index := 0; index < 4; index++ {
+		conditions = append(conditions, alerts.Condition{Key: fmt.Sprintf("active-%d", index), ProfileID: "profile-1", Category: alerts.CategoryCompatibility, Kind: alerts.KindCompatibilityChanged, Severity: alerts.SeverityWarning, Title: "Changed", Guidance: "Refresh", EvidenceCapturedAt: now.Add(time.Duration(index) * time.Minute), ObservedAt: now.Add(time.Duration(index) * time.Minute)})
+	}
+	if err := state.SyncAlerts(context.Background(), "profile-1", conditions, now.Add(2*time.Minute), 2); err != nil {
+		t.Fatal(err)
+	}
+	records, err := state.ListAlerts(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, resolved := 0, 0
+	for _, record := range records {
+		if record.State == alerts.StateResolved {
+			resolved++
+		} else {
+			active++
+		}
+	}
+	if active != 4 || resolved != 2 {
+		t.Fatalf("ListAlerts() returned %d active/%d resolved records: %#v", active, resolved, records)
 	}
 }
 

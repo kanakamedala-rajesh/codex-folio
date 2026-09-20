@@ -82,6 +82,9 @@ func runDiagnosticsWithDependencies(args []string, input io.Reader, stdout, stde
 			if previewResponse.Preview == nil {
 				return apperrors.New(apperrors.DiagnosticsExportFailed, errors.New("diagnostic preview is unavailable"))
 			}
+			if options.nonInteractive && !options.dryRun {
+				return apperrors.New(apperrors.DiagnosticsConfirmationInvalid, errors.New("diagnostic export requires preview confirmation"))
+			}
 			if options.json {
 				if err := writeServiceJSON(stdout, previewResponse); err != nil {
 					return err
@@ -91,9 +94,6 @@ func runDiagnosticsWithDependencies(args []string, input io.Reader, stdout, stde
 			}
 			if options.dryRun {
 				return nil
-			}
-			if options.nonInteractive {
-				return apperrors.New(apperrors.DiagnosticsConfirmationInvalid, errors.New("diagnostic export requires preview confirmation"))
 			}
 			fmt.Fprintf(stderr, "Type %s to export this local diagnostic bundle: ", previewResponse.Preview.ConfirmationDigest)
 			confirmation, err = buffered.ReadString('\n')

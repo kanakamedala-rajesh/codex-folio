@@ -98,3 +98,7 @@ func (usageClock) Now() time.Time { return time.Now() }
 func (service *usageCommandService) Recent(ctx context.Context, target usagefeature.ProfileTarget) ([]usagefeature.Snapshot, error) {
 	return service.store.RecentUsageSnapshots(ctx, target)
 }
+
+func (service *usageCommandService) LatestSuccessfulRefresh(ctx context.Context, target usagefeature.ProfileTarget) (time.Time, error) {
+	return service.store.LatestSuccessfulUsageRefresh(ctx, target)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
@@ -46,6 +47,18 @@ func (browserHomeLifecycle) Restore(context.Context, string, string) error    { 
 func (browserHomeLifecycle) Purge(context.Context, string) error              { return nil }
 
 const testProfilesPath = "/api/v1/profiles"
+
+func TestBrowserProfileUsesUnboundedLastSuccessfulRefreshProjection(t *testing.T) {
+	at := time.Date(2026, time.September, 19, 12, 0, 0, 0, time.UTC)
+	server := &Server{usage: &recordingUsageService{lastSuccess: at}}
+	result, err := server.browserProfile(httptest.NewRequest(http.MethodGet, testProfilesPath, nil), profile.IdentityProfile{ID: "profile-1", Alias: "Work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.LastSuccessfulRefresh != at.Format(time.RFC3339) {
+		t.Fatalf("last successful refresh = %q, want %q", result.LastSuccessfulRefresh, at.Format(time.RFC3339))
+	}
+}
 
 type browserProfileAuthenticationStub struct {
 	request CommandProfileAuthenticationRequest
@@ -205,9 +218,13 @@ func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testi
 	_ = prepared.Body.Close()
 	quotedOverride := `'--codex-bin=/opt/Codex Tools/codex'`
 	if runtime.GOOS == "windows" {
-		quotedOverride = `"--codex-bin=/opt/Codex Tools/codex"`
+		quotedOverride = `'--codex-bin=/opt/Codex Tools/codex'`
 	}
-	wantPreparedCommand := `codex-folio profile add Device --device-code ` + quotedOverride
+	commandPrefix := ""
+	if runtime.GOOS == "windows" {
+		commandPrefix = "& "
+	}
+	wantPreparedCommand := commandPrefix + `codex-folio profile add Device --device-code ` + quotedOverride
 	if prepared.StatusCode != http.StatusOK || preparedResponse.Outcome != "terminal_required" || preparedResponse.TerminalCommand != wantPreparedCommand {
 		t.Fatalf("prepared status/response = %d/%#v", prepared.StatusCode, preparedResponse)
 	}
@@ -221,9 +238,25 @@ func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testi
 		t.Fatal(err)
 	}
 	_ = reauthenticated.Body.Close()
-	wantReauthenticationCommand := `codex-folio profile reauthenticate Work --device-code ` + quotedOverride
+	wantReauthenticationCommand := commandPrefix + `codex-folio profile reauthenticate Work --device-code ` + quotedOverride
 	if reauthenticated.StatusCode != http.StatusOK || reauthenticatedResponse.Outcome != "terminal_required" || reauthenticatedResponse.TerminalCommand != wantReauthenticationCommand {
 		t.Fatalf("reauthenticated status/response = %d/%#v", reauthenticated.StatusCode, reauthenticatedResponse)
+	}
+}
+
+func TestPowerShellTerminalCommandsPreserveLiteralArguments(t *testing.T) {
+	arguments := []string{
+		`C:\Program Files\Codex $tools\codex-folio.exe`,
+		"profile", "add", "O'Brien", "--device-code",
+		"--codex-bin=C:\\100%`$tools\\codex.exe",
+		"--state-root=C:\\State $name\\folio",
+	}
+	want := `& 'C:\Program Files\Codex $tools\codex-folio.exe' profile add 'O''Brien' --device-code '--codex-bin=C:\100%` + "`" + `$tools\codex.exe' '--state-root=C:\State $name\folio'`
+	if got := terminalCommandForOS("windows", arguments, true); got != want {
+		t.Fatalf("PowerShell command = %q, want %q", got, want)
+	}
+	if got := terminalCommandForOS("windows", arguments[len(arguments)-1:], false); got != `'--state-root=C:\State $name\folio'` {
+		t.Fatalf("PowerShell suffix = %q", got)
 	}
 }
 
