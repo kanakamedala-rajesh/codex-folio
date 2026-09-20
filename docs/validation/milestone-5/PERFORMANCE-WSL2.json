@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-20",
+  "candidate_base": "099ce2d8f6d27c0e39efe1cda59ea5f62f1693d9",
+  "environment": {
+    "qualification": "WSL2 fixture performance evidence; not native Windows, macOS, or non-WSL Linux qualification",
+    "platform": "linux",
+    "architecture": "x86_64",
+    "kernel": "6.6.87.2-microsoft-standard-WSL2",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155H",
+    "logical_cpus": 12,
+    "memory_bytes": 8329039872,
+    "browser": "Chromium 143.0.7499.4",
+    "node": "v24.18.0",
+    "go": "go1.27.0 linux/amd64"
+  },
+  "measurements": {
+    "cached_content": {
+      "budget_ms": 1000,
+      "method": "five serial isolated starts after one warm-up; fresh browser, SQLite state, vault, and loopback service per start",
+      "samples_ms": [
+        129.701807,
+        137.679818,
+        130.746118,
+        139.126711,
+        176.925126
+      ],
+      "median_ms": 137.679818,
+      "maximum_ms": 176.925126,
+      "result": "pass"
+    },
+    "ordinary_refresh": {
+      "budget_ms": 10000,
+      "method": "real authenticated loopback service and production browser client; deterministic fake Codex; click through refresh response, analytics reload, two animation frames, and re-enabled Refresh control",
+      "elapsed_ms": 170.188904,
+      "authentication_excluded": true,
+      "result": "pass"
+    },
+    "warm_managed_launch": {
+      "budget_ms": 300,
+      "method": "warm loopback service and CLI entry through persisted successful fake-process-start reporting",
+      "elapsed_ms": 37.693058,
+      "result": "pass"
+    },
+    "idle_enrolled_service": {
+      "memory_budget_bytes": 78643200,
+      "cpu_budget_percent": 1,
+      "method": "real SQLite store, unlocked memory vault, enrolled scheduler, operational workflows, and authenticated HTTP API with no profiles; 100 ms settle then /proc samples across 2.001 seconds",
+      "resident_memory_bytes": 19517440,
+      "sustained_cpu_percent": 0,
+      "result": "pass"
+    },
+    "bounded_sqlite_writes": {
+      "method": "601-reading retention fixture spanning thirteen months and restart boundaries",
+      "maximum_batch_writes": 450,
+      "asserted_maximum_batch_writes": 800,
+      "latest_history_query_ms": 5.20452,
+      "latest_history_query_budget_ms": 2000,
+      "result": "pass"
+    },
+    "responsive_thirteen_month_history": {
+      "method": "keyboard navigation through real authenticated service response, native SVG paths, 14-row semantic table, and two animation frames",
+      "elapsed_ms": 72.239296,
+      "result": "pass"
+    },
+    "development_archives": {
+      "review_threshold_bytes": 52428800,
+      "archives": [
+        {
+          "target": "linux-amd64",
+          "size_bytes": 12497652,
+          "review": "pass"
+        },
+        {
+          "target": "windows-amd64",
+          "size_bytes": 23289685,
+          "review": "pass"
+        },
+        {
+          "target": "macos-arm64",
+          "size_bytes": 12116476,
+          "review": "pass"
+        }
+      ],
+      "result": "pass"
+    }
+  },
+  "commands": [
+    "CODEX_FOLIO_BROWSER_OUTPUT=/tmp/codex-folio-m5-performance CODEX_FOLIO_BROWSER_TEST=1 CODEX_FOLIO_BROWSER_SUITE=deep go test ./cmd/codex-folio -run '^TestOverviewBrowser$' -count=1 -v -timeout=5m",
+    "CODEX_FOLIO_BROWSER_OUTPUT=/tmp/codex-folio-m5-performance CODEX_FOLIO_BROWSER_TEST=1 go test ./cmd/codex-folio -run '^TestOverviewStartupBenchmark$' -count=1 -v -timeout=5m",
+    "go test ./cmd/codex-folio -run '^TestEnrolledServiceIdleResourceBudgetOnLinux$' -count=1 -v",
+    "go test ./internal/store -run '^TestRepresentativeHistoryBoundsWritesAndPurge$' -count=1 -v",
+    "node scripts/release.mjs --dry-run --build-class development --output-dir /tmp/codex-folio-m5-release"
+  ],
+  "limitations": [
+    "Deterministic fake Codex replaces live provider collection.",
+    "Shared WSL2 resources are recorded and are not a universal performance promise.",
+    "Native interactive performance and lifecycle qualification remain separate."
+  ]
+}

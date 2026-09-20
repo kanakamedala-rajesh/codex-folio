@@ -15,14 +15,17 @@ index below can be reproduced using isolated fixtures without private accounts.
 On 20 September 2026 the owner explicitly authorized committing and wrapping up
 #79, with the remaining qualification checks to be handled separately after the
 PR is merged. This supersedes the earlier instruction to keep #79 open until
-those checks are performed. The accepted delivery exceptions are:
+those checks are performed. The historical ticket-delivery deferrals and current
+parent-level exceptions are:
 
 - **R4 / AC3 / parent TD7:** actual browser-level 200% zoom, spoken screen-reader
   operation and complete native/manual contrast remain unverified.
-- **R5 / AC4 / parent TD6:** native Windows AMD64, macOS ARM64 and Linux AMD64
-  user-service enrollment/removal, retained-data, vault and notification/privacy
-  qualification remain unverified. WSL, compile-only and recording-adapter checks
-  do not substitute for these demonstrations.
+- **R5 / AC4 / parent TD6:** actual native notification/privacy behavior is an
+  accepted parent-level exception. Native Windows AMD64, macOS ARM64 and Linux
+  AMD64 user-service enrollment/removal, retained-data and vault qualification
+  were deferred from ticket delivery but remain unqualified for milestone
+  completion. WSL, compile-only and recording-adapter checks do not substitute
+  for these demonstrations.
 - Detailed real-account artifacts remain deleted for privacy. This report retains
   sanitized source/test traceability and aggregate execution results only.
 - #79 may be delivered and closed after the reviewed commit passes local and
@@ -30,8 +33,10 @@ those checks are performed. The accepted delivery exceptions are:
   #57 stays open, PR comments remain to be addressed, and the PR is not merged by
   this delivery. Independent milestone readiness findings remain visible there.
 
-These are accepted scope deferrals, not passing test results. No follow-up issue
-number is invented; the owner will handle the deferred work separately.
+These are not passing test results. Only R4 and actual native
+notification/privacy behavior are accepted parent-level exceptions; the other
+R5 checks remain unqualified. No follow-up issue number is invented; the owner
+will handle the ticket-delivery deferrals separately.
 
 ## Implementation in #79
 
@@ -57,8 +62,10 @@ Implemented corrections:
 
 Verification uses isolated regression fixtures, not a new real-account audit.
 Canonical verification passed (all suite, exit 0). Independent confirmation
-resolved R1–R3; R4/R5 remain unqualified under the owner-accepted delivery exceptions. Historical
-live-case counts below are not upgraded by these code changes.
+resolved R1–R3. R4 and the notification/privacy portion of R5 remain
+unvalidated under parent-level owner exceptions; the rest of R5 remains a
+separate qualification area. Historical live-case counts below are not upgraded
+by these code changes.
 
 ## Scope and results
 
@@ -86,8 +93,8 @@ success does not resolve defects reproduced with historical observations.
 | R1 — RESOLVED | Expired historical observations create false current-capacity conflicts and suppress recommendations. Use applicable current evidence while preserving genuine conflicts and provenance. | Collection/ranking #39/#42; displayed through #59/#65. |
 | R2 — RESOLVED | Settings measured 345px wide in a 320px viewport. Essential import controls must fit or wrap. | #78; historical narrow finding, excluded from the desktop repeat. |
 | R3 — RESOLVED | Fixed mobile navigation completely obscures keyboard-focused profile editing. Keep focused controls visible. | #59/#60; historical narrow finding. |
-| R4 — OWNER-DEFERRED | Actual 200% browser zoom, spoken screen reader and full native/manual contrast were not established. | Suitable environment and actual results, or requirement-specific accepted exceptions. |
-| R5 — OWNER-DEFERRED | Native enrollment/removal, retained-data, vault and notification/privacy matrix remains incomplete. | Native Windows AMD64, macOS ARM64 and Linux AMD64; WSL and recording adapters do not substitute. |
+| R4 — OWNER-EXCEPTED | Actual 200% browser zoom, spoken screen reader and full native/manual contrast were not established. | Parent-level owner exception recorded on #57; remains unvalidated. |
+| R5 — PARTIAL OWNER EXCEPTION | Native enrollment/removal, retained-data, vault and notification/privacy matrix remains incomplete. | Parent-level owner exception covers actual notification/privacy behavior only. Native service and vault lifecycle evidence remains separate; WSL and recording adapters do not substitute for the required native platforms. |
 
 Additional observations addressed by the implementation above:
 
@@ -130,13 +137,30 @@ An earlier attempt exposed a test helper's missing response return, an obsolete
 label assertion, and a locator that stopped matching when its disclosure closed;
 those harness defects were corrected before the final passing run.
 
-Performance measurements met the recorded budgets under WSL/fixture conditions;
-native interactive performance and lifecycle qualification were not established.
+The retained [WSL2 performance matrix](PERFORMANCE-WSL2.json) records a fresh
+2026-09-20 run for every AC5 budget: cached content median 137.680ms (maximum
+176.925ms), ordinary refresh 170.189ms excluding authentication, warm managed
+launch overhead 37.693ms, idle service resident memory 19,517,440 bytes and
+0.000% sustained CPU, a maximum 450 writes per bounded retention batch, a
+5.205ms latest-history query, a 72.239ms 13-month browser response, and all
+three development archives below the 50 MiB review threshold. The artifact
+records commands, thresholds, environment, methods, and fixture limitations.
+These measurements satisfy the engineering budgets under recorded WSL2/fixture
+conditions; native interactive performance and lifecycle qualification were
+not established.
 Automated accessibility samples and reflow tests do not prove spoken-reader
 behavior, native zoom or complete WCAG conformance.
 
+On 2026-09-20 the owner accepted parent-level qualification exceptions for
+unvalidated manual accessibility and actual native notification/privacy
+behavior. They remain unvalidated and are not relabeled as passing evidence.
+Native service enrollment/removal, retained-data, and vault lifecycle evidence
+remains a separate qualification area.
+
 Round-1 independent confirmation resolved R1–R3 and found no direct remediation
-regression. R4/R5 remain unverified and are accepted delivery deferrals. The bounded UI review found an incomplete
+regression. R4 and actual native notification/privacy behavior remain unverified
+under accepted parent-level exceptions. The other R5 checks were deferred from
+ticket delivery and remain unqualified. The bounded UI review found an incomplete
 collapsed-filter scope summary; its project fallback and window label were
 corrected; bounded confirmation marks F1 RESOLVED and the regression assertions
 pass. No further implementation blocker was found in that bounded review.
@@ -147,9 +171,9 @@ acceptance traceability; it does not resolve any remaining qualification gap.
 | --- | --- |
 | AC1 — requirement traceability | Sanitized US/ID/TD and referenced-acceptance index reconstructed below; private detailed evidence remains deleted. |
 | AC2 — composed journeys | Automated regressions pass; historical live-case variants have not been rerun. |
-| AC3 — UI/accessibility | Code regressions pass; remaining manual/platform checks accepted as R4 deferral. |
-| AC4 — native lifecycle | Unqualified; accepted R5 delivery deferral. |
-| AC5 — engineering budgets | Historical WSL/fixture measurements only; detailed evidence removed. |
+| AC3 — UI/accessibility | Code regressions pass; remaining manual/platform checks are an explicit parent-level owner exception and remain unvalidated. |
+| AC4 — native lifecycle | Actual native notification/privacy behavior is an explicit parent-level owner exception and remains unvalidated; native service enrollment/removal, retained-data, and vault lifecycle evidence remains separate. |
+| AC5 — engineering budgets | PASS under the recorded WSL2/fixture conditions in `PERFORMANCE-WSL2.json`; every stated budget and archive threshold is included. |
 | AC6 — revision-bound verification | Final dirty-candidate all-suite pass; no clean #79 commit or hosted run. |
 | AC7 — qualification boundaries | Production continuation exception retained; telemetry disabled/unavailable. No deployment, signing, release or later-milestone claims. |
 | AC8 — milestone completion | #79 closure authorized after delivery checks; parent completion remains deferred pending PR review and outstanding qualification work. |
@@ -221,7 +245,7 @@ These execute against the authenticated service through
 | ID22 | #77 | Telemetry prerequisite/consent/schema tests. |
 | ID23 | #78 | Portable configuration preview/conflict/Pending import tests. |
 | ID24 | #59–61, #67, #70–73, #75–78 | B Settings persistence and independent consent; corresponding CLI command tests. |
-| ID25 | #59, #61, #65–66, #72, #79 | `TestOverviewStartupBenchmark`, `TestEnrolledServiceIdleResourceBudgetOnLinux` and recorded budget summaries. Historical deleted raw measurements are not reconstructed as new passes. |
+| ID25 | #59, #61, #65–66, #72, #79 | `TestOverviewStartupBenchmark`, `TestOverviewBrowser`, `TestEnrolledServiceIdleResourceBudgetOnLinux`, `TestRepresentativeHistoryBoundsWritesAndPurge`, the release dry run, and `PERFORMANCE-WSL2.json` provide a fresh consolidated matrix under recorded WSL2/fixture conditions. |
 
 | Testing decisions | Evidence pointer / boundary |
 | --- | --- |
@@ -229,7 +253,7 @@ These execute against the authenticated service through
 | TD3 | US1–40 and US47–67 composed journeys. Destructive real-account variants are not implied. |
 | TD4 | Adverse provider fixtures, usage/ranking/aggregation regressions and chart/table parity. |
 | TD5 | Deterministic scheduler, sole-owner and recording notification tests. |
-| TD6 | Actual native lifecycle matrix remains owner-deferred under R5. |
+| TD6 | Actual native notification/privacy behavior is an accepted parent-level exception; native service enrollment/removal, retained-data and vault lifecycle remain unqualified under R5. |
 | TD7 | Design and browser evidence; native zoom/spoken reader/manual contrast remain owner-deferred under R4. |
 | TD8 | HTTP authorization, redacted diagnostics, consented/encrypted continuation and safe export/import checks. |
 | TD9 | Update/telemetry no-network/schema/consent tests; no production backend qualification. |

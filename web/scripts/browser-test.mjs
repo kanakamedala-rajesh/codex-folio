@@ -100,6 +100,7 @@ async function prepareHandoff() {
 }
 async function scenario(mode) {
   writeFileSync(control, mode);
+  const started = performance.now();
   const refreshButton = page.getByRole("button", { name: "Refresh", exact: true });
   const refreshed = page.waitForResponse(
     (response) =>
@@ -126,6 +127,7 @@ async function scenario(mode) {
       (button) => button.textContent?.trim() === "Refresh" && !button.disabled,
     ),
   );
+  return performance.now() - started;
 }
 async function profileAction(name) {
   const completed = page.waitForResponse(
@@ -309,7 +311,11 @@ try {
       );
       await choose("Personal");
       check("single profile persists; explicit combined scope preserves Selected Profile");
-      await scenario("supported");
+      results.ordinaryRefreshMs = await scenario("supported");
+      assert.ok(
+        results.ordinaryRefreshMs < 10_000,
+        `ordinary fixture refresh ${results.ordinaryRefreshMs.toFixed(1)}ms exceeds 10s engineering budget`,
+      );
       await page.getByText("Capacity refreshed.", { exact: true }).waitFor();
       assert.match(await page.locator("main").innerText(), /75%/);
       assert.match(await page.locator("main").innerText(), /60%/);
