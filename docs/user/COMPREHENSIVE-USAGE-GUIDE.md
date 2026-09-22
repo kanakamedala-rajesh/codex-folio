@@ -125,7 +125,10 @@ is an ownership conflict, not a way to start a parallel isolated service. Do not
 copy an active database, delete lock files, or edit runtime files.
 
 Before switching roots, exit active foreground Codex sessions and stop an
-on-demand owner with Ctrl-C in its service terminal. If the old owner is enrolled,
+on-demand owner orderly. A manually invoked foreground `service start` uses
+Ctrl-C in its service terminal; a detached owner created by plain startup can be
+identified with `service status --json` and stopped through the platform until
+the dedicated stop workflow is available. If the old owner is enrolled,
 run `service uninstall --state-root /absolute/path/to/old-state` to remove that
 enrollment, then inspect status and ensure its owner has stopped before starting
 the new root. Uninstall is not a reset and retains data. If a foreground owner is
@@ -240,17 +243,18 @@ passphrase mode to locked state. Never put a passphrase in shell history, source
 control, an issue, or a shared log.
 
 Keep the unlocked passphrase-backed service running while testing. Other
-commands then route through that state owner. If no service is running, append
-`--vault-mode passphrase` to each vault-dependent command and enter the same
-passphrase through that command's existing input path.
+commands then route through that state owner. Plain startup is the everyday
+exception to separate service, unlock, selection and launch commands:
+`codex-folio --vault-mode passphrase` starts or reuses the full on-demand owner,
+reads one explicit passphrase when it is locked, and supplies that value only
+through the authenticated `UnlockVault` command. It never places the passphrase
+in arguments, environment variables or persistent plaintext.
 
-The plain profile picker is one complete exception to the need for separate
-selection and launch commands. When no service is running,
-`codex-folio --vault-mode passphrase` reads one explicit passphrase, holds the
-temporary unlocked owner through selection and foreground Codex launch, and
-closes it after the child exits. It does not cache the passphrase or persist the
-temporary owner. When a service is already running, the same picker reuses it
-without reopening state.
+The owner remains available after the foreground Codex child exits. Plain
+startup does not enroll it at OS login or enable periodic collection; those
+remain explicit and independent. It prints the current non-secret loopback
+dashboard address and a repeatable `service start` command that obtains fresh
+browser authorization without automatically opening a browser.
 
 Recovery commands are intentionally separate from normal startup:
 
@@ -544,13 +548,22 @@ different identity; choose an eligible number deliberately or complete profile
 setup. Selection affects future launches only and never changes a running
 Launch Profile.
 
-The picker and foreground child share one buffered terminal input stream, so
+Before presenting the picker, plain startup starts or reuses the existing full
+service composition. Concurrent invocations converge through the same owner
+lock and descriptor protocol rather than opening competing SQLite writers. The
+picker and foreground child share one buffered terminal input stream, so
 input after the selection line remains available to Codex. Standard output,
 standard error, native signal forwarding, working directory and child exit
-status retain the explicit launch behavior. A standalone passphrase invocation
-prompts once and keeps its unlocked state owner through child exit. Automatic
-persistence after child exit is not implemented by this slice; use an already
-running service when later dashboard access is required.
+status retain the explicit launch behavior. A passphrase invocation prompts
+once when the owner is locked, and the companion remains available after child
+exit. Dashboard authorization or analytics refresh failures may emit a concise
+warning without blocking an otherwise safe launch; identity selection,
+configuration, vault readiness and sole state ownership still fail closed.
+
+Ordinary startup never opens a browser, enrolls OS-login startup or grants
+periodic collection consent. Its printed dashboard address contains no
+bootstrap credential; run the printed `service start` reopening command when a
+fresh one-time browser authorization URL is required.
 
 For automation, an explicit alias, a Project ID, or Codex arguments, use the
 advanced launch form:
@@ -1150,11 +1163,12 @@ state path is writable, and whether the selected vault mode is available. Do not
 delete lock or database files to force startup; use the reported recovery path.
 
 On WSL/headless Linux, `CF_VAULT_UNAVAILABLE` from a bare command normally means
-the default Linux Secret Service is absent. Start with
-`service start --vault-mode passphrase`, then keep that foreground owner running.
-This selects the encrypted passphrase vault rather than plaintext. In another
-local terminal, run `vault unlock`; a failed attempt leaves the same owner
-locked and ready for another attempt.
+the default Linux Secret Service is absent. Use plain startup with
+`--vault-mode passphrase`, or explicitly start the foreground service with that
+mode. This selects the encrypted passphrase vault rather than plaintext. Plain
+startup performs the one private unlock in the same flow; explicit foreground
+service operation still uses `vault unlock` from another local terminal. A
+failed attempt leaves the same owner locked and ready for another attempt.
 
 ### Native service enrollment is unavailable
 

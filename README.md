@@ -4,22 +4,22 @@ A local-first CLI companion for choosing Codex profiles, inspecting usage
 evidence, and preparing repository checkpoints for interrupted work.
 
 **Development preview.** Core CLI milestones are implemented. The local
-dashboard, operational companion work, and production release qualification
-are still pending. Making this repository public is not a stable release.
+remaining effortless-companion work and production release qualification are
+still pending. Making this repository public is not a stable release.
 CodexFolio is independent and is not affiliated with or endorsed by OpenAI.
 
 ## What is available
 
 | Capability | Current position |
 | --- | --- |
-| Isolated identity profiles and installed-Codex launch | Implemented, including a keyboard picker that keeps one unlocked service/state lifetime through foreground launch; real-account platform qualification has documented exceptions |
+| Isolated identity profiles and installed-Codex launch | Implemented, including a keyboard picker that starts or reuses the full on-demand companion, preserves the foreground Codex terminal contract, and leaves the companion available after Codex exits; real-account platform qualification has documented exceptions |
 | Read-only usage evidence and local analytics | Implemented; provider-reported, derived, estimated, stale, and unavailable values must remain distinguishable |
 | Safe Continuation | Repository-first and explicitly consented transcript-assisted checkpoint review, retention, export, recovery state, and fresh foreground start are implemented; not a guarantee of exact conversation or hidden-state transfer |
-| Local dashboard and background operations | Authorized Overview, Profiles onboarding/lifecycle recovery, Shared Configuration Pack management, Sessions, analytics, bounded operational Alerts, terminal-owned launches, Safe Continuation, bounded periodic usage collection, preview-before-download diagnostics and portable nonsecret configuration, separately consented update checks, and a schema-versioned optional telemetry client are implemented; imported profiles remain Pending until local Identity Home selection and Codex authentication; update checks remain unconfigured and telemetry enablement remains unavailable in production until their distinct project-controlled operational prerequisites are approved; explicitly enrolled services can use privacy-preserving native notifications with generic text by default and separate per-device detail consent; passphrase-backed headless service sessions start locked; explicit per-user Task Scheduler, LaunchAgent, and systemd-user enrollment is implemented with Settings/CLI cadence controls and on-demand fallback; native Tier 1 qualification remains limited as documented |
+| Local dashboard and background operations | Authorized Overview, Profiles onboarding/lifecycle recovery, Shared Configuration Pack management, Sessions, analytics, bounded operational Alerts, terminal-owned launches, Safe Continuation, bounded periodic usage collection, preview-before-download diagnostics and portable nonsecret configuration, separately consented update checks, and a schema-versioned optional telemetry client are implemented; plain startup now starts or reuses the full on-demand owner without browser opening, OS-login enrollment, or periodic collection consent, prints a non-secret dashboard address plus a repeatable re-entry command, and leaves that owner available after Codex exits; imported profiles remain Pending until local Identity Home selection and Codex authentication; update checks remain unconfigured and telemetry enablement remains unavailable in production until their distinct project-controlled operational prerequisites are approved; explicitly enrolled services can use privacy-preserving native notifications with generic text by default and separate per-device detail consent; passphrase-backed sessions unlock privately through the command transport; explicit per-user Task Scheduler, LaunchAgent, and systemd-user enrollment remains separate; native Tier 1 qualification remains limited as documented |
 | Exact Continuation and Shared Work Home | Experimental scope; not prerequisites for stable-core delivery |
 | Signed, supported end-user release | Not available yet |
 
-This summary reflects the implementation frontier on 2026-09-21. Follow the
+This summary reflects the implementation frontier on 2026-09-22. Follow the
 [MVP roadmap](ROADMAP.md) and [issue #9](https://github.com/kanakamedala-rajesh/codex-folio/issues/9)
 for live status. Read the [compatibility qualifications](docs/user/COMPATIBILITY.md)
 before using development builds with real accounts.

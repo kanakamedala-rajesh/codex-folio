@@ -42,12 +42,26 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 }
 
 func runWithServicePathResolverAndCodexResolverAndForegroundDependencies(args []string, input io.Reader, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, newAuthenticator profileAuthenticatorFactory) int {
+	return runWithServicePathResolverAndCodexResolverAndForegroundDependenciesAndCompanionStarter(
+		args, input, stdout, stderr, metadata, resolvePaths, resolver, openStore, newProcess, newAuthenticator,
+		startDetachedCompanion,
+	)
+}
+
+func runWithServicePathResolverAndCodexResolverAndForegroundDependenciesAndCompanionStarter(args []string, input io.Reader, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, newAuthenticator profileAuthenticatorFactory, startCompanion companionProcessStarter) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "--state-root") || strings.HasPrefix(args[0], "--vault-mode") {
 		options, err := parseSelectionOptions(args)
 		if err != nil || options.json {
 			return writeSelectionUsageDiagnostic(stderr, "invalid interactive selection arguments", newServiceDiagnosticSink())
 		}
 		promptInput, childInput := foregroundInputs(input)
+		paths, err := resolvePaths(options.stateRoot)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, newServiceDiagnosticSink())
+		}
+		if code := ensureEverydayCompanion(paths, options.serviceOptions, promptInput, stdout, stderr, startCompanion); code != exitSuccess {
+			return code
+		}
 		var authenticator profile.Authenticator
 		if newAuthenticator != nil {
 			authenticator = newAuthenticator()
@@ -119,12 +133,20 @@ func runWithServicePathResolverAndCodexResolverAndForegroundDependencies(args []
 	}
 }
 
-func foregroundInputs(input io.Reader) (*bufio.Reader, io.Reader) {
+func foregroundInputs(input io.Reader) (io.Reader, io.Reader) {
 	if file, ok := input.(*os.File); ok {
-		return bufio.NewReader(singleByteReader{reader: file}), file
+		return &foregroundPromptInput{
+			Reader:   bufio.NewReader(singleByteReader{reader: file}),
+			terminal: file,
+		}, file
 	}
 	reader := bufferedReader(input)
 	return reader, reader
+}
+
+type foregroundPromptInput struct {
+	*bufio.Reader
+	terminal *os.File
 }
 
 type singleByteReader struct{ reader io.Reader }

@@ -169,13 +169,18 @@ func TestInteractiveSelectionUpdatesDefaultThenUsesForegroundLauncher(t *testing
 	assertSelectedAlias(t, paths, secureVault, "Personal")
 }
 
-func TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreservesChildInput(t *testing.T) {
+func TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput(t *testing.T) {
 	if os.Getenv("CODEX_FOLIO_SELECTION_CHILD") == "1" {
 		os.Exit(runSelectionFakeCodexChild())
 	}
 
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
+	fixture, err := startEverydayCompanionFixture(paths, secureVault)
+	if err != nil {
+		t.Fatalf("start full companion fixture: %v", err)
+	}
+	t.Cleanup(fixture.Close)
 	executable := writeSelectionFakeCodex(t, paths.Root)
 	childLog := filepath.Join(paths.Root, "child-input.txt")
 	t.Setenv("CODEX_FOLIO_SELECTION_CHILD", "1")
@@ -188,12 +193,11 @@ func TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreserves
 		_ = input.Close()
 		_ = inputWriter.Close()
 	})
-	if _, err := io.WriteString(inputWriter, "unlock once\n\nchild input\n"); err != nil {
+	if _, err := io.WriteString(inputWriter, "\nchild input\n"); err != nil {
 		t.Fatalf("write terminal input error = %v", err)
 	}
 
 	openCalls := 0
-	openError := ""
 	var stdout, stderr bytes.Buffer
 	result := make(chan int, 1)
 	go func() {
@@ -204,10 +208,7 @@ func TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreserves
 			launchTestResolver{candidate: launch.Candidate{Path: executable, Version: "0.1.2"}},
 			func(paths platform.Paths, mode platform.VaultMode, passphrase string) (*store.Store, error) {
 				openCalls++
-				if mode != platform.VaultModePassphrase || passphrase != "unlock once" {
-					openError = fmt.Sprintf("openStore mode/passphrase = %q/%q", mode, passphrase)
-				}
-				return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+				return nil, fmt.Errorf("persistent owner must remain the sole writer (mode=%q, passphrase-present=%t)", mode, passphrase != "")
 			},
 			newForegroundProcess, nil,
 		)
@@ -224,8 +225,8 @@ func TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreserves
 	if content, err := os.ReadFile(childLog); err != nil || string(content) != "child input\n" {
 		t.Fatalf("fake Codex child input = %q, %v; want preserved input", content, err)
 	}
-	if code != 29 || openCalls != 1 || openError != "" || stderr.Len() != 0 {
-		t.Fatalf("result = code:%d opens:%d open-error:%q stdout:%q stderr:%q", code, openCalls, openError, stdout.String(), stderr.String())
+	if code != 29 || openCalls != 0 || stderr.Len() != 0 {
+		t.Fatalf("result = code:%d opens:%d stdout:%q stderr:%q", code, openCalls, stdout.String(), stderr.String())
 	}
 }
 
@@ -257,14 +258,14 @@ func writeSelectionFakeCodex(t *testing.T, directory string) string {
 	}
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(directory, "fake-codex.cmd")
-		content := fmt.Sprintf("@echo off\r\n\"%s\" -test.run=TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreservesChildInput -- %%*\r\nexit /b %%errorlevel%%\r\n", testExecutable)
+		content := fmt.Sprintf("@echo off\r\n\"%s\" -test.run=TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput -- %%*\r\nexit /b %%errorlevel%%\r\n", testExecutable)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile(fake Codex) error = %v", err)
 		}
 		return path
 	}
 	path := filepath.Join(directory, "fake-codex")
-	content := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=^TestInteractiveSelectionEnterLaunchesSelectedAfterOnePassphraseAndPreservesChildInput$ -- \"$@\"\n", testExecutable)
+	content := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=^TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput$ -- \"$@\"\n", testExecutable)
 	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 		t.Fatalf("WriteFile(fake Codex) error = %v", err)
 	}

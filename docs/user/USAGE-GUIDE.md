@@ -182,22 +182,34 @@ It covers all six pages, dialogs, saves/cancels, real launches and handoff,
 with separate destructive and platform checks. Record actual results; the
 checklist is not a claim that every feature currently passes.
 
-To stop, exit any Codex session and press `Ctrl-C` in Terminal A. You can then
-exercise the standalone passphrase picker without manually starting a service:
+To stop the manually started foreground owner, exit any Codex session and press
+`Ctrl-C` in Terminal A. You can then exercise ordinary passphrase startup
+without manually keeping a service terminal open:
 
 ```sh
 ./build/bin/codex-folio --state-root "$CF_STATE" --vault-mode passphrase
 ```
 
-Enter the vault passphrase once, then press Enter on the highlighted Selected
-Profile. CodexFolio keeps that unlocked state owner usable until the foreground
-Codex child exits, including any terminal input already supplied after the
-selection line. This ticket does not keep a standalone owner alive after the
-child exits; persistent automatic companion startup is a later milestone slice.
+CodexFolio starts or reuses the full on-demand companion, reads the vault
+passphrase once through private terminal input when that owner is locked, and
+sends it through the authenticated `UnlockVault` command. Press Enter on the
+highlighted Selected Profile. The installed Codex process remains the foreground
+terminal child with its input, output, working directory, signals, arguments and
+exit status preserved, while the companion remains available after Codex exits.
+Ordinary startup prints a non-secret dashboard address and a repeatable
+`service start` command for fresh browser authorization; it does not open a
+browser.
 
-For the dashboard restart check, start with the same state root and vault mode,
-unlock in Terminal B, and open the new URL. Profiles and retained history should
-still be present. A new service session requires a fresh unlock.
+This automatic on-demand lifetime does not install OS-login startup or enable
+periodic collection. Those remain separate, explicit choices. To stop this
+detached on-demand owner in this development slice, identify the owning process
+with `service status --json` and use an orderly platform process stop; the
+dedicated companion stop workflow is delivered separately.
+
+For the dashboard restart check, stop and rerun the plain command with the same
+state root and vault mode, then use the printed reopening command for a fresh
+one-time browser URL. Profiles and retained history should still be present. A
+new passphrase-backed service session requires one fresh private unlock.
 
 For another completely fresh run, stop the owner and choose a new path such as
 `$HOME/codex-folio-manual-02`. Preserve the previous directory for comparison.
