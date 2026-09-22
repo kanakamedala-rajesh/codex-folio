@@ -7,11 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
+	"venkatasudha.com/codex-folio/internal/diagnostics"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/launch"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -23,6 +27,49 @@ type everydayCompanionFixture struct {
 	owner      *platform.Owner
 	stateOwner *serviceStateOwner
 	server     *httpapi.Server
+}
+
+type productionCompanionFixture struct {
+	stop     chan struct{}
+	done     chan int
+	stopOnce sync.Once
+	stderr   bytes.Buffer
+}
+
+func startProductionCompanionFixture(paths platform.Paths, options serviceOptions, openStore profileStoreOpener) *productionCompanionFixture {
+	fixture := &productionCompanionFixture{stop: make(chan struct{}), done: make(chan int, 1)}
+	waitForStop := func(owner *platform.Owner, stateOwner interface{ Close() error }, server *httpapi.Server, _ serviceOptions, _, stderr io.Writer, _ bool, _ <-chan error, _ diagnostics.Sink) int {
+		<-fixture.stop
+		return closeServiceAfterStop(server, stateOwner, owner, stderr, nil)
+	}
+	go func() {
+		fixture.done <- runServiceStartWithDependencies(paths, options, io.Discard, &fixture.stderr, nil, openStore, waitForStop)
+	}()
+	return fixture
+}
+
+func (fixture *productionCompanionFixture) Close() {
+	if fixture == nil {
+		return
+	}
+	fixture.stopOnce.Do(func() { close(fixture.stop) })
+	select {
+	case <-fixture.done:
+	case <-time.After(3 * time.Second):
+	}
+}
+
+func runPlainCompanionTest(paths platform.Paths, input string, starter companionProcessStarter) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	code := runWithServicePathResolverAndCodexResolverAndForegroundDependenciesAndCompanionStarter(
+		[]string{"--state-root", paths.Root}, strings.NewReader(input), &stdout, &stderr, buildinfo.Metadata{},
+		func(*string) (platform.Paths, error) { return paths, nil },
+		launchTestResolver{candidate: launch.Candidate{Path: filepath.Join(paths.Root, "unused-codex"), Version: "0.1.2"}},
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			return nil, errors.New("plain startup must use the production service owner")
+		}, nil, nil, starter,
+	)
+	return code, stdout.String(), stderr.String()
 }
 
 func (fixture *everydayCompanionFixture) Close() {
@@ -165,6 +212,133 @@ func TestEverydayCompanionPassphraseUnlockUsesCommandTransportOnce(t *testing.T)
 	}
 	if strings.Contains(stdout.String(), passphrase) || strings.Contains(stderr.String(), passphrase) {
 		t.Fatal("passphrase escaped into command output")
+	}
+}
+
+func TestPlainStartupOffersRecoverablePassphraseAlternativeAfterSecretServiceFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("passphrase alternative is currently supported on Linux")
+	}
+	paths := launchTestPaths(t)
+	const passphrase = "private fallback passphrase"
+	var fixtures []*productionCompanionFixture
+	starts := 0
+	starter := func(startPaths platform.Paths, options serviceOptions) error {
+		starts++
+		fixture := startProductionCompanionFixture(startPaths, options, func(openPaths platform.Paths, mode platform.VaultMode, supplied string) (*store.Store, error) {
+			if mode != platform.VaultModePassphrase {
+				return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("Secret Service fixture is unavailable"))
+			}
+			return openServiceStoreWithVaultMode(openPaths, mode, supplied)
+		})
+		fixtures = append(fixtures, fixture)
+		return nil
+	}
+	t.Cleanup(func() {
+		for _, fixture := range fixtures {
+			fixture.Close()
+		}
+	})
+	code, stdout, stderr := runPlainCompanionTest(paths, "2\n", starter)
+	if code != exitFailure || starts != 2 || !strings.Contains(stderr, "CF_VAULT_LOCKED") {
+		t.Fatalf("cancelled fallback = code:%d starts:%d stdout:%q stderr:%q service-stderr:%q", code, starts, stdout, stderr, fixtures[len(fixtures)-1].stderr.String())
+	}
+	selection, err := os.ReadFile(paths.SecureStorageFile)
+	if err != nil || !bytes.Contains(selection, []byte(`"mode":"passphrase"`)) {
+		t.Fatalf("remembered secure storage = %q, %v", selection, err)
+	}
+	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	if err != nil || !status.Running {
+		t.Fatalf("cancelled passphrase owner = %#v, %v", status, err)
+	}
+
+	code, stdout, stderr = runPlainCompanionTest(paths, passphrase+"\n", starter)
+	if code == exitSuccess || starts != 2 || !strings.Contains(stdout, "dashboard address:") || strings.Contains(stderr, "CF_VAULT_LOCKED") {
+		t.Fatalf("resumed fallback = code:%d starts:%d stdout:%q stderr:%q", code, starts, stdout, stderr)
+	}
+	if _, err := os.Stat(paths.VaultFile); err != nil {
+		t.Fatalf("real passphrase provider did not initialize protected material: %v", err)
+	}
+	if _, err := os.Stat(paths.DatabaseFile); err != nil {
+		t.Fatalf("real service composition did not initialize state: %v", err)
+	}
+	if strings.Contains(stdout, passphrase) || strings.Contains(stderr, passphrase) {
+		t.Fatal("passphrase escaped into setup output")
+	}
+}
+
+func TestPlainStartupSecretServiceCancellationIsRecoverable(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Secret Service recovery prompt is Linux-specific")
+	}
+	paths := launchTestPaths(t)
+	starts := 0
+	code, stdout, stderr := runPlainCompanionTest(paths, "q\n", func(_ platform.Paths, options serviceOptions) error {
+		starts++
+		return writeCompanionStartupStatus(options.startupStatus, "CF_VAULT_LOCKED")
+	})
+	if code != exitFailure || starts != 1 || !strings.Contains(stdout, "[q] cancel") || !strings.Contains(stderr, "CF_VAULT_LOCKED") {
+		t.Fatalf("cancel result = code:%d starts:%d stdout:%q stderr:%q", code, starts, stdout, stderr)
+	}
+	if _, err := os.Stat(paths.SecureStorageFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled setup persisted selection: %v", err)
+	}
+}
+
+func TestPlainStartupDetectsExistingPassphraseStateBeforeNativeInitialization(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("existing Linux passphrase migration detection is Linux-specific")
+	}
+	paths := launchTestPaths(t)
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.DatabaseFile, []byte("existing sqlite state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.VaultFile, []byte("CFPVexisting protected material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	code, _, stderr := runPlainCompanionTest(paths, "", func(platform.Paths, serviceOptions) error {
+		started = true
+		return nil
+	})
+	if code != exitFailure || started || !strings.Contains(stderr, "CF_VAULT_MIGRATION_REQUIRED") {
+		t.Fatalf("existing passphrase result = code:%d started:%t stderr:%q", code, started, stderr)
+	}
+}
+
+func TestCompanionStartupHandshakeAcceptsOnlyPrivateRuntimeFile(t *testing.T) {
+	paths := launchTestPaths(t)
+	statusPath, err := prepareCompanionStartupStatus(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(statusPath) })
+	if err := validateCompanionStartupStatusPath(paths, statusPath); err != nil {
+		t.Fatalf("valid status path rejected: %v", err)
+	}
+	writer := &companionStartupDiagnosticWriter{Writer: io.Discard, path: statusPath}
+	if _, err := io.WriteString(writer, "codex-folio [CF_VAULT_UNAVAILABLE]: redacted\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readCompanionStartupStatus(statusPath); err != nil || got != "CF_VAULT_UNAVAILABLE" {
+		t.Fatalf("startup status = %q, %v", got, err)
+	}
+	outside := filepath.Join(paths.Root, "outside.status")
+	if err := os.WriteFile(outside, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCompanionStartupStatusPath(paths, outside); err == nil {
+		t.Fatal("status path outside private runtime was accepted")
+	}
+	metadata := filepath.Join(paths.Runtime, "service.owner.json")
+	if err := os.WriteFile(metadata, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCompanionStartupStatusPath(paths, metadata); err == nil {
+		t.Fatal("service metadata was accepted as a startup status file")
 	}
 }
 

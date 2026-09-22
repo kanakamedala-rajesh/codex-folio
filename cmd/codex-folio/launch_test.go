@@ -1081,6 +1081,7 @@ func launchTestPaths(t *testing.T) platform.Paths {
 		MetadataFile:      filepath.Join(root, "runtime", "service.owner.json"),
 		DatabaseFile:      filepath.Join(root, "codex-folio.sqlite3"),
 		VaultFile:         filepath.Join(root, "codex-folio.vault"),
+		SecureStorageFile: filepath.Join(root, "secure-storage.json"),
 		ManagedHomes:      filepath.Join(root, "managed-homes"),
 		ProfileQuarantine: filepath.Join(root, "profile-quarantine"),
 	}

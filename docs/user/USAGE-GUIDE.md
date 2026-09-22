@@ -200,6 +200,21 @@ Ordinary startup prints a non-secret dashboard address and a repeatable
 `service start` command for fresh browser authorization; it does not open a
 browser.
 
+For a fresh ordinary installation, run the same plain command without
+`--vault-mode`. CodexFolio initializes the current user's supported native
+protection (Windows DPAPI, macOS Keychain, or Linux Secret Service), remembers
+that non-secret choice, and later starts reach the picker without an application
+passphrase. If Linux Secret Service is locked or unavailable, the same flow
+offers retry, the repeated-interaction passphrase alternative, or cancellation;
+cancellation changes no selection and rerunning retries setup. Windows and
+macOS report the native prerequisite to unlock or restore. CodexFolio never
+downgrades to plaintext or a local unprotected key.
+
+An existing Linux passphrase installation without a recorded native choice
+stops with `CF_VAULT_MIGRATION_REQUIRED`. Its database and vault are left
+untouched; the guided migration that preserves that state is delivered
+separately.
+
 This automatic on-demand lifetime does not install OS-login startup or enable
 periodic collection. Those remain separate, explicit choices. To stop this
 detached on-demand owner in this development slice, identify the owning process

@@ -219,11 +219,17 @@ Supported vault modes are platform Secret Service and passphrase mode:
 ./build/bin/codex-folio service start --vault-mode passphrase
 ```
 
-Bare commands on Linux select Secret Service. WSL and headless Linux users must
-explicitly select `--vault-mode passphrase`; the application deliberately does
-not infer it after `CF_VAULT_UNAVAILABLE`. The passphrase vault starts locked
-again after a new service session. CodexFolio does not silently fall back to
-plaintext storage.
+Plain startup selects and initializes the supported protection for the current
+user: Windows DPAPI, macOS Keychain, or Linux Secret Service. A small versioned
+configuration record remembers only the selected mechanism, never key material.
+Qualified repeat starts therefore reach selection without an application
+passphrase. If Linux Secret Service is locked or unavailable, plain startup
+offers an inline choice to retry, select the explicit passphrase alternative,
+or cancel without changing state. The passphrase vault starts locked again
+after every new service session. CodexFolio never silently falls back to
+plaintext storage or an app-local unprotected key. WSL native-provider bridging
+is a separate capability; until qualified, use the explicit Linux passphrase
+alternative when Secret Service is unavailable.
 
 Passphrase-backed `service start` acquires the single state owner and publishes
 the dashboard without opening the vault or database. Unlock the running service
@@ -559,6 +565,18 @@ once when the owner is locked, and the companion remains available after child
 exit. Dashboard authorization or analytics refresh failures may emit a concise
 warning without blocking an otherwise safe launch; identity selection,
 configuration, vault readiness and sole state ownership still fail closed.
+
+On the first native start the detached service is the only process allowed to
+open the vault, create protected key material, and open SQLite. A private
+one-shot startup handshake returns only a readiness marker or stable redacted
+error code to the foreground flow, so locked or unavailable Keychain, DPAPI, or
+Secret Service prerequisites can be explained inline without exposing secrets.
+The selection is remembered only after the service becomes ready. Refusing or
+cancelling setup leaves it unset and is recoverable by rerunning the command.
+If a non-empty database and an existing Linux passphrase vault predate this
+selection record, startup returns `CF_VAULT_MIGRATION_REQUIRED` before native
+initialization. It does not create replacement key material; migration is the
+separate `#88` workflow.
 
 Ordinary startup never opens a browser, enrolls OS-login startup or grants
 periodic collection consent. Its printed dashboard address contains no
@@ -1163,12 +1181,19 @@ state path is writable, and whether the selected vault mode is available. Do not
 delete lock or database files to force startup; use the reported recovery path.
 
 On WSL/headless Linux, `CF_VAULT_UNAVAILABLE` from a bare command normally means
-the default Linux Secret Service is absent. Use plain startup with
-`--vault-mode passphrase`, or explicitly start the foreground service with that
-mode. This selects the encrypted passphrase vault rather than plaintext. Plain
+the default Linux Secret Service is absent. Plain startup offers retry,
+passphrase storage, or cancellation in that same flow. You may also pass
+`--vault-mode passphrase` explicitly. This selects the encrypted passphrase
+vault rather than plaintext and records that choice only after readiness. Plain
 startup performs the one private unlock in the same flow; explicit foreground
 service operation still uses `vault unlock` from another local terminal. A
-failed attempt leaves the same owner locked and ready for another attempt.
+failed or cancelled setup can be retried safely. Windows-interoperable WSL
+protection is delivered separately.
+
+`CF_VAULT_MIGRATION_REQUIRED` means existing passphrase-protected state was
+detected before native initialization. Do not delete the database or vault:
+CodexFolio deliberately preserves both for the separately delivered guided
+migration.
 
 ### Native service enrollment is unavailable
 

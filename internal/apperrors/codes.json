@@ -572,6 +572,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_VAULT_MIGRATION_REQUIRED",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_VAULT_LOCKED",
       "owner": "vault",
       "lifecycle": "active",

@@ -225,7 +225,7 @@ func TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput(t 
 	if content, err := os.ReadFile(childLog); err != nil || string(content) != "child input\n" {
 		t.Fatalf("fake Codex child input = %q, %v; want preserved input", content, err)
 	}
-	if code != 29 || openCalls != 0 || stderr.Len() != 0 {
+	if code != 29 || openCalls != 0 || !strings.Contains(stderr.String(), "passphrase storage requires an unlock on every companion restart") {
 		t.Fatalf("result = code:%d opens:%d stdout:%q stderr:%q", code, openCalls, stdout.String(), stderr.String())
 	}
 }

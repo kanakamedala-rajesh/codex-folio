@@ -43,6 +43,9 @@ type serviceOptions struct {
 	enrolled  bool
 	candidate string
 	vaultMode platform.VaultMode
+	// startupStatus is an internal, non-secret handshake file used only by a
+	// detached plain-command start. It is never persisted as service config.
+	startupStatus string
 }
 
 type servicePathResolver func(*string) (platform.Paths, error)
@@ -228,6 +231,15 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			if err := setServiceVaultMode(&options, strings.TrimPrefix(arg, "--vault-mode=")); err != nil {
 				return serviceOptions{}, err
 			}
+		case arg == "--startup-status":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, errors.New("--startup-status requires a value")
+			}
+			index++
+			if options.startupStatus != "" {
+				return serviceOptions{}, errors.New("only one startup status path may be supplied")
+			}
+			options.startupStatus = args[index]
 		default:
 			return serviceOptions{}, errors.New("unexpected service argument")
 		}
@@ -356,6 +368,18 @@ func runServiceStartWithInput(paths platform.Paths, options serviceOptions, inpu
 }
 
 func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options serviceOptions, _ io.Reader, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
+	return runServiceStartWithDependencies(paths, options, stdout, stderr, diagnosticSink, openServiceStoreWithVaultMode, waitForServiceStopWithDiagnostics)
+}
+
+type serviceStopWaiter func(*platform.Owner, interface{ Close() error }, *httpapi.Server, serviceOptions, io.Writer, io.Writer, bool, <-chan error, diagnostics.Sink) int
+
+func runServiceStartWithDependencies(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, openStore profileStoreOpener, waitForStop serviceStopWaiter) int {
+	if options.startupStatus != "" {
+		if err := validateCompanionStartupStatusPath(paths, options.startupStatus); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceUnavailable, err), diagnosticSink)
+		}
+		stderr = &companionStartupDiagnosticWriter{Writer: stderr, path: options.startupStatus}
+	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -405,10 +429,15 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	var stateOwner interface{ Close() error }
 	var serviceLifecycle *lockedServiceLifecycle
 	if options.vaultMode == platform.VaultModePassphrase {
-		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openServiceStoreWithVaultMode, compose)
+		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openStore, compose)
 		stateOwner = serviceLifecycle
+		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
 	} else {
-		stateStore, openErr := openServiceStoreWithVaultMode(paths, options.vaultMode, "")
+		stateStore, openErr := openStore(paths, options.vaultMode, "")
 		if openErr != nil {
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, openErr, diagnosticSink)
@@ -420,6 +449,11 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background, shutdown: services.Shutdown}
+		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -472,8 +506,11 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
+	if options.startupStatus != "" {
+		_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
+	}
 
-	return waitForServiceStopWithDiagnostics(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+	return waitForStop(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
 }
 
 var waitForServiceOwnerRelease = waitForServiceOwnerReleaseSignal
@@ -1250,6 +1287,8 @@ func serviceRemediation(code string) string {
 		return "the local SQLite restore failed; active state was preserved or rolled back"
 	case apperrors.VaultUnavailable:
 		return "the local encryption vault is unavailable; sensitive state is blocked"
+	case apperrors.VaultMigrationRequired:
+		return "existing passphrase-protected state requires guided secure-storage migration; no replacement key was created"
 	case apperrors.VaultLocked:
 		return "the local encryption vault is locked; unlock it before using sensitive state"
 	case apperrors.VaultKeyInvalid:
