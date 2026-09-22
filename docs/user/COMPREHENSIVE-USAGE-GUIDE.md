@@ -274,6 +274,47 @@ remain explicit and independent. It prints the current non-secret loopback
 dashboard address and a repeatable `service start` command that obtains fresh
 browser authorization without automatically opening a browser.
 
+### Migrate an existing passphrase installation
+
+On Linux or WSL, stop the current passphrase service owner and run the plain
+command without an explicit vault mode:
+
+```sh
+./build/bin/codex-folio
+./build/bin/codex-folio --state-root /absolute/existing/state
+```
+
+When CodexFolio detects a non-empty SQLite database with the existing `CFPV`
+passphrase vault, choose **migrate now**. The next prompt reads the old
+passphrase once from private terminal input; it is not accepted in arguments or
+environment variables and is not persisted. The detached service retains the
+sole state-owner lock throughout the transition. It verifies the source state,
+creates a validated rotating migration backup, re-protects every allowlisted
+encrypted SQLite field through Linux Secret Service or the Windows-backed WSL
+provider, reloads that destination, authenticates all retained protected rows,
+and only then commits the non-secret storage selection. The same invocation
+continues to the picker and foreground launch.
+
+The transition preserves Identity Profiles, Selected Profile, Identity Home
+references, project paths, checkpoints, usage/history scopes and other retained
+state. Identity Home directories and Codex-owned authentication files remain in
+place and are neither copied nor rewritten; changing CodexFolio key protection
+does not require provider login. The old passphrase vault remains protected
+recovery material but is no longer selected after success. This workflow does
+not export credentials or create a portable backup.
+
+Choose **continue with passphrase storage** to start the ordinary locked
+passphrase owner without migrating, or **cancel** to leave state unchanged. If
+the old passphrase is wrong or destination protection is unavailable, the
+database stays on the old generation. The migration journal distinguishes an
+uncommitted transition from a database that already reached the destination:
+after interruption, the next plain start either verifies and completes the
+destination or restores the validated passphrase backup before retrying. A
+destination reopen failure also restores that backup. Never delete or edit
+`secure-storage-migration.json`, `codex-folio.vault`, the SQLite database, or
+the `recovery` directory to force progress. If a failed attempt left the locked
+detached owner running, stop that owner normally before rerunning migration.
+
 Recovery commands are intentionally separate from normal startup:
 
 ```sh
@@ -586,9 +627,9 @@ Secret Service prerequisites can be explained inline without exposing secrets.
 The selection is remembered only after the service becomes ready. Refusing or
 cancelling setup leaves it unset and is recoverable by rerunning the command.
 If a non-empty database and an existing Linux passphrase vault predate this
-selection record, startup returns `CF_VAULT_MIGRATION_REQUIRED` before native
-initialization. It does not create replacement key material; migration is the
-separate `#88` workflow.
+selection record, plain startup offers the guided migration above before native
+initialization. It does not create an empty replacement database or commit the
+destination choice before protected-state reopen succeeds.
 
 Ordinary startup never opens a browser, enrolls OS-login startup or grants
 periodic collection consent. Its printed dashboard address contains no
@@ -1207,10 +1248,16 @@ service operation still uses `vault unlock` from another local terminal. A
 failed or cancelled setup can be retried safely. Missing or wrong-context
 protected material is never replaced and no plaintext downgrade occurs.
 
-`CF_VAULT_MIGRATION_REQUIRED` means existing passphrase-protected state was
-detected before native initialization. Do not delete the database or vault:
-CodexFolio deliberately preserves both for the separately delivered guided
-migration.
+`CF_VAULT_MIGRATION_REQUIRED` means existing passphrase-protected state needs
+the guided transition, a migration was cancelled, or recovery could not yet
+prove a safe old or completed state. Stop any running passphrase owner and rerun
+the plain command. Choose migration and provide the old passphrase privately,
+or choose continued passphrase operation. Do not delete the database, vault,
+migration journal or recovery candidates. Wrong passphrases and destination
+failures leave the old protected state usable; interruption is resolved from
+the journal and validated backup. If automatic restore itself fails, use the
+reported `service recovery verify`, `list`, and explicit `restore` workflow
+rather than resetting state.
 
 ### Native service enrollment is unavailable
 

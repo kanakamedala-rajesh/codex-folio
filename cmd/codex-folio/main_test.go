@@ -148,6 +148,26 @@ func TestServiceVaultModeSelectionIsExplicitAndValidated(t *testing.T) {
 	}
 }
 
+func TestServiceMigrationTargetRequiresLockedPassphraseSource(t *testing.T) {
+	options, err := parseServiceOptions([]string{"--vault-mode", "passphrase", "--migrate-to=wsl-dpapi"})
+	if err != nil {
+		t.Fatalf("parseServiceOptions() error = %v", err)
+	}
+	if options.vaultMode != platform.VaultModePassphrase || options.migrationTarget != platform.VaultModeWSLDPAPI {
+		t.Fatalf("migration options = %#v", options)
+	}
+	for _, args := range [][]string{
+		{"--migrate-to", "secret-service"},
+		{"--vault-mode", "secret-service", "--migrate-to", "wsl-dpapi"},
+		{"--vault-mode", "passphrase", "--migrate-to", "passphrase"},
+		{"--vault-mode", "passphrase", "--migrate-to", "secret-service", "--migrate-to=wsl-dpapi"},
+	} {
+		if _, err := parseServiceOptions(args); err == nil {
+			t.Fatalf("parseServiceOptions(%q) accepted invalid migration options", args)
+		}
+	}
+}
+
 func TestServicePassphraseInputRequiresAnExplicitNonEmptyLine(t *testing.T) {
 	passphrase, err := readServiceVaultPassphrase(bytes.NewBufferString("correct horse battery staple\n"))
 	if err != nil {

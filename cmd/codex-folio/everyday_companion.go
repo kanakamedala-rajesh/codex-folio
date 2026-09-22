@@ -38,6 +38,9 @@ func startDetachedCompanion(paths platform.Paths, options serviceOptions) error 
 	if options.vaultMode != "" {
 		args = append(args, "--vault-mode", string(options.vaultMode))
 	}
+	if options.migrationTarget != "" {
+		args = append(args, "--migrate-to", string(options.migrationTarget))
+	}
 	if options.startupStatus != "" {
 		args = append(args, "--startup-status", options.startupStatus)
 	}
@@ -70,7 +73,23 @@ func startDetachedCompanion(paths platform.Paths, options serviceOptions) error 
 func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer, start companionProcessStarter) int {
 	resolved, err := resolveEverydaySecureStorage(paths, options)
 	if err != nil {
-		return writeServiceError(stderr, err)
+		if apperrors.Code(err) != apperrors.VaultMigrationRequired {
+			return writeServiceError(stderr, err)
+		}
+		target := platform.VaultModeSecretService
+		if platform.IsWSL2() {
+			target = platform.VaultModeWSLDPAPI
+		}
+		choice, choiceErr := promptPassphraseMigration(input, stdout, target)
+		if choiceErr != nil || choice == "q" {
+			_, _ = fmt.Fprintln(stderr, "codex-folio: secure-storage migration cancelled; existing passphrase state was not changed")
+			return writeServiceError(stderr, apperrors.New(apperrors.VaultMigrationRequired, errors.New("secure-storage migration was cancelled")))
+		}
+		resolved = options
+		resolved.vaultMode = platform.VaultModePassphrase
+		if choice == "1" {
+			resolved.migrationTarget = target
+		}
 	}
 	options = resolved
 	if options.vaultMode == platform.VaultModePassphrase {
@@ -85,7 +104,10 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 		if apperrors.Code(err) != apperrors.PlatformServiceMetadataInvalid {
 			return writeServiceError(stderr, err)
 		}
-		if connection, waitErr := waitForCompanionClient(paths, time.Second, ""); waitErr == nil {
+		if options.migrationTarget != "" {
+			return writeServiceError(stderr, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage")))
+		}
+		if connection, waitErr := waitForCompanionClient(paths, time.Second, "", false); waitErr == nil {
 			return useEverydayCompanion(connection, options, input, stdout, stderr)
 		}
 		return writeServiceError(stderr, err)
@@ -100,12 +122,33 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 		}
 		return useEverydayCompanion(connection, startedOptions, input, stdout, stderr)
 	}
+	if options.migrationTarget != "" {
+		return writeServiceError(stderr, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage")))
+	}
 
-	connection, err := waitForCompanionClient(paths, companionStartupTimeout, "")
+	connection, err := waitForCompanionClient(paths, companionStartupTimeout, "", false)
 	if err != nil {
 		return writeServiceError(stderr, err)
 	}
 	return useEverydayCompanion(connection, options, input, stdout, stderr)
+}
+
+func promptPassphraseMigration(input io.Reader, output io.Writer, target platform.VaultMode) (string, error) {
+	label := "Linux Secret Service"
+	if target == platform.VaultModeWSLDPAPI {
+		label = "Windows-backed WSL storage"
+	}
+	_, _ = fmt.Fprintf(output, "Existing passphrase-protected CodexFolio state can migrate to %s. Migration asks for the old passphrase once, preserves retained state and Identity Homes, and does not copy Codex credentials.\n", label)
+	_, _ = fmt.Fprintln(output, "Choose [1] migrate now, [2] continue with passphrase storage, or [q] cancel: ")
+	line, err := readCompanionSetupLine(input)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	choice := strings.ToLower(strings.TrimSpace(line))
+	if choice != "1" && choice != "2" && choice != "q" {
+		return "q", nil
+	}
+	return choice, nil
 }
 
 func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOptions, input io.Reader, stdout, stderr io.Writer, start companionProcessStarter) (platform.ServiceClient, serviceOptions, error) {
@@ -119,7 +162,7 @@ func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOpt
 			_ = os.Remove(statusPath)
 			return platform.ServiceClient{}, serviceOptions{}, err
 		}
-		connection, waitErr := waitForCompanionClient(paths, companionStartupTimeout, statusPath)
+		connection, waitErr := waitForCompanionClient(paths, companionStartupTimeout, statusPath, options.migrationTarget != "")
 		_ = os.Remove(statusPath)
 		if waitErr == nil {
 			options.startupStatus = ""
@@ -227,6 +270,11 @@ func useEverydayCompanion(connection platform.ServiceClient, options serviceOpti
 		}
 		return writeServiceError(stderr, apperrors.New(code, errors.New("companion state is not ready for launch")))
 	}
+	if options.migrationTarget != "" {
+		_, _ = fmt.Fprintln(stdout, "Secure-storage migration complete; existing protected state reopened through OS-backed protection.")
+		options.vaultMode = options.migrationTarget
+		options.migrationTarget = ""
+	}
 	dashboardAddress := nonSecretDashboardAddress(connection.Origin)
 	if _, err := client.Dashboard(context.Background()); err != nil {
 		_, _ = fmt.Fprintln(stderr, "codex-folio: warning: dashboard authorization is temporarily unavailable; foreground launch remains available")
@@ -248,19 +296,25 @@ func companionPassphraseInputWithTerminalCheck(input io.Reader, isTerminal func(
 	return promptInput.terminal
 }
 
-func waitForCompanionClient(paths platform.Paths, timeout time.Duration, startupStatus string) (platform.ServiceClient, error) {
+func waitForCompanionClient(paths platform.Paths, timeout time.Duration, startupStatus string, requireStartupReady bool) (platform.ServiceClient, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		connection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
-		if err == nil {
-			return connection, nil
-		}
-		lastErr = err
+		ready := false
 		if startupStatus != "" {
-			if code, statusErr := readCompanionStartupStatus(startupStatus); statusErr == nil && code != "" && code != companionStartupReady {
-				return platform.ServiceClient{}, apperrors.New(code, errors.New("detached companion startup failed"))
+			if code, statusErr := readCompanionStartupStatus(startupStatus); statusErr == nil {
+				if code != "" && code != companionStartupReady {
+					return platform.ServiceClient{}, apperrors.New(code, errors.New("detached companion startup failed"))
+				}
+				ready = code == companionStartupReady
 			}
+		}
+		if !requireStartupReady || ready {
+			connection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+			if err == nil {
+				return connection, nil
+			}
+			lastErr = err
 		}
 		if !time.Now().Before(deadline) {
 			return platform.ServiceClient{}, apperrors.New(apperrors.HTTPAPIServiceUnavailable, lastErr)
@@ -279,6 +333,8 @@ func resolveEverydaySecureStorage(paths platform.Paths, options serviceOptions) 
 }
 
 func resolveEverydaySecureStorageForPlatform(paths platform.Paths, options serviceOptions, wsl2 bool) (serviceOptions, error) {
+	explicitMode := options.vaultMode != ""
+	rememberedCompletedNative := false
 	if options.vaultMode == "" {
 		data, err := os.ReadFile(paths.SecureStorageFile)
 		switch {
@@ -291,6 +347,9 @@ func resolveEverydaySecureStorageForPlatform(paths platform.Paths, options servi
 				options.vaultMode = platform.VaultModePassphrase
 			} else if selection.Mode == string(platform.VaultModeWSLDPAPI) {
 				options.vaultMode = platform.VaultModeWSLDPAPI
+				rememberedCompletedNative = true
+			} else {
+				rememberedCompletedNative = true
 			}
 		case errors.Is(err, os.ErrNotExist):
 			if wsl2 && databaseAllowsVaultInitialization(paths.DatabaseFile) {
@@ -299,9 +358,18 @@ func resolveEverydaySecureStorageForPlatform(paths platform.Paths, options servi
 		case err != nil:
 			return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, err)
 		}
+	} else if data, readErr := os.ReadFile(paths.SecureStorageFile); readErr == nil {
+		var selection secureStorageSelection
+		rememberedCompletedNative = json.Unmarshal(data, &selection) == nil && selection.Version == secureStorageSelectionVersion && (selection.Mode == "native" || selection.Mode == string(platform.VaultModeWSLDPAPI))
 	}
-	if options.vaultMode != platform.VaultModePassphrase && existingPassphraseInstallation(paths) {
+	if existingPassphraseInstallation(paths) && rememberedCompletedNative && options.vaultMode == platform.VaultModePassphrase {
+		return serviceOptions{}, migrationRequiredError(errors.New("the retained passphrase vault belongs to a completed native-storage migration"))
+	}
+	if existingPassphraseInstallation(paths) && !rememberedCompletedNative && (!explicitMode || options.vaultMode != platform.VaultModePassphrase) {
 		return serviceOptions{}, apperrors.New(apperrors.VaultMigrationRequired, errors.New("existing passphrase-protected state must be migrated before native storage can start"))
+	}
+	if existingPassphraseInstallation(paths) && !rememberedCompletedNative && !explicitMode && options.vaultMode == platform.VaultModePassphrase {
+		return serviceOptions{}, apperrors.New(apperrors.VaultMigrationRequired, errors.New("existing passphrase-protected state is eligible for guided native-storage migration"))
 	}
 	return options, nil
 }

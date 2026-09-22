@@ -43,6 +43,10 @@ type serviceOptions struct {
 	enrolled  bool
 	candidate string
 	vaultMode platform.VaultMode
+	// migrationTarget is an internal plain-start handoff. The detached service
+	// remains the sole SQLite/vault writer and commits this target only after
+	// destination reopen verification.
+	migrationTarget platform.VaultMode
 	// startupStatus is an internal, non-secret handshake file used only by a
 	// detached plain-command start. It is never persisted as service config.
 	startupStatus string
@@ -115,6 +119,9 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 	}
 	if options.enrolled && command != "start" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--enrolled is only valid for service start", diagnosticSink)
+	}
+	if options.migrationTarget != "" && command != "start" {
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--migrate-to is only valid for service start", diagnosticSink)
 	}
 
 	paths, err := resolvePaths(options.stateRoot)
@@ -231,6 +238,18 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			if err := setServiceVaultMode(&options, strings.TrimPrefix(arg, "--vault-mode=")); err != nil {
 				return serviceOptions{}, err
 			}
+		case arg == "--migrate-to":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, errors.New("--migrate-to requires a value")
+			}
+			index++
+			if err := setServiceMigrationTarget(&options, args[index]); err != nil {
+				return serviceOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--migrate-to="):
+			if err := setServiceMigrationTarget(&options, strings.TrimPrefix(arg, "--migrate-to=")); err != nil {
+				return serviceOptions{}, err
+			}
 		case arg == "--startup-status":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
 				return serviceOptions{}, errors.New("--startup-status requires a value")
@@ -244,7 +263,22 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			return serviceOptions{}, errors.New("unexpected service argument")
 		}
 	}
+	if options.migrationTarget != "" && options.vaultMode != platform.VaultModePassphrase {
+		return serviceOptions{}, errors.New("--migrate-to requires --vault-mode passphrase")
+	}
 	return options, nil
+}
+
+func setServiceMigrationTarget(options *serviceOptions, value string) error {
+	if options.migrationTarget != "" {
+		return errors.New("only one migration target may be supplied")
+	}
+	mode := platform.VaultMode(strings.TrimSpace(value))
+	if mode != platform.VaultModeSecretService && mode != platform.VaultModeWSLDPAPI {
+		return errors.New("migration target must be secret-service or wsl-dpapi")
+	}
+	options.migrationTarget = mode
+	return nil
 }
 
 func setServiceVaultMode(options *serviceOptions, value string) error {
@@ -320,6 +354,9 @@ func runServiceStatusWithEnrollment(paths platform.Paths, options serviceOptions
 	}
 	health := httpapi.ServiceHealth{ServiceState: "stopped", VaultState: "unavailable", DatabaseState: httpapi.DatabaseStateNotChecked}
 	if status.Running {
+		if options.migrationTarget != "" {
+			return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+		}
 		connection, discoverErr := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
 		if discoverErr != nil {
 			return writeServiceErrorWithDiagnostics(stderr, discoverErr, diagnosticSink)
@@ -372,8 +409,14 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 }
 
 type serviceStopWaiter func(*platform.Owner, interface{ Close() error }, *httpapi.Server, serviceOptions, io.Writer, io.Writer, bool, <-chan error, diagnostics.Sink) int
+type serviceVaultMigrationRunner func(platform.Paths, platform.VaultMode, *store.Store) (*store.Store, error)
+type serviceVaultMigrationResumer func(platform.Paths, platform.VaultMode) (bool, error)
 
 func runServiceStartWithDependencies(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, openStore profileStoreOpener, waitForStop serviceStopWaiter) int {
+	return runServiceStartWithDependenciesAndMigration(paths, options, stdout, stderr, diagnosticSink, openStore, waitForStop, resumeInterruptedPassphraseMigration, migrateOpenedPassphraseStore)
+}
+
+func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, openStore profileStoreOpener, waitForStop serviceStopWaiter, resume serviceVaultMigrationResumer, migrate serviceVaultMigrationRunner) int {
 	if options.startupStatus != "" {
 		if err := validateCompanionStartupStatusPath(paths, options.startupStatus); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceUnavailable, err), diagnosticSink)
@@ -385,6 +428,9 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
+		if options.migrationTarget != "" {
+			return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+		}
 		if options.enrolled {
 			if !waitForServiceOwnerRelease(paths) {
 				return exitSuccess
@@ -402,6 +448,9 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 		if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
+				if options.migrationTarget != "" {
+					return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+				}
 				if options.enrolled {
 					if !waitForServiceOwnerRelease(paths) {
 						return exitSuccess
@@ -421,6 +470,34 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	record, interrupted, recordErr := readPassphraseMigrationRecord(paths)
+	if recordErr != nil {
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, recordErr, diagnosticSink)
+	}
+	if interrupted || options.migrationTarget != "" {
+		target := options.migrationTarget
+		if target == "" {
+			target = record.Target
+		}
+		completed, resumeErr := resume(paths, target)
+		if resumeErr != nil {
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, resumeErr, diagnosticSink)
+		}
+		if completed {
+			options.vaultMode = target
+			options.migrationTarget = ""
+		} else if interrupted {
+			options.vaultMode = platform.VaultModePassphrase
+		}
+	}
+	if options.vaultMode == platform.VaultModePassphrase {
+		if _, err := resolveEverydaySecureStorage(paths, options); err != nil {
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 	compose := func(stateStore *store.Store) (httpapi.OperationalServices, error) {
 		attachServiceDiagnosticStore(diagnosticSink, stateStore)
 		return composeServiceOperationalServices(paths, stateStore, options.enrolled)
@@ -430,8 +507,17 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 	var serviceLifecycle *lockedServiceLifecycle
 	if options.vaultMode == platform.VaultModePassphrase {
 		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openStore, compose)
+		if options.migrationTarget != "" {
+			target := options.migrationTarget
+			serviceLifecycle.SetMigrator(func(sourceStore *store.Store) (*store.Store, error) {
+				return migrate(paths, target, sourceStore)
+			})
+		}
 		stateOwner = serviceLifecycle
-		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+		if options.migrationTarget == "" {
+			err = rememberEverydaySecureStorage(paths, options.vaultMode)
+		}
+		if err != nil {
 			_ = stateOwner.Close()
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -469,7 +555,11 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
 	serverOptions.TerminalCommandBase = []string{executable}
-	serverOptions.TerminalCommandSuffix = serviceTerminalCommandSuffix(paths, options.vaultMode)
+	terminalMode := options.vaultMode
+	if options.migrationTarget != "" {
+		terminalMode = options.migrationTarget
+	}
+	serverOptions.TerminalCommandSuffix = serviceTerminalCommandSuffix(paths, terminalMode)
 	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
 		serverOptions.ServiceEnrollment = func() (state, mechanism string, available bool) {
 			status, statusErr := enrollment.Status()

@@ -218,10 +218,25 @@ absolute Linux path; secrets are never passed through that environment value.
 An existing non-empty state root without a selection remains on its legacy
 provider and is never initialized with a replacement WSL key.
 
-An existing Linux passphrase installation without a recorded native choice
-stops with `CF_VAULT_MIGRATION_REQUIRED`. Its database and vault are left
-untouched; the guided migration that preserves that state is delivered
-separately.
+For an existing Linux or WSL passphrase installation, stop its running service
+owner and run the plain command without `--vault-mode`. Choose **migrate now**,
+then enter the old passphrase once through the private terminal prompt.
+CodexFolio's detached service creates a validated recovery backup, moves every
+allowlisted protected database field to the supported native destination,
+reopens and authenticates the retained state, and only then remembers the new
+storage choice. Profiles, selection, history, checkpoints and Identity Homes
+remain; Codex-owned authentication files are not opened or copied. The picker
+and foreground Codex launch continue in the same command after success.
+
+Choose **continue with passphrase storage** to keep ordinary explicit
+passphrase operation, or **cancel** to change nothing. A wrong passphrase,
+unavailable destination, failed verification or interrupted transition never
+initializes an empty database or replaces the old vault key. Rerunning the plain
+command either completes the verified destination or restores the validated
+passphrase backup before offering migration again. `CF_VAULT_MIGRATION_REQUIRED`
+means this recoverable transition still needs attention; do not delete the
+database, passphrase vault, migration journal or recovery directory. This is a
+same-installation protection change, not portable credential backup.
 
 This automatic on-demand lifetime does not install OS-login startup or enable
 periodic collection. Those remain separate, explicit choices. To stop this
