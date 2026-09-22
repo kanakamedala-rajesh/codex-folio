@@ -44,33 +44,33 @@ Choose a name you have never used. Do not point it at `~/.codex`, a repository,
 or your existing CodexFolio state. Keep `--state-root "$CF_STATE"` on every
 stateful command below; omitting it targets the default setup.
 
-## 3. Start and unlock
+## 3. Start with Windows-backed WSL protection
 
 In **Terminal A**:
 
 ```sh
-./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode passphrase
+./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode wsl-dpapi
 ```
 
 Keep Terminal A open. In **Terminal B**:
 
 ```sh
-./build/bin/codex-folio vault unlock --state-root "$CF_STATE"
 ./build/bin/codex-folio service status --state-root "$CF_STATE" --json
 ./build/bin/codex-folio profile list --state-root "$CF_STATE"
 ```
 
-For a new state directory, the first unlock initializes its vault using the
-passphrase you enter privately. Remember it: later unlocks use the same value.
-There is no browser passphrase field. Never put the passphrase in a command,
-screenshot, report, or environment variable.
+The build places `codex-folio-wsl-vault.exe` beside the Linux executable. The
+service sends envelope-key bytes to that one-shot helper only over bounded
+stdin/stdout pipes and stores only DPAPI-protected key material in the distinct
+WSL vault file. It uses the interoperating Windows user's DPAPI context; it does
+not isolate Linux processes that can act as that Windows user.
 
 Open the one-time URL printed in Terminal A. Confirm the vault is unlocked and
 Profiles is empty. If the link expires or was already used, run this in Terminal B
 and open the new URL:
 
 ```sh
-./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode passphrase
+./build/bin/codex-folio service start --state-root "$CF_STATE" --vault-mode wsl-dpapi
 ```
 
 This reuses the owner and exits after printing a fresh link. Treat that URL as
@@ -202,13 +202,21 @@ browser.
 
 For a fresh ordinary installation, run the same plain command without
 `--vault-mode`. CodexFolio initializes the current user's supported native
-protection (Windows DPAPI, macOS Keychain, or Linux Secret Service), remembers
+protection (Windows DPAPI, macOS Keychain, Linux Secret Service, or
+Windows-user DPAPI through the bundled WSL2 helper), remembers
 that non-secret choice, and later starts reach the picker without an application
 passphrase. If Linux Secret Service is locked or unavailable, the same flow
 offers retry, the repeated-interaction passphrase alternative, or cancellation;
 cancellation changes no selection and rerunning retries setup. Windows and
 macOS report the native prerequisite to unlock or restore. CodexFolio never
 downgrades to plaintext or a local unprotected key.
+
+On WSL2, a fresh plain start chooses `wsl-dpapi`. Restore Windows
+interoperability or the bundled helper when setup reports it unavailable. A
+custom installation may set `CODEX_FOLIO_WSL_VAULT_HELPER` to the helper's
+absolute Linux path; secrets are never passed through that environment value.
+An existing non-empty state root without a selection remains on its legacy
+provider and is never initialized with a replacement WSL key.
 
 An existing Linux passphrase installation without a recorded native choice
 stops with `CF_VAULT_MIGRATION_REQUIRED`. Its database and vault are left

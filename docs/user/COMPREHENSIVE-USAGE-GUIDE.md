@@ -212,24 +212,36 @@ suite exercises active, idle, reset, retry, restart, coalescing, lock, API, CLI,
 and browser persistence paths; native runtime resource qualification remains
 part of the platform evidence recorded for release qualification.
 
-Supported vault modes are platform Secret Service and passphrase mode:
+Supported Linux vault modes are Secret Service, the Windows-backed WSL2 bridge,
+and passphrase mode:
 
 ```sh
 ./build/bin/codex-folio service start --vault-mode secret-service
+./build/bin/codex-folio service start --vault-mode wsl-dpapi
 ./build/bin/codex-folio service start --vault-mode passphrase
 ```
 
 Plain startup selects and initializes the supported protection for the current
-user: Windows DPAPI, macOS Keychain, or Linux Secret Service. A small versioned
+user: Windows DPAPI, macOS Keychain, Linux Secret Service, or Windows-user
+DPAPI through the bundled WSL2 helper. A small versioned
 configuration record remembers only the selected mechanism, never key material.
 Qualified repeat starts therefore reach selection without an application
 passphrase. If Linux Secret Service is locked or unavailable, plain startup
 offers an inline choice to retry, select the explicit passphrase alternative,
 or cancel without changing state. The passphrase vault starts locked again
 after every new service session. CodexFolio never silently falls back to
-plaintext storage or an app-local unprotected key. WSL native-provider bridging
-is a separate capability; until qualified, use the explicit Linux passphrase
-alternative when Secret Service is unavailable.
+plaintext storage or an app-local unprotected key.
+
+On fresh WSL2 state, plain startup selects `wsl-dpapi`. Build and Linux release
+artifacts place the size-bounded one-shot `codex-folio-wsl-vault.exe` helper
+beside the Linux executable, so users do not assemble a helper command or rely
+on `/mnt/c` or the default Windows PATH. Custom layouts may set
+`CODEX_FOLIO_WSL_VAULT_HELPER` to an absolute Linux path; that value identifies
+the executable and carries no secret. Requests and responses use bounded binary
+stdin/stdout, and the helper receives no secret argument or secret environment
+variable. The app-local WSL vault file contains only DPAPI-protected envelope-key
+material. Protection belongs to the interoperating Windows user and is not a
+separate Linux-user isolation boundary.
 
 Passphrase-backed `service start` acquires the single state owner and publishes
 the dashboard without opening the vault or database. Unlock the running service
@@ -1180,15 +1192,20 @@ Run `service status --json`. Check whether another owner is running, whether the
 state path is writable, and whether the selected vault mode is available. Do not
 delete lock or database files to force startup; use the reported recovery path.
 
-On WSL/headless Linux, `CF_VAULT_UNAVAILABLE` from a bare command normally means
-the default Linux Secret Service is absent. Plain startup offers retry,
-passphrase storage, or cancellation in that same flow. You may also pass
+On WSL2, `CF_VAULT_UNAVAILABLE` from a fresh bare command means Windows
+interoperability or `codex-folio-wsl-vault.exe` is missing or inaccessible.
+Restore the same Windows-user context, reinstall the helper beside
+`codex-folio`, or configure its absolute Linux path with
+`CODEX_FOLIO_WSL_VAULT_HELPER`, then retry. Plain startup offers retry,
+passphrase storage, or cancellation in that same flow. On non-WSL headless
+Linux, the corresponding error normally means Secret Service is unavailable.
+You may also pass
 `--vault-mode passphrase` explicitly. This selects the encrypted passphrase
 vault rather than plaintext and records that choice only after readiness. Plain
 startup performs the one private unlock in the same flow; explicit foreground
 service operation still uses `vault unlock` from another local terminal. A
-failed or cancelled setup can be retried safely. Windows-interoperable WSL
-protection is delivered separately.
+failed or cancelled setup can be retried safely. Missing or wrong-context
+protected material is never replaced and no plaintext downgrade occurs.
 
 `CF_VAULT_MIGRATION_REQUIRED` means existing passphrase-protected state was
 detected before native initialization. Do not delete the database or vault:

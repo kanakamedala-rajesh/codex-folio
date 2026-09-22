@@ -126,7 +126,11 @@ func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOpt
 			return connection, options, nil
 		}
 		code := apperrors.Code(waitErr)
-		if options.vaultMode != "" || runtime.GOOS != "linux" || (code != apperrors.VaultUnavailable && code != apperrors.VaultLocked) {
+		if options.vaultMode == platform.VaultModeWSLDPAPI && (!databaseAllowsVaultInitialization(paths.DatabaseFile) || regularFileExists(paths.WSLVaultFile)) {
+			writeNativeSecureStorageGuidance(stderr, code)
+			return platform.ServiceClient{}, serviceOptions{}, secureStorageGuidanceError(code, waitErr)
+		}
+		if (options.vaultMode != "" && options.vaultMode != platform.VaultModeWSLDPAPI) || runtime.GOOS != "linux" || (code != apperrors.VaultUnavailable && code != apperrors.VaultLocked) {
 			writeNativeSecureStorageGuidance(stderr, code)
 			return platform.ServiceClient{}, serviceOptions{}, secureStorageGuidanceError(code, waitErr)
 		}
@@ -143,10 +147,32 @@ func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOpt
 	return platform.ServiceClient{}, serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, errors.New("secure-storage setup did not complete"))
 }
 
+func regularFileExists(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0
+}
+
+func databaseAllowsVaultInitialization(path string) bool {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return err == nil && (!info.Mode().IsRegular() || info.Size() == 0)
+}
+
 func promptSecureStorageRecovery(input io.Reader, output io.Writer) (string, error) {
-	_, _ = fmt.Fprintln(output, "Linux Secret Service is unavailable or locked. Unlock your login keyring and retry, or choose passphrase storage.")
+	if platform.IsWSL2() {
+		_, _ = fmt.Fprintln(output, "Windows-backed secure storage is unavailable. Restore WSL interoperability, reinstall the bundled codex-folio-wsl-vault.exe helper (or configure CODEX_FOLIO_WSL_VAULT_HELPER to its absolute path), and retry, or choose passphrase storage.")
+		_, _ = fmt.Fprintln(output, "Windows-backed protection uses the interoperating Windows user's DPAPI context; it does not isolate other processes acting as that Windows user.")
+	} else {
+		_, _ = fmt.Fprintln(output, "Linux Secret Service is unavailable or locked. Unlock your login keyring and retry, or choose passphrase storage.")
+	}
 	_, _ = fmt.Fprintln(output, "Passphrase storage requires interaction on every companion restart.")
-	_, _ = fmt.Fprint(output, "Choose [1] retry Secret Service, [2] use passphrase, or [q] cancel: ")
+	retryLabel := "Secret Service"
+	if platform.IsWSL2() {
+		retryLabel = "Windows-backed storage"
+	}
+	_, _ = fmt.Fprintf(output, "Choose [1] retry %s, [2] use passphrase, or [q] cancel: ", retryLabel)
 	line, err := readCompanionSetupLine(input)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
@@ -249,18 +275,27 @@ type secureStorageSelection struct {
 }
 
 func resolveEverydaySecureStorage(paths platform.Paths, options serviceOptions) (serviceOptions, error) {
+	return resolveEverydaySecureStorageForPlatform(paths, options, platform.IsWSL2())
+}
+
+func resolveEverydaySecureStorageForPlatform(paths platform.Paths, options serviceOptions, wsl2 bool) (serviceOptions, error) {
 	if options.vaultMode == "" {
 		data, err := os.ReadFile(paths.SecureStorageFile)
 		switch {
 		case err == nil:
 			var selection secureStorageSelection
-			if json.Unmarshal(data, &selection) != nil || selection.Version != secureStorageSelectionVersion || (selection.Mode != "native" && selection.Mode != string(platform.VaultModePassphrase)) {
+			if json.Unmarshal(data, &selection) != nil || selection.Version != secureStorageSelectionVersion || (selection.Mode != "native" && selection.Mode != string(platform.VaultModeWSLDPAPI) && selection.Mode != string(platform.VaultModePassphrase)) {
 				return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, errors.New("secure-storage selection is invalid"))
 			}
 			if selection.Mode == string(platform.VaultModePassphrase) {
 				options.vaultMode = platform.VaultModePassphrase
+			} else if selection.Mode == string(platform.VaultModeWSLDPAPI) {
+				options.vaultMode = platform.VaultModeWSLDPAPI
 			}
 		case errors.Is(err, os.ErrNotExist):
+			if wsl2 && databaseAllowsVaultInitialization(paths.DatabaseFile) {
+				options.vaultMode = platform.VaultModeWSLDPAPI
+			}
 		case err != nil:
 			return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, err)
 		}
@@ -291,7 +326,7 @@ func existingPassphraseInstallation(paths platform.Paths) bool {
 
 func rememberEverydaySecureStorage(paths platform.Paths, mode platform.VaultMode) error {
 	selected := "native"
-	if mode == platform.VaultModePassphrase {
+	if mode == platform.VaultModePassphrase || mode == platform.VaultModeWSLDPAPI {
 		selected = string(mode)
 	}
 	encoded, err := json.Marshal(secureStorageSelection{Version: secureStorageSelectionVersion, Mode: selected})
@@ -416,16 +451,24 @@ func secureStorageGuidanceError(code string, cause error) error {
 }
 
 func writeNativeSecureStorageGuidance(output io.Writer, code string) {
-	if code != apperrors.VaultUnavailable && code != apperrors.VaultLocked {
+	writeNativeSecureStorageGuidanceForPlatform(output, code, runtime.GOOS, platform.IsWSL2())
+}
+
+func writeNativeSecureStorageGuidanceForPlatform(output io.Writer, code, goos string, wsl2 bool) {
+	if code != apperrors.VaultUnavailable && code != apperrors.VaultLocked && code != apperrors.VaultKeyInvalid {
 		return
 	}
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		_, _ = fmt.Fprintln(output, "codex-folio: unlock your login Keychain, allow CodexFolio access, and rerun codex-folio")
 	case "windows":
 		_, _ = fmt.Fprintln(output, "codex-folio: sign in as the Windows user that owns this state and rerun codex-folio")
 	default:
-		_, _ = fmt.Fprintln(output, "codex-folio: unlock your Linux login keyring and ensure Secret Service plus secret-tool are available, then rerun codex-folio")
+		if wsl2 {
+			_, _ = fmt.Fprintln(output, "codex-folio: restore WSL interoperability and the bundled Windows vault helper; sign in as the Windows user that created this state, and restore the existing protected WSL vault material from backup if it is missing or corrupt, then rerun codex-folio; CodexFolio will not replace the key or downgrade storage")
+		} else {
+			_, _ = fmt.Fprintln(output, "codex-folio: unlock your Linux login keyring and ensure Secret Service plus secret-tool are available, then rerun codex-folio")
+		}
 	}
 }
 

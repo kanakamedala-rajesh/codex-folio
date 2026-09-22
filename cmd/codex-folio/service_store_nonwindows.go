@@ -42,6 +42,17 @@ func openServiceStoreWithVaultMode(paths platform.Paths, mode platform.VaultMode
 			return nil, err
 		}
 		return stateStore, nil
+	case platform.VaultModeWSLDPAPI:
+		if !platform.IsWSL2() {
+			return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("Windows-backed storage requires WSL2"))
+		}
+		secureVault, err := platform.NewWSLDPAPIVaultWithOptions(paths.WSLVaultFile, platform.WSLDPAPIOptions{
+			AllowCreate: allowVaultInitialization(paths.DatabaseFile),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return store.OpenWithVault(paths.DatabaseFile, secureVault)
 	default:
 		return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("unsupported vault mode"))
 	}

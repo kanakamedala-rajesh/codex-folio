@@ -252,8 +252,8 @@ func setServiceVaultMode(options *serviceOptions, value string) error {
 		return errors.New("only one vault-mode selection may be supplied")
 	}
 	mode := platform.VaultMode(strings.TrimSpace(value))
-	if mode != platform.VaultModeSecretService && mode != platform.VaultModePassphrase {
-		return errors.New("vault mode must be secret-service or passphrase")
+	if mode != platform.VaultModeSecretService && mode != platform.VaultModePassphrase && mode != platform.VaultModeWSLDPAPI {
+		return errors.New("vault mode must be secret-service, wsl-dpapi, or passphrase")
 	}
 	options.vaultMode = mode
 	return nil
@@ -479,8 +479,10 @@ func runServiceStartWithDependencies(paths platform.Paths, options serviceOption
 			return status.State, status.Mechanism, status.Available
 		}
 	}
-	serverOptions.ServiceLifecycle = serviceLifecycle
-	serverOptions.StartLocked = serviceLifecycle != nil
+	if serviceLifecycle != nil {
+		serverOptions.ServiceLifecycle = serviceLifecycle
+		serverOptions.StartLocked = true
+	}
 	server, err := httpapi.NewServer(serverOptions)
 	if err != nil {
 		_ = stateOwner.Close()

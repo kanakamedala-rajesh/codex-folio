@@ -123,6 +123,7 @@ func TestServiceVaultModeSelectionIsExplicitAndValidated(t *testing.T) {
 		mode platform.VaultMode
 	}{
 		{name: "secret service", args: []string{"--vault-mode", "secret-service"}, mode: platform.VaultModeSecretService},
+		{name: "WSL DPAPI", args: []string{"--vault-mode", "wsl-dpapi"}, mode: platform.VaultModeWSLDPAPI},
 		{name: "passphrase equals", args: []string{"--vault-mode=passphrase"}, mode: platform.VaultModePassphrase},
 	}
 	for _, tt := range tests {

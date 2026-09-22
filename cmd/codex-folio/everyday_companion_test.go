@@ -309,6 +309,66 @@ func TestPlainStartupDetectsExistingPassphraseStateBeforeNativeInitialization(t 
 	}
 }
 
+func TestFreshWSLStartupSelectsWindowsBackedStorage(t *testing.T) {
+	paths := launchTestPaths(t)
+	options, err := resolveEverydaySecureStorageForPlatform(paths, serviceOptions{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.vaultMode != platform.VaultModeWSLDPAPI {
+		t.Fatalf("vault mode = %q", options.vaultMode)
+	}
+	if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+		t.Fatal(err)
+	}
+	remembered, err := resolveEverydaySecureStorageForPlatform(paths, serviceOptions{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remembered.vaultMode != platform.VaultModeWSLDPAPI {
+		t.Fatalf("remembered vault mode = %q", remembered.vaultMode)
+	}
+}
+
+func TestExistingLinuxStateWithoutSelectionKeepsLegacyProviderOnWSL(t *testing.T) {
+	paths := launchTestPaths(t)
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.DatabaseFile, []byte("existing database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveEverydaySecureStorageForPlatform(paths, serviceOptions{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.vaultMode != "" {
+		t.Fatalf("legacy state changed provider to %q", options.vaultMode)
+	}
+	if _, err := os.Stat(paths.WSLVaultFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy state created WSL material: %v", err)
+	}
+}
+
+func TestEstablishedWSLSecureStorageGuidanceCoversEveryRecoveryCondition(t *testing.T) {
+	for _, code := range []string{apperrors.VaultUnavailable, apperrors.VaultKeyInvalid} {
+		var output strings.Builder
+		writeNativeSecureStorageGuidanceForPlatform(&output, code, "linux", true)
+		guidance := output.String()
+		for _, required := range []string{
+			"restore WSL interoperability",
+			"bundled Windows vault helper",
+			"Windows user that created this state",
+			"restore the existing protected WSL vault material from backup if it is missing or corrupt",
+			"will not replace the key or downgrade storage",
+		} {
+			if !strings.Contains(guidance, required) {
+				t.Errorf("guidance for %s = %q, missing %q", code, guidance, required)
+			}
+		}
+	}
+}
+
 func TestCompanionStartupHandshakeAcceptsOnlyPrivateRuntimeFile(t *testing.T) {
 	paths := launchTestPaths(t)
 	statusPath, err := prepareCompanionStartupStatus(paths)

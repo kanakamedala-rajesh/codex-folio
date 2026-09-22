@@ -8,4 +8,5 @@ type VaultMode string
 const (
 	VaultModeSecretService VaultMode = "secret-service"
 	VaultModePassphrase    VaultMode = "passphrase"
+	VaultModeWSLDPAPI      VaultMode = "wsl-dpapi"
 )
