@@ -145,6 +145,20 @@ Copy its Project ID, then replace `PROJECT_ID` below:
 ./build/bin/codex-folio launch work --project PROJECT_ID --state-root "$CF_STATE" --
 ```
 
+For the shorter picker path, run CodexFolio from the repository where you want
+Codex to start:
+
+```sh
+./build/bin/codex-folio --state-root "$CF_STATE"
+```
+
+The current Selected Profile is marked with `*`. Press Enter to launch it,
+enter another displayed number to select and launch that profile, or enter `q`
+to cancel. The picker reuses Terminal A's unlocked service and does not change
+an already running launch. Use the explicit `launch` form above when you need a
+Project ID, Codex arguments, or a particular alias without changing Selected
+Profile.
+
 Complete a short real interaction, then exit Codex normally. This uses the Work
 account and its quota. A `--help` launch only proves process startup, not a model
 session. All CodexFolio options belong **before** `--`.
@@ -168,10 +182,22 @@ It covers all six pages, dialogs, saves/cancels, real launches and handoff,
 with separate destructive and platform checks. Record actual results; the
 checklist is not a claim that every feature currently passes.
 
-To stop, exit any Codex session and press `Ctrl-C` in Terminal A. Restart with
-the same state root and vault mode, unlock in Terminal B, and open the new URL.
-Profiles and retained history should still be present. A new service session
-requires a fresh unlock.
+To stop, exit any Codex session and press `Ctrl-C` in Terminal A. You can then
+exercise the standalone passphrase picker without manually starting a service:
+
+```sh
+./build/bin/codex-folio --state-root "$CF_STATE" --vault-mode passphrase
+```
+
+Enter the vault passphrase once, then press Enter on the highlighted Selected
+Profile. CodexFolio keeps that unlocked state owner usable until the foreground
+Codex child exits, including any terminal input already supplied after the
+selection line. This ticket does not keep a standalone owner alive after the
+child exits; persistent automatic companion startup is a later milestone slice.
+
+For the dashboard restart check, start with the same state root and vault mode,
+unlock in Terminal B, and open the new URL. Profiles and retained history should
+still be present. A new service session requires a fresh unlock.
 
 For another completely fresh run, stop the owner and choose a new path such as
 `$HOME/codex-folio-manual-02`. Preserve the previous directory for comparison.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
 	"venkatasudha.com/codex-folio/internal/launch"
+	"venkatasudha.com/codex-folio/internal/platform"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 const (
@@ -31,12 +34,25 @@ func runWithServicePathResolver(args []string, stdout, stderr io.Writer, metadat
 }
 
 func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver) int {
+	return runWithServicePathResolverAndCodexResolverAndForegroundDependencies(
+		args, os.Stdin, stdout, stderr, metadata, resolvePaths, resolver,
+		openServiceStoreWithVaultMode, newForegroundProcess,
+		func() profile.Authenticator { return codexadapter.NewAuthenticator() },
+	)
+}
+
+func runWithServicePathResolverAndCodexResolverAndForegroundDependencies(args []string, input io.Reader, stdout, stderr io.Writer, metadata buildinfo.Metadata, resolvePaths servicePathResolver, resolver launch.ExecutableResolver, openStore profileStoreOpener, newProcess launchProcessFactory, newAuthenticator profileAuthenticatorFactory) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "--state-root") || strings.HasPrefix(args[0], "--vault-mode") {
 		options, err := parseSelectionOptions(args)
 		if err != nil || options.json {
 			return writeSelectionUsageDiagnostic(stderr, "invalid interactive selection arguments", newServiceDiagnosticSink())
 		}
-		return runInteractiveSelectionWithOptions(os.Stdin, stdout, stderr, resolvePaths, openServiceStoreWithVaultMode, func(alias string) int {
+		promptInput, childInput := foregroundInputs(input)
+		var authenticator profile.Authenticator
+		if newAuthenticator != nil {
+			authenticator = newAuthenticator()
+		}
+		return runInteractiveSelectionWithOptionsAndAuthenticator(promptInput, stdout, stderr, resolvePaths, openStore, func(alias string) int {
 			launchArgs := []string{alias}
 			if options.stateRoot != nil {
 				launchArgs = append(launchArgs, "--state-root", *options.stateRoot)
@@ -44,8 +60,11 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 			if options.vaultMode != "" {
 				launchArgs = append(launchArgs, "--vault-mode", string(options.vaultMode))
 			}
-			return runLaunch(append(launchArgs, "--"), stdout, stderr, resolvePaths, resolver)
-		}, newServiceDiagnosticSink(), options)
+			return runLaunchWithInputAndDependenciesAndOwnerOptionsAndAuthenticator(
+				append(launchArgs, "--"), childInput, stdout, stderr, resolvePaths, resolver,
+				openStore, newProcess, newServiceDiagnosticSink(), newAuthenticator, platform.OwnerOptions{},
+			)
+		}, newServiceDiagnosticSink(), options, authenticator)
 	}
 
 	command := args[0]
@@ -98,6 +117,23 @@ func runWithServicePathResolverAndCodexResolver(args []string, stdout, stderr io
 		fmt.Fprintln(stderr, "Run 'codex-folio --help' for usage.")
 		return exitUsage
 	}
+}
+
+func foregroundInputs(input io.Reader) (*bufio.Reader, io.Reader) {
+	if file, ok := input.(*os.File); ok {
+		return bufio.NewReader(singleByteReader{reader: file}), file
+	}
+	reader := bufferedReader(input)
+	return reader, reader
+}
+
+type singleByteReader struct{ reader io.Reader }
+
+func (reader singleByteReader) Read(buffer []byte) (int, error) {
+	if len(buffer) > 1 {
+		buffer = buffer[:1]
+	}
+	return reader.reader.Read(buffer)
 }
 
 func runVersion(args []string, stdout, stderr io.Writer, metadata buildinfo.Metadata) int {

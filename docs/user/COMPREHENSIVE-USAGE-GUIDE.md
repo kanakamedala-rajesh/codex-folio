@@ -244,6 +244,14 @@ commands then route through that state owner. If no service is running, append
 `--vault-mode passphrase` to each vault-dependent command and enter the same
 passphrase through that command's existing input path.
 
+The plain profile picker is one complete exception to the need for separate
+selection and launch commands. When no service is running,
+`codex-folio --vault-mode passphrase` reads one explicit passphrase, holds the
+temporary unlocked owner through selection and foreground Codex launch, and
+closes it after the child exits. It does not cache the passphrase or persist the
+temporary owner. When a service is already running, the same picker reuses it
+without reopening state.
+
 Recovery commands are intentionally separate from normal startup:
 
 ```sh
@@ -519,7 +527,33 @@ commands, transcripts, prompts/responses, tool output, raw diffs or canonical
 project paths enter these views. **Back to Sessions** restores the originating
 row's focus and filters.
 
-## Foreground launch
+## Profile picker and foreground launch
+
+Run the plain command from the working directory where Codex should start:
+
+```sh
+./build/bin/codex-folio
+./build/bin/codex-folio --state-root /absolute/path --vault-mode passphrase
+```
+
+The picker lists only eligible Identity Profiles and marks Selected Profile
+with `*`. Press Enter to launch that highlighted profile, enter a displayed
+number to make an explicit selection and launch it, or enter `q` to cancel. If
+there is no eligible Selected Profile, Enter fails rather than substituting a
+different identity; choose an eligible number deliberately or complete profile
+setup. Selection affects future launches only and never changes a running
+Launch Profile.
+
+The picker and foreground child share one buffered terminal input stream, so
+input after the selection line remains available to Codex. Standard output,
+standard error, native signal forwarding, working directory and child exit
+status retain the explicit launch behavior. A standalone passphrase invocation
+prompts once and keeps its unlocked state owner through child exit. Automatic
+persistence after child exit is not implemented by this slice; use an already
+running service when later dashboard access is required.
+
+For automation, an explicit alias, a Project ID, or Codex arguments, use the
+advanced launch form:
 
 ```sh
 ./build/bin/codex-folio launch work --
