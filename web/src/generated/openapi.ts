@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "3cd0e91ca3b78bb80cf09bf41f8b83d46b77addd6c6e4422b4d521a27a72e439" as const;
+  "c143b5d7511bbffa8f19ea0ab0c86b22a12b5b5bef91e3093a0e978add1a53c6" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -778,6 +778,8 @@ export interface ProfileSummary {
   selected: boolean;
   configuration_pack: string;
   last_successful_refresh: string;
+  setup_operation: string;
+  setup_error_code: string;
 }
 
 export interface ProfilesResponse {

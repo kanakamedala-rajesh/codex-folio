@@ -3,7 +3,7 @@ import { URL } from "node:url";
 import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
@@ -138,6 +138,26 @@ async function profileAction(name) {
   const response = await completed;
   assert.equal(response.status(), 200, await response.text());
   return response;
+}
+async function runTerminalProfile(alias, method = "browser", expectedCode = "", action = "add") {
+  // The harness holds the command token; the browser page never receives it.
+  const response = await page.request.post(
+    new URL("/api/v1/command/profile-authentication", link).href,
+    {
+      headers: {
+        "X-CodexFolio-Command-Token": "browser-fixture-command",
+        Origin: new URL(link).origin,
+      },
+      data: { action, alias, auth_method: method, non_interactive: true },
+    },
+  );
+  assert.equal(response.status(), 200);
+  const events = (await response.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.equal(events.at(-1)?.code ?? "", expectedCode);
+  return events;
 }
 async function lifecycleAction(name, action) {
   const completed = page.waitForResponse(
@@ -1552,9 +1572,11 @@ try {
         true,
       );
       await profileAction("Continue in Codex");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      assert.match(await page.locator("main").innerText(), /profile add Imported --browser/);
+      await runTerminalProfile("Imported");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
       assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       check(
         "an imported profile requires an explicit local Identity Home choice and fake-Codex authentication before becoming Ready",
       );
@@ -1568,10 +1590,10 @@ try {
       await page.getByText("Pending · Resume setup", { exact: true }).first().waitFor();
       await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
       await profileAction("Continue in Codex");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      await runTerminalProfile("Research");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      assert.match(await page.locator("main").innerText(), /Found · 0\.153\.4/);
       assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
       const profileLaunchBefore = await (
@@ -1718,6 +1740,28 @@ try {
         "configuration assignment, conflict preview, cancellation, rejected application, reviewed promotion and successful projection",
       );
 
+      const unsignedReferencedHome = mkdtempSync(join(output, "referenced-awaiting-auth-"));
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Referenced pending");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("ReferencePending");
+      await page.getByLabel("Reference an existing Identity Home", { exact: true }).check();
+      await page
+        .getByLabel("Existing Identity Home path", { exact: true })
+        .fill(unsignedReferencedHome);
+      writeFileSync(control, "profile-needs-auth");
+      await profileAction("Use existing sign-in");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      assert.match(
+        await page.locator("main").innerText(),
+        /profile add ReferencePending --browser/,
+      );
+      assert.doesNotMatch(
+        await page.locator("main").innerText(),
+        new RegExp(unsignedReferencedHome),
+      );
+      await runTerminalProfile("ReferencePending");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
       await page.getByLabel("Display Name", { exact: true }).fill("Referenced");
       await page.getByLabel("CLI Alias", { exact: true }).fill("Referenced");
@@ -1726,7 +1770,6 @@ try {
       const reusedSignIn = await profileAction("Use existing sign-in");
       assert.equal(reusedSignIn.request().postDataJSON().action, "prepare");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       assert.doesNotMatch(await page.locator("main").innerText(), new RegExp(referencedHome));
 
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
@@ -1735,7 +1778,10 @@ try {
       await page.getByLabel("Device code", { exact: true }).check();
       await profileAction("Continue in Codex");
       await page
-        .getByText("Continue device-code authentication in your terminal:", { exact: true })
+        .getByText(
+          "Run this command in your terminal. This page will update when Codex finishes:",
+          { exact: true },
+        )
         .waitFor();
       assert.match(
         await page.locator("main").innerText(),
@@ -1752,12 +1798,32 @@ try {
           response.url().endsWith("/api/v1/profiles") && response.request().method() === "POST",
       );
       await page.getByRole("button", { name: "Continue in Codex", exact: true }).click();
-      assert.equal((await failed).status(), 409);
+      assert.equal((await failed).status(), 200);
+      await runTerminalProfile("Failure", "browser", "CF_PROFILE_AUTHENTICATION_FAILED");
+      await page.getByText("Codex authentication did not complete.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       const failedProfile = page.getByRole("button", { name: "Failure", exact: true });
       await failedProfile.waitFor();
       await failedProfile.click();
       assert.match(await page.locator("main").innerText(), /Pending · Resume setup/);
+
+      writeFileSync(control, "profile-auth-cancel");
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Interrupted");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Interrupted");
+      await profileAction("Continue in Codex");
+      await runTerminalProfile("Interrupted", "browser", "CF_PROFILE_AUTHENTICATION_CANCELLED");
+      await page.getByText("Codex authentication was cancelled.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Interrupted", exact: true }).click();
+      await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
+      writeFileSync(control, "supported");
+      await profileAction("Continue in Codex");
+      await runTerminalProfile("Interrupted");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      check(
+        "dashboard terminal handoff observes completion, failure and interrupted Pending resume without auth output",
+      );
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
       await testNarrowFocusVisibility(page, check);
@@ -1773,8 +1839,8 @@ try {
       await capture("reauth-narrow", 390, 844);
       await page.setViewportSize({ width: 1440, height: 1000 });
       await profileAction("Continue in Codex");
+      await runTerminalProfile("Work", "browser", "", "reauthenticate");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Personal", exact: true }).click();
       const selectedProfile = page.waitForResponse(
         (response) =>

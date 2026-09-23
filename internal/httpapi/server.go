@@ -225,6 +225,8 @@ type Server struct {
 	terminalCommandSuffix []string
 	operational           atomic.Bool
 	activationMu          sync.Mutex
+	profileOperationMu    sync.Mutex
+	profileOperations     map[string]profileOperation
 
 	bootstrapToken     []byte
 	bootstrapDigest    [sha256.Size]byte

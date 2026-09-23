@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/profile"
 )
 
@@ -61,15 +62,26 @@ func TestBrowserProfileUsesUnboundedLastSuccessfulRefreshProjection(t *testing.T
 }
 
 type browserProfileAuthenticationStub struct {
-	request CommandProfileAuthenticationRequest
-	status  profile.Status
+	request                 CommandProfileAuthenticationRequest
+	status                  profile.Status
+	onAuthenticate          func()
+	missingReauthentication bool
 }
 
 func (service *browserProfileAuthenticationStub) Authenticate(_ context.Context, request CommandProfileAuthenticationRequest, output io.Writer) (CommandProfileAuthenticationResult, error) {
 	service.request = request
+	if request.Action == "reauthenticate" && service.missingReauthentication {
+		return CommandProfileAuthenticationResult{}, apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotFound)
+	}
+	if service.onAuthenticate != nil {
+		service.onAuthenticate()
+	}
 	status := service.status
 	if status == "" {
 		status = profile.StatusReady
+		if request.NonInteractive && request.AuthMethod == "" && request.ReferencedHomePath == "" {
+			status = profile.StatusPending
+		}
 	}
 	_, _ = io.WriteString(output, "device code: must-not-reach-browser\n")
 	return CommandProfileAuthenticationResult{Setup: &profile.SetupResult{
@@ -82,6 +94,85 @@ func (service *browserProfileAuthenticationStub) Authenticate(_ context.Context,
 		Stages:               profile.SetupStages{Discovery: true, Home: true, Authentication: true, Validation: true, Selection: true},
 		AuthenticationMethod: profile.AuthMethodBrowser,
 	}}, nil
+}
+
+func TestFailedCommandReauthenticationWithoutProfileDoesNotBlockBrowserAdd(t *testing.T) {
+	authentication := &browserProfileAuthenticationStub{status: profile.StatusPending, missingReauthentication: true}
+	registry, err := profile.NewRegistry(&registryRepository{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{profileAuthentication: authentication, profiles: registry}
+	command := httptest.NewRequest(http.MethodPost, "/api/v1/command/profile-authentication", strings.NewReader(`{"action":"reauthenticate","alias":"New"}`))
+	command.Header.Set("Content-Type", "application/json")
+	commandResponse := httptest.NewRecorder()
+	server.commandProfileAuthentication(commandResponse, command)
+	if operation := server.getProfileOperation("New"); operation.State != "failed" || operation.Code != apperrors.ProfileNotSelectable {
+		t.Fatalf("missing-profile command operation = %#v", operation)
+	}
+	request := httptest.NewRequest(http.MethodPost, testProfilesPath, strings.NewReader(`{"action":"add","alias":"New","display_name":"New","identity_home_mode":"managed","auth_method":"browser"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.browserProfileAuthentication(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"outcome":"terminal_required"`) {
+		t.Fatalf("browser add after missing reauthentication = %d/%s", response.Code, response.Body.String())
+	}
+	if authentication.request.Action != "add" || !authentication.request.NonInteractive {
+		t.Fatalf("browser add request = %#v", authentication.request)
+	}
+	if operation := server.getProfileOperation("New"); operation.State != "waiting" || operation.Code != "" {
+		t.Fatalf("browser add operation = %#v", operation)
+	}
+}
+
+func TestBrowserPreparationReservesAliasAndPreservesTerminalState(t *testing.T) {
+	authentication := &browserProfileAuthenticationStub{status: profile.StatusPending}
+	repository := &registryRepository{profiles: []profile.IdentityProfile{{
+		ID: "profile-2", Alias: "Research", DisplayName: "Research", Status: profile.StatusPending,
+		IdentityHomeID: "home-2", IdentityHomeOwnership: profile.HomeOwnershipManaged,
+	}}}
+	registry, err := profile.NewRegistry(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{profileAuthentication: authentication, profiles: registry}
+	authentication.onAuthenticate = func() {
+		if operation := server.getProfileOperation("research"); operation.State != "running" {
+			t.Errorf("operation during preparation = %#v", operation)
+		}
+		if server.beginProfileOperation("Research") {
+			t.Error("terminal operation started during browser preparation")
+		}
+	}
+	requestBody := `{"action":"add","alias":"Research","display_name":"Research","identity_home_mode":"managed","auth_method":"browser"}`
+	prepare := func() *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, testProfilesPath, strings.NewReader(requestBody))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.browserProfileAuthentication(response, request)
+		return response
+	}
+	if response := prepare(); response.Code != http.StatusOK {
+		t.Fatalf("initial preparation = %d/%s", response.Code, response.Body.String())
+	}
+	if operation := server.getProfileOperation("Research"); operation.State != "waiting" {
+		t.Fatalf("operation after preparation = %#v", operation)
+	}
+	for _, terminalState := range []profileOperation{{State: "waiting"}, {State: "running"}, {State: "ready"}, {State: "failed", Code: "CF_PROFILE_AUTHENTICATION_FAILED"}} {
+		server.setProfileOperation("Research", terminalState)
+		authentication.request = CommandProfileAuthenticationRequest{}
+		response := prepare()
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"outcome":"terminal_required"`) {
+			t.Errorf("retry during %s = %d/%s", terminalState.State, response.Code, response.Body.String())
+		}
+		if authentication.request.Action != "" {
+			t.Errorf("retry during %s invoked preparation", terminalState.State)
+		}
+		if got := server.getProfileOperation("Research"); got != terminalState {
+			t.Errorf("retry changed terminal operation from %#v to %#v", terminalState, got)
+		}
+	}
 }
 
 func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testing.T) {
@@ -160,7 +251,7 @@ func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testi
 		t.Fatal(err)
 	}
 	createdBody := readBody(t, created)
-	if created.StatusCode != http.StatusOK || !strings.Contains(createdBody, `"outcome":"ready"`) || !strings.Contains(createdBody, `"codex_version":"0.153.4"`) || !strings.Contains(createdBody, `"warnings":[]`) {
+	if created.StatusCode != http.StatusOK || !strings.Contains(createdBody, `"outcome":"terminal_required"`) || !strings.Contains(createdBody, `"codex_version":"0.153.4"`) || !strings.Contains(createdBody, `"warnings":[]`) || !strings.Contains(createdBody, `profile add Research --browser`) {
 		t.Fatalf("created status/body = %d/%s", created.StatusCode, createdBody)
 	}
 	for _, excluded := range []string{"must-not-reach-browser", "/secret/bin/codex", "/secret/new-home", "home-2"} {
@@ -168,7 +259,7 @@ func TestAuthorizedProfilesAPIReturnsSafeInventoryAndMutatesThroughCSRF(t *testi
 			t.Fatalf("authentication response exposed %q: %s", excluded, createdBody)
 		}
 	}
-	if authentication.request.Action != "add" || authentication.request.AuthMethod != profile.AuthMethodBrowser || authentication.request.NonInteractive {
+	if authentication.request.Action != "add" || authentication.request.AuthMethod != "" || !authentication.request.NonInteractive {
 		t.Fatalf("authentication request = %#v", authentication.request)
 	}
 

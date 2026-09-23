@@ -1407,6 +1407,14 @@ export function App() {
             ) : route === "Profiles" ? (
               <Profiles
                 profiles={profiles}
+                refreshProfiles={async () => {
+                  const inventory = await api.getProfiles();
+                  setProfiles(inventory.profiles);
+                  return inventory.profiles;
+                }}
+                completeSetup={async () => {
+                  await load(true);
+                }}
                 packs={packs}
                 quarantined={quarantined}
                 busy={busy}

@@ -91,6 +91,9 @@ func (authenticator dashboardProfileAuthenticator) Authenticate(_ context.Contex
 	if string(mode) == "profile-auth-fail" {
 		return profile.ErrAuthenticationFailed
 	}
+	if string(mode) == "profile-auth-cancel" {
+		return profile.ErrAuthCancelled
+	}
 	_, _ = io.WriteString(request.Stdout, "browser-auth-secret-must-not-reach-dashboard")
 	if string(mode) == "profile-needs-auth" {
 		return os.WriteFile(authenticator.control, []byte("supported"), 0600)

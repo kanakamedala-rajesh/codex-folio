@@ -102,7 +102,11 @@ flow; the browser may remember the previous account.
 You can instead use **Profiles → Add Identity Profile**, with the same aliases
 and Managed home choice. For device-code sign-in, use `--device-code` instead
 of `--browser`. Finish authentication through installed Codex, never through a
-CodexFolio credential form. If setup remains Pending, resume the same alias.
+CodexFolio credential form. **Continue in Codex** immediately shows a copyable
+command for the selected method and this installation. Run it in your terminal;
+Profiles shows waiting and running status, then marks the profile Ready after
+the command completes. If setup fails or is interrupted, the profile remains
+Pending. Reopen it and run the shown command again with the same alias.
 
 All three profiles should become Ready. An alias is a local label, not proof
 of which remote account was authenticated.

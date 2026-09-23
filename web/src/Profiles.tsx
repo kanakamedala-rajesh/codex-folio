@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useId, useState, type RefObject } from "react";
 import {
   UsageRefreshError,
   type ConfigurationPackRequest,
@@ -16,6 +16,8 @@ import { ConfigurationPacks } from "./ConfigurationPacks";
 
 type Props = {
   profiles: ProfileSummary[];
+  refreshProfiles: () => Promise<ProfileSummary[]>;
+  completeSetup: () => Promise<void>;
   packs: ConfigurationPackSummary[];
   quarantined: ProfileLifecycleRecord[];
   busy: boolean;
@@ -89,6 +91,8 @@ function profileFailure(error: unknown) {
 
 export function Profiles({
   profiles,
+  refreshProfiles,
+  completeSetup,
   packs,
   quarantined,
   busy,
@@ -111,6 +115,22 @@ export function Profiles({
   const [form, setForm] = useState<Form>(emptyForm);
   const [result, setResult] = useState<ProfileAuthenticationResponse | null>(null);
   const [localMessage, setLocalMessage] = useState("");
+  const pollProfiles = useEffectEvent(async () => {
+    const inventory = await refreshProfiles();
+    if (!result?.terminal_command) return;
+    const item = inventory.find((profile) => profile.alias === result.profile.alias);
+    if (item?.setup_operation === "ready" && item.status === "ready") {
+      setResult(null);
+      setLocalMessage(c.readyMessage);
+      close();
+      await completeSetup();
+    } else if (item?.setup_operation === "failed") {
+      setLocalMessage(profileErrorCopy[item.setup_error_code ?? ""] ?? c.failed);
+    } else if (item?.setup_operation === "running") {
+      setLocalMessage(c.terminalRunning);
+    }
+  });
+  const setupProfile = profiles.find((item) => item.alias === result?.profile.alias);
   const current =
     profiles.find((item) => item.alias === selectedAlias) ??
     profiles.find((item) => item.selected) ??
@@ -120,6 +140,15 @@ export function Profiles({
   useEffect(() => {
     heading.current?.focus();
   }, [heading, view]);
+
+  useEffect(() => {
+    if (!result?.terminal_command) return;
+    const timer = window.setInterval(
+      () => void pollProfiles().catch(() => setLocalMessage(c.failed)),
+      1500,
+    );
+    return () => window.clearInterval(timer);
+  }, [result?.terminal_command]);
 
   function open(next: typeof view, item?: ProfileSummary) {
     setSelectedAlias(item?.alias ?? "");
@@ -209,7 +238,10 @@ export function Profiles({
     }
   }
 
-  async function runAuthentication(action: "add" | "prepare" | "reauthenticate") {
+  async function runAuthentication(
+    action: "add" | "prepare" | "reauthenticate",
+    closeAfterPrepare = false,
+  ) {
     try {
       const response = await authenticate({
         action,
@@ -229,7 +261,8 @@ export function Profiles({
             ? c.pendingMessage
             : c.terminalRequired,
       );
-      if (response.outcome === "pending") close();
+      if (closeAfterPrepare || response.outcome === "ready" || response.outcome === "pending")
+        close();
     } catch (error) {
       setLocalMessage(profileFailure(error));
     }
@@ -502,7 +535,7 @@ export function Profiles({
                   <button
                     className={buttonClass}
                     disabled={busy || !form.alias || !form.displayName}
-                    onClick={() => void runAuthentication("prepare")}
+                    onClick={() => void runAuthentication("prepare", true)}
                   >
                     {c.saveClose}
                   </button>
@@ -513,15 +546,21 @@ export function Profiles({
               </div>
               {result?.terminal_command && (
                 <section className="mt-5 max-w-[75ch] border-y border-warning py-4 text-warning">
+                  <p role="status" aria-live="polite">
+                    {setupProfile?.setup_operation === "running"
+                      ? c.terminalRunning
+                      : c.terminalWaiting}
+                  </p>
                   <code className="wrap-anywhere text-ink">{result.terminal_command}</code>
                   <button
                     className={`${buttonClass} mt-4 block`}
-                    disabled={busy}
                     onClick={() =>
-                      void runAuthentication(reauthentication ? "reauthenticate" : "add")
+                      void navigator.clipboard
+                        .writeText(result.terminal_command)
+                        .catch(() => setLocalMessage(c.copyFailed))
                     }
                   >
-                    {c.checkTerminal}
+                    {c.copyCommand}
                   </button>
                 </section>
               )}

@@ -365,6 +365,15 @@ validation is interrupted, the profile stays Pending and is neither selectable
 nor launchable. Run the same add flow or open the Pending entry in Profiles to
 resume and revalidate it.
 
+In the dashboard, **Continue in Codex** prepares the profile and immediately
+shows a command for the chosen browser or device-code method. Copy and run it
+in a terminal; Codex owns the login stream. The dashboard observes the terminal
+operation through the local service and refreshes the inventory when the
+profile becomes Ready. It shows safe waiting, running, or failure status without
+the login output. The command keeps this installation's state-root context.
+An interrupted or failed command leaves the profile Pending; reopen it to
+resume with the same alias and home. Checking status does not start login again.
+
 ### Register a Referenced Identity Home
 
 Use an absolute existing home only when you understand its contents and ownership:

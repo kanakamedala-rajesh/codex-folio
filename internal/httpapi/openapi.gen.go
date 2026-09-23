@@ -21,7 +21,7 @@ const (
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "3cd0e91ca3b78bb80cf09bf41f8b83d46b77addd6c6e4422b4d521a27a72e439"
+	ContractSourceSHA256      = "c143b5d7511bbffa8f19ea0ab0c86b22a12b5b5bef91e3093a0e978add1a53c6"
 	BootstrapPath             = "/api/v1/bootstrap"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
 	DiagnosticsPath           = "/api/v1/diagnostics"
@@ -794,17 +794,19 @@ type ProfileSetupStages struct {
 }
 
 type ProfileSummary struct {
-	ProfileId             string `json:"profile_id"`
-	Alias                 string `json:"alias"`
-	DisplayName           string `json:"display_name"`
-	LoginIdentity         string `json:"login_identity"`
-	Workspace             string `json:"workspace"`
-	Status                string `json:"status"`
-	IdentityHomeMode      string `json:"identity_home_mode"`
-	AuthenticationMethod  string `json:"authentication_method"`
-	Selected              bool   `json:"selected"`
-	ConfigurationPack     string `json:"configuration_pack"`
-	LastSuccessfulRefresh string `json:"last_successful_refresh"`
+	ProfileId             string  `json:"profile_id"`
+	Alias                 string  `json:"alias"`
+	DisplayName           string  `json:"display_name"`
+	LoginIdentity         string  `json:"login_identity"`
+	Workspace             string  `json:"workspace"`
+	Status                string  `json:"status"`
+	IdentityHomeMode      string  `json:"identity_home_mode"`
+	AuthenticationMethod  string  `json:"authentication_method"`
+	Selected              bool    `json:"selected"`
+	ConfigurationPack     string  `json:"configuration_pack"`
+	LastSuccessfulRefresh string  `json:"last_successful_refresh"`
+	SetupOperation        *string `json:"setup_operation,omitempty"`
+	SetupErrorCode        *string `json:"setup_error_code,omitempty"`
 }
 
 type ProfilesResponse struct {

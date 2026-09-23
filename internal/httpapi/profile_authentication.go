@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,41 @@ type profileAuthenticationEvent struct {
 	Output string                              `json:"output,omitempty"`
 	Result *CommandProfileAuthenticationResult `json:"result,omitempty"`
 	Code   string                              `json:"code,omitempty"`
+}
+
+// profileOperation contains only browser-safe progress for terminal setup.
+type profileOperation struct {
+	State string
+	Code  string
+}
+
+func (server *Server) getProfileOperation(alias string) profileOperation {
+	server.profileOperationMu.Lock()
+	defer server.profileOperationMu.Unlock()
+	return server.profileOperations[strings.ToLower(alias)]
+}
+
+func (server *Server) setProfileOperation(alias string, operation profileOperation) {
+	server.profileOperationMu.Lock()
+	defer server.profileOperationMu.Unlock()
+	if server.profileOperations == nil {
+		server.profileOperations = make(map[string]profileOperation)
+	}
+	server.profileOperations[strings.ToLower(alias)] = operation
+}
+
+func (server *Server) beginProfileOperation(alias string) bool {
+	server.profileOperationMu.Lock()
+	defer server.profileOperationMu.Unlock()
+	if server.profileOperations == nil {
+		server.profileOperations = make(map[string]profileOperation)
+	}
+	key := strings.ToLower(alias)
+	if server.profileOperations[key].State == "running" {
+		return false
+	}
+	server.profileOperations[key] = profileOperation{State: "running"}
+	return true
 }
 
 type profileAuthenticationWriter struct {
@@ -84,8 +120,21 @@ func (server *Server) commandProfileAuthentication(response http.ResponseWriter,
 		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
 		return
 	}
+	if input.Action != "add" && input.Action != "reauthenticate" {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ProfileSetupInvalid)
+		return
+	}
+	if err := profile.ValidateAlias(input.Alias); err != nil {
+		server.writeAPIError(response, http.StatusBadRequest, diagnostics.CodeFor(err, apperrors.ProfileAliasInvalid))
+		return
+	}
+	if !server.beginProfileOperation(input.Alias) {
+		server.writeAPIError(response, http.StatusConflict, apperrors.ProfileSetupInvalid)
+		return
+	}
 	flusher, ok := response.(http.Flusher)
 	if !ok {
+		server.setProfileOperation(input.Alias, profileOperation{State: "failed", Code: apperrors.HTTPAPIServiceUnavailable})
 		server.writeAPIError(response, http.StatusInternalServerError, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
@@ -95,6 +144,11 @@ func (server *Server) commandProfileAuthentication(response http.ResponseWriter,
 	flusher.Flush()
 	stream := &profileAuthenticationWriter{encoder: json.NewEncoder(response), flusher: flusher}
 	result, authErr := server.profileAuthentication.Authenticate(request.Context(), input, stream)
+	operation := profileOperation{State: "ready"}
+	if authErr != nil {
+		operation = profileOperation{State: "failed", Code: diagnostics.CodeFor(authErr, apperrors.ProfileAuthenticationFailed)}
+	}
+	server.setProfileOperation(input.Alias, operation)
 	event := profileAuthenticationEvent{Result: &result}
 	if authErr != nil {
 		event.Result = nil

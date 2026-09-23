@@ -585,7 +585,9 @@
         },
         "selected": { "type": "boolean" },
         "configuration_pack": { "type": "string" },
-        "last_successful_refresh": { "type": "string" }
+        "last_successful_refresh": { "type": "string" },
+        "setup_operation": { "enum": ["", "waiting", "running", "ready", "failed"], "type": "string" },
+        "setup_error_code": { "type": "string" }
       },
       "required": [
         "profile_id",
