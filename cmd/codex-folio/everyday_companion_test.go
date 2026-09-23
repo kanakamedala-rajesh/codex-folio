@@ -253,7 +253,7 @@ func TestPlainStartupOffersRecoverablePassphraseAlternativeAfterSecretServiceFai
 	}
 
 	code, stdout, stderr = runPlainCompanionTest(paths, passphrase+"\n", starter)
-	if code == exitSuccess || starts != 2 || !strings.Contains(stdout, "dashboard address:") || strings.Contains(stderr, "CF_VAULT_LOCKED") {
+	if code != exitSuccess || starts != 2 || !strings.Contains(stdout, "dashboard address:") || !strings.Contains(stdout, "No ready Identity Profiles") || strings.Contains(stderr, "CF_VAULT_LOCKED") {
 		t.Fatalf("resumed fallback = code:%d starts:%d stdout:%q stderr:%q", code, starts, stdout, stderr)
 	}
 	if _, err := os.Stat(paths.VaultFile); err != nil {

@@ -94,60 +94,63 @@ func runInteractiveSelectionWithOptionsAndAuthenticator(input io.Reader, stdout,
 		if len(profiles) == 0 {
 			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
 		}
-		_, _ = io.WriteString(stdout, "Choose an Identity Profile (q to cancel):\n")
-		for index, candidate := range profiles {
-			marker := " "
-			if candidate.Selected {
-				marker = "*"
-			}
-			_, _ = fmt.Fprintf(stdout, "%s %d. %s (%s)\n", marker, index+1, candidate.DisplayName, candidate.Alias)
-		}
-		_, _ = io.WriteString(stdout, "> ")
-		line, err := inputReader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		if errors.Is(err, io.EOF) && line == "" {
-			return nil
-		}
-		choice := strings.TrimSpace(line)
-		if strings.EqualFold(choice, "q") {
-			return nil
-		}
-		chosen := ""
-		if choice == "" {
-			for _, candidate := range profiles {
+		for {
+			_, _ = io.WriteString(stdout, "Choose an Identity Profile (q to cancel):\n")
+			for index, candidate := range profiles {
+				marker := " "
 				if candidate.Selected {
-					chosen = candidate.Alias
-					break
+					marker = "*"
 				}
+				_, _ = fmt.Fprintf(stdout, "%s %d. %s (%s)\n", marker, index+1, candidate.DisplayName, candidate.Alias)
 			}
-			if chosen == "" {
+			_, _ = io.WriteString(stdout, "> ")
+			line, err := inputReader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			if errors.Is(err, io.EOF) && line == "" {
+				return nil
+			}
+			choice := strings.TrimSpace(line)
+			if strings.EqualFold(choice, "q") {
+				return nil
+			}
+			chosen := ""
+			if choice == "" {
+				for _, candidate := range profiles {
+					if candidate.Selected {
+						chosen = candidate.Alias
+						break
+					}
+				}
+				if chosen == "" {
+					return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+				}
+			} else {
+				index, parseErr := strconv.Atoi(choice)
+				if parseErr != nil || index < 1 || index > len(profiles) {
+					_, _ = io.WriteString(stderr, "codex-folio: choose a listed number or q to cancel\n")
+					continue
+				}
+				chosen = profiles[index-1].Alias
+			}
+			result, err := client.SetSelection(context.Background(), chosen)
+			if err != nil {
+				return err
+			}
+			if result.Selected == nil {
 				return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
 			}
-		} else {
-			index, parseErr := strconv.Atoi(choice)
-			if parseErr != nil || index < 1 || index > len(profiles) {
-				return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+			if result.Warning != "" {
+				_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", result.Warning)
 			}
-			chosen = profiles[index-1].Alias
+			if launchSelected == nil {
+				return apperrors.New(apperrors.LaunchPlanInvalid, errors.New("foreground launcher is unavailable"))
+			}
+			launched = true
+			launchCode = launchSelected(result.Selected.Alias)
+			return nil
 		}
-		result, err := client.SetSelection(context.Background(), chosen)
-		if err != nil {
-			return err
-		}
-		if result.Selected == nil {
-			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
-		}
-		if result.Warning != "" {
-			_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", result.Warning)
-		}
-		if launchSelected == nil {
-			return apperrors.New(apperrors.LaunchPlanInvalid, errors.New("foreground launcher is unavailable"))
-		}
-		launched = true
-		launchCode = launchSelected(result.Selected.Alias)
-		return nil
 	})
 	if code != exitSuccess || !launched {
 		return code

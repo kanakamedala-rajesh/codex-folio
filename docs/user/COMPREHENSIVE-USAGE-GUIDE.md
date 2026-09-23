@@ -619,6 +619,22 @@ exit. Dashboard authorization or analytics refresh failures may emit a concise
 warning without blocking an otherwise safe launch; identity selection,
 configuration, vault readiness and sole state ownership still fail closed.
 
+When no profile is ready, the same plain command offers `r` to register an
+existing Codex home as Referenced, `m` to create a separate Managed home, or a
+number to resume a Pending profile or reauthenticate an unavailable profile.
+It asks for an alias and display name, then invokes the installed Codex login
+flow and validates readiness through the persistent service. Automatic setup
+checks an existing referenced home's valid sign-in before opening another
+login; `b` and `d` explicitly request Codex browser or device login. The
+referenced choice explains that direct Codex and CodexFolio share the home and
+that removal only deregisters it. The existing path can be entered explicitly;
+Enter uses the current `CODEX_HOME` or the default `~/.codex` when that directory
+exists. The managed choice creates a separate home and never copies credentials.
+Cancellation or failed authentication leaves the profile Pending; rerun the
+plain command and choose its Resume entry. Only a validated Ready profile
+appears in the launch picker. After setup, the picker offers a foreground
+launch. Registration alone does not consent to history import.
+
 On the first native start the detached service is the only process allowed to
 open the vault, create protected key material, and open SQLite. A private
 one-shot startup handshake returns only a readiness marker or stable redacted

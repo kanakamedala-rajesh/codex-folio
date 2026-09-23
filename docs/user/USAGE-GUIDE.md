@@ -5,6 +5,15 @@ CodexFolio state directory without deleting your existing setup. CodexFolio
 organizes local profiles and launches your installed Codex; Codex owns account
 sign-in and provider communication.
 
+For a first foreground launch, build the CLI and run `./build/bin/codex-folio`
+with no subcommand. When no profile is ready, choose `r` to register an existing
+Codex home in place or `m` to create an isolated Managed Identity Home. Give it
+an alias and display name, complete Codex's sign-in if needed, then choose the
+ready profile in the picker to launch. A referenced home remains shared with
+direct Codex; registration does not import history. Pending setup can be resumed
+by running the plain command again. The longer manual workflow below is useful
+for checking multiple accounts and usage evidence.
+
 The commands below use **WSL/Linux with bash or zsh**, two terminals, and a
 browser. Run them from the CodexFolio repository root. For Windows/macOS and the
 full feature reference, see the [comprehensive guide](COMPREHENSIVE-USAGE-GUIDE.md).
