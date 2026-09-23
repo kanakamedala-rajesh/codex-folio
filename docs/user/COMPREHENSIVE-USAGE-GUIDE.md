@@ -473,21 +473,72 @@ Start the service and copy its printed URL into a local browser:
 ./build/bin/codex-folio service start
 ```
 
-The service binds loopback only. The URL contains a single-use bootstrap token
+The service binds loopback only and serves the dashboard over HTTPS. The URL contains a single-use bootstrap token
 that is exchanged for a short-lived browser session and then removed from the
 address bar. Browser mutations require the authenticated session, same-origin
 Host/Origin checks, and CSRF protection. Production assets are embedded and do
 not load scripts, styles, or fonts from a CDN.
 
-While a passphrase service is locked, the authenticated dashboard exposes only
-browser-safe service, vault, and database state plus fixed CLI guidance. It does
-not receive paths, vault metadata, recovery contents, provider errors, or the
-command credential, and it does not invoke state-owning workflows. If database
-open or migration requires recovery, stop the foreground owner and run the
-displayed existing `service recovery` commands before starting again.
+### Trust the local HTTPS certificate once
 
-Do not publish, message, log, or bookmark bootstrap URLs. If authorization is
-expired or already used, run `service start` again to receive a new link.
+After the service is ready and the vault is unlocked, run `codex-folio service
+certificate` (add `--state-root PATH` if you use one). It prints the path to
+`dashboard-root-ca.pem` and its SHA-256 fingerprint. The file contains only a
+public, installation-specific root certificate; the HTTPS server key remains
+encrypted in the vault, and the root signing key is discarded after setup.
+Check the fingerprint shown by the command before importing that certificate
+into the browser or operating-system trust store used for the dashboard. The
+browser will otherwise block the HTTPS page. Do not use a browser's unsafe
+certificate-warning bypass: that would also allow a different local service
+to impersonate the dashboard while CodexFolio is stopped.
+
+- **Windows:** Import the printed certificate into the current user's Trusted
+  Root Certification Authorities store using Windows certificate management.
+  On WSL2, import it in Windows, where the browser runs; the PEM file is under
+  the WSL distribution's state root and may be copied to a temporary Windows
+  location for import. [Microsoft documents the trusted-root store](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-root-certification-authorities-certificate-store).
+- **macOS:** Add the certificate to Keychain Access and explicitly enable trust
+  for website TLS. [Apple documents certificate import](https://support.apple.com/en-nz/guide/keychain-access/kyca2431/mac)
+  and [trust settings](https://support.apple.com/en-ie/guide/keychain-access/kychn001/mac).
+- **Linux:** Import the certificate into the chosen browser's trusted
+  authorities. System trust stores and sandboxed browsers can differ; confirm
+  the browser accepts the certificate without a warning. [Ubuntu documents
+  system trust-store behavior and its browser limitation](https://ubuntu.com/server/docs/how-to/security/install-a-root-ca-certificate-in-the-trust-store/).
+  Firefox also [documents its own CA import options](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+
+The certificate is specific to this installation. A state reset or certificate
+replacement requires importing the new root; remove the old root from the
+browser or OS trust store. `service certificate --json` provides the same
+public path and fingerprint for scripts. CodexFolio never changes browser or
+system certificate trust automatically. For passphrase installations, the CLI
+unlocks the vault before a browser can use the stable HTTPS dashboard. While
+locked, the service uses a temporary certificate only for its pinned CLI
+unlock connection; the browser must wait for the unlocked address.
+
+After opening the one-time link, choose **Trust this browser** only on a browser
+you control. This explicit choice allows the current local dashboard address
+printed by ordinary startup to reopen without another bootstrap link. Trusted
+browsers renew short-lived sessions automatically, including after ordinary
+service, browser, or machine restarts. A new browser or private window still
+needs a fresh one-time link. Trust stays local and does not expose vault or
+command credentials to the browser.
+
+In **Settings → Trusted browser**, choose **Forget this browser** to remove
+this browser's trust, or **Revoke all browsers** to invalidate every trusted
+browser. Either action ends the current dashboard session; use `service start`
+for a new one-time link. Clearing browser state also prevents renewal from that
+browser. An installation authorization reset invalidates existing trust. These
+controls do not change a running foreground Codex session.
+
+While a passphrase service is locked, only the pinned CLI transport is
+available for status and unlock; the browser dashboard opens after successful
+CLI unlock. If database open or migration requires recovery, stop the
+foreground owner and run the existing `service recovery` commands before
+starting again.
+
+Do not publish, message, log, or bookmark bootstrap URLs. After each service restart, use the current non-secret address printed by
+ordinary startup for a browser you explicitly trusted. If authorization is expired or already used, run `service start` again
+to receive a new link.
 
 Implemented dashboard flows include:
 

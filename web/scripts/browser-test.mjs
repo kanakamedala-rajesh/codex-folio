@@ -296,6 +296,22 @@ try {
     await page.goto(link);
     await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
     assert.ok(!page.url().includes("bootstrap="));
+    await page.getByRole("heading", { name: "Trusted browser", exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Trust this browser" }).count(), 1);
+    check("new browser offers explicit trust without granting it automatically");
+    if (phase === "smoke") {
+      await page.getByRole("button", { name: "Trust this browser" }).click();
+      await page.getByText("This browser is trusted. You can revoke it in Settings.").waitFor();
+      await page.reload();
+      await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Trust this browser" }).count(), 0);
+      const privateContext = await browser.newContext();
+      const privatePage = await privateContext.newPage();
+      await privatePage.goto(new URL("/", link).href);
+      await privatePage.getByText("Open a one-time dashboard link from your terminal.").waitFor();
+      await privateContext.close();
+      check("trusted browser reopens without bootstrap; private browser remains unauthorized");
+    }
     await page
       .getByText("Refresh failed. Last-known values keep their original capture times.", {
         exact: true,
@@ -2043,6 +2059,17 @@ try {
       await missing.close();
       check("missing bootstrap has actionable terminal guidance; CSRF-less mutation rejected");
       check("bootstrap replay rejected");
+    }
+    if (phase === "smoke") {
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Settings", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Forget this browser" }).click();
+      await page.getByRole("heading", { name: "Relaunch CodexFolio", exact: true }).waitFor();
+      await page.reload();
+      await page.getByText("Open a one-time dashboard link from your terminal.").waitFor();
+      check("forgetting the browser ends the session and prevents reopening");
     }
   }
   assert.deepEqual(errors, []);

@@ -108,7 +108,7 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 			return writeServiceError(stderr, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage")))
 		}
 		if connection, waitErr := waitForCompanionClient(paths, time.Second, "", false); waitErr == nil {
-			return useEverydayCompanion(connection, options, input, stdout, stderr)
+			return useEverydayCompanion(paths, connection, options, input, stdout, stderr)
 		}
 		return writeServiceError(stderr, err)
 	}
@@ -120,7 +120,7 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 		if startErr != nil {
 			return writeServiceError(stderr, startErr)
 		}
-		return useEverydayCompanion(connection, startedOptions, input, stdout, stderr)
+		return useEverydayCompanion(paths, connection, startedOptions, input, stdout, stderr)
 	}
 	if options.migrationTarget != "" {
 		return writeServiceError(stderr, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage")))
@@ -130,7 +130,7 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 	if err != nil {
 		return writeServiceError(stderr, err)
 	}
-	return useEverydayCompanion(connection, options, input, stdout, stderr)
+	return useEverydayCompanion(paths, connection, options, input, stdout, stderr)
 }
 
 func promptPassphraseMigration(input io.Reader, output io.Writer, target platform.VaultMode) (string, error) {
@@ -246,8 +246,11 @@ func readCompanionSetupLine(input io.Reader) (string, error) {
 	}
 }
 
-func useEverydayCompanion(connection platform.ServiceClient, options serviceOptions, input io.Reader, stdout, stderr io.Writer) int {
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+func useEverydayCompanion(paths platform.Paths, connection platform.ServiceClient, options serviceOptions, input io.Reader, stdout, stderr io.Writer) int {
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		return writeServiceError(stderr, err)
+	}
 	health, err := client.ServiceHealth(context.Background())
 	if err != nil {
 		return writeServiceError(stderr, err)
@@ -259,6 +262,14 @@ func useEverydayCompanion(connection platform.ServiceClient, options serviceOpti
 		}
 		health, err = client.UnlockVault(context.Background(), passphrase)
 		passphrase = ""
+		if err != nil {
+			return writeServiceError(stderr, err)
+		}
+		connection, err = platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+		if err != nil {
+			return writeServiceError(stderr, err)
+		}
+		client, err = newServiceCommandClient(connection)
 		if err != nil {
 			return writeServiceError(stderr, err)
 		}
@@ -280,6 +291,7 @@ func useEverydayCompanion(connection platform.ServiceClient, options serviceOpti
 		_, _ = fmt.Fprintln(stderr, "codex-folio: warning: dashboard authorization is temporarily unavailable; foreground launch remains available")
 	}
 	_, _ = fmt.Fprintf(stdout, "dashboard address: %s\n", dashboardAddress)
+	_, _ = fmt.Fprintln(stdout, "browser HTTPS setup: codex-folio service certificate (import the printed public root once; do not bypass certificate warnings)")
 	_, _ = fmt.Fprintf(stdout, "reopen with: %s\n", companionReopenCommand(options))
 	return exitSuccess
 }

@@ -176,7 +176,11 @@ func withSelectionServiceAndLaunchAuthenticator(input io.Reader, stderr io.Write
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		if err := action(httpapi.NewCommandClient(connection.Origin, connection.Token, nil)); err != nil {
+		client, err := newServiceCommandClient(connection)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if err := action(client); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitSuccess

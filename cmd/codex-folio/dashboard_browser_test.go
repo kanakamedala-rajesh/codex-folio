@@ -141,6 +141,9 @@ func TestOverviewBrowser(t *testing.T) {
 	if suite == "deep" {
 		runServiceHealthBrowser(t)
 	}
+	if suite == "smoke" {
+		runTrustedBrowserRestart(t)
+	}
 	runOverviewBrowser(t, suite)
 }
 
@@ -509,7 +512,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	server, err := httpapi.NewServer(httpapi.Options{BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
 	}})
 	if err != nil {

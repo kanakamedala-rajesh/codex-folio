@@ -145,6 +145,7 @@ function validateContract(contract, productVersion) {
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const handoffPath = `/api/${apiVersion}/handoff`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
+  const browserTrustPath = `/api/${apiVersion}/browser-trust`;
   const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
   const diagnosticsPath = `/api/${apiVersion}/diagnostics`;
   const telemetryPath = `/api/${apiVersion}/telemetry`;
@@ -167,6 +168,7 @@ function validateContract(contract, productVersion) {
       analyticsPath,
       historyPath,
       bootstrapPath,
+      browserTrustPath,
       collectionSettingsPath,
       diagnosticsPath,
       telemetryPath,
@@ -205,6 +207,14 @@ function validateContract(contract, productVersion) {
     bootstrapOperation,
     `POST ${bootstrapPath}`,
   );
+  const browserTrustPathItem = contract.paths[browserTrustPath];
+  assertObject(browserTrustPathItem, `path ${browserTrustPath}`);
+  assertExactKeys(browserTrustPathItem, ["get", "post"], `path ${browserTrustPath}`);
+  assertEqual(browserTrustPathItem.get.operationId, "getBrowserTrust", "browser trust GET operationId");
+  assertEqual(browserTrustPathItem.post.operationId, "manageBrowserTrust", "browser trust POST operationId");
+  assertEqual(requestReference(browserTrustPathItem.post.requestBody, "browser trust request"), "#/$defs/BrowserTrustRequest", "browser trust request");
+  assertEqual(responseReference(browserTrustPathItem.get, "browser trust GET", ["200", "default"]), "#/$defs/BrowserTrustResponse", "browser trust GET response");
+  assertEqual(responseReference(browserTrustPathItem.post, "browser trust POST", ["200", "default"]), "#/$defs/BrowserTrustResponse", "browser trust POST response");
 
   const metadataPathItem = contract.paths[metadataPath];
   assertObject(metadataPathItem, `path ${metadataPath}`);
@@ -536,6 +546,8 @@ function validateContract(contract, productVersion) {
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
     schemaNameFromReference(collectionSettingsRequestReference, "collection settings request"),
     schemaNameFromReference(collectionSettingsResponseReference, "collection settings response"),
+    "BrowserTrustRequest",
+    "BrowserTrustResponse",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -648,6 +660,9 @@ function validateContract(contract, productVersion) {
   const collectionSettingsResponseFields = schemaFields(contract.$defs[collectionSettingsResponseType], collectionSettingsResponseType);
 
   return {
+    browserTrustPath,
+    browserTrustRequestFields: schemaFields(contract.$defs.BrowserTrustRequest, "BrowserTrustRequest"),
+    browserTrustResponseFields: schemaFields(contract.$defs.BrowserTrustResponse, "BrowserTrustResponse"),
     alertsPath,
     alertsGetOperationId: getAlertsOperation.operationId,
     alertsManageOperationId: manageAlertsOperation.operationId,
@@ -988,6 +1003,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
+    renderGoStruct("BrowserTrustRequest", contractShape.browserTrustRequestFields),
+    renderGoStruct("BrowserTrustResponse", contractShape.browserTrustResponseFields),
     renderGoStruct(collectionSettingsRequestType, collectionSettingsRequestFields),
     renderGoStruct(collectionSettingsResponseType, collectionSettingsResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
@@ -1046,6 +1063,7 @@ const (
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
+\tBrowserTrustPath     = "${contractShape.browserTrustPath}"
 \tCollectionSettingsPath = "${collectionSettingsPath}"
 \tDiagnosticsPath      = "${contractShape.diagnosticsPath}"
 \tUpdatesPath          = "${contractShape.updatesPath}"
@@ -1838,6 +1856,16 @@ export const DiagnosticsPath = "${contractShape.diagnosticsPath}" as const;
 export const UpdatesPath = "${contractShape.updatesPath}" as const;
 export const TelemetryPath = "${contractShape.telemetryPath}" as const;
 export const PortableConfigurationPath = "${contractShape.portableConfigurationPath}" as const;
+export const BrowserTrustPath = "${contractShape.browserTrustPath}" as const;
+export const BootstrapPath = "${bootstrapPath}" as const;
+
+export interface BrowserTrustRequest {
+${contractShape.browserTrustRequestFields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}
+}
+
+export interface BrowserTrustResponse {
+${contractShape.browserTrustResponseFields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}
+}
 
 ${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -2138,6 +2166,17 @@ export interface ApiPaths {
       };
     };
   };
+  "${contractShape.browserTrustPath}": {
+    get: {
+      operationId: "getBrowserTrust";
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+    post: {
+      operationId: "manageBrowserTrust";
+      requestBody: BrowserTrustRequest;
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+  };
   "${metadataPath}": {
     get: {
       operationId: "${metadataOperationId}";
@@ -2283,6 +2322,11 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<${activityResponseType}>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
+  getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
+  manageBrowserTrust(
+    request: BrowserTrustRequest,
+    init?: RequestInit,
+  ): Promise<BrowserTrustResponse>;
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
   ${collectionSettingsGetOperationId}(init?: RequestInit): Promise<${collectionSettingsResponseType}>;
   ${collectionSettingsSetOperationId}(
@@ -2591,6 +2635,38 @@ export function createCodexFolioApiClient(
         throw new Error("POST ${bootstrapPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${bootstrapResponseType};
+    },
+    async getBrowserTrust(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
+    },
+    async manageBrowserTrust(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
     },
     async ${metadataOperationId}(init = {}) {
       const headers = new Headers(init.headers);

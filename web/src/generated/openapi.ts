@@ -3,13 +3,25 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "c143b5d7511bbffa8f19ea0ab0c86b22a12b5b5bef91e3093a0e978add1a53c6" as const;
+  "2cd7ad305b646482f52f3b4b302e0aa5a437d8aa889efd557e1e12f0ceceb514" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
 export const UpdatesPath = "/api/v1/updates" as const;
 export const TelemetryPath = "/api/v1/telemetry" as const;
 export const PortableConfigurationPath = "/api/v1/configuration" as const;
+export const BrowserTrustPath = "/api/v1/browser-trust" as const;
+export const BootstrapPath = "/api/v1/bootstrap" as const;
+
+export interface BrowserTrustRequest {
+  action: string;
+}
+
+export interface BrowserTrustResponse {
+  trusted: boolean;
+  csrf_token?: string;
+  credential?: string;
+}
 
 export interface AlertRecord {
   alert_id: string;
@@ -1105,6 +1117,17 @@ export interface ApiPaths {
       };
     };
   };
+  "/api/v1/browser-trust": {
+    get: {
+      operationId: "getBrowserTrust";
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+    post: {
+      operationId: "manageBrowserTrust";
+      requestBody: BrowserTrustRequest;
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+  };
   "/api/v1/meta": {
     get: {
       operationId: "getMetadata";
@@ -1250,6 +1273,11 @@ export interface CodexFolioApiClient {
     init?: RequestInit,
   ): Promise<ActivityResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
+  getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
+  manageBrowserTrust(
+    request: BrowserTrustRequest,
+    init?: RequestInit,
+  ): Promise<BrowserTrustResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
   getCollectionSettings(init?: RequestInit): Promise<CollectionSettingsResponse>;
   setCollectionSettings(
@@ -1558,6 +1586,38 @@ export function createCodexFolioApiClient(
         throw new Error("POST /api/v1/bootstrap failed with HTTP " + response.status);
       }
       return (await response.json()) as BootstrapResponse;
+    },
+    async getBrowserTrust(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
+    },
+    async manageBrowserTrust(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
     },
     async getMetadata(init = {}) {
       const headers = new Headers(init.headers);

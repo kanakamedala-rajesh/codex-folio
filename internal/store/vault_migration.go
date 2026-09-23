@@ -22,6 +22,7 @@ type vaultProtectedColumn struct {
 }
 
 var vaultProtectedColumns = []vaultProtectedColumn{
+	{table: "dashboard_tls_identity", rowID: "identity_id", aadID: "identity_id", column: "server_key_ciphertext", associated: dashboardTLSKeyAAD},
 	{table: "identity_homes", rowID: "identity_home_id", aadID: "identity_home_id", column: "location_ciphertext", associated: identityHomeAAD},
 	{table: "identity_homes", rowID: "identity_home_id", aadID: "profile_id", column: "documented_login_identity_ciphertext", associated: func(id string) []byte { return documentedMetadataAAD(id, "login-identity") }},
 	{table: "identity_homes", rowID: "identity_home_id", aadID: "profile_id", column: "documented_workspace_ciphertext", associated: func(id string) []byte { return documentedMetadataAAD(id, "workspace") }},

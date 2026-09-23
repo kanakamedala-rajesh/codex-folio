@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -123,6 +124,7 @@ type ServiceLifecycle interface {
 // OperationalServices contains the state-owning workflows installed exactly
 // once after the vault and database have opened successfully.
 type OperationalServices struct {
+	BrowserTrust          BrowserTrustStore
 	Background            io.Closer
 	Shutdown              io.Closer
 	Selection             *profile.Selector
@@ -150,6 +152,8 @@ type OperationalServices struct {
 // in-memory bootstrap, session, and CSRF material; none of those values are
 // persisted by this package.
 type Options struct {
+	TLSCertificate        *tls.Certificate
+	BrowserTrust          BrowserTrustStore
 	Product               string
 	BootstrapTTL          time.Duration
 	SessionTTL            time.Duration
@@ -190,9 +194,11 @@ type ServerOptions = Options
 // Server is the authorization-protected loopback HTTP service for the
 // embedded placeholder SPA. It has no durable session or bootstrap state.
 type Server struct {
-	mu sync.Mutex
+	mu             sync.Mutex
+	tlsCertificate *tls.Certificate
 
 	product               string
+	browserTrust          BrowserTrustStore
 	bootstrapTTL          time.Duration
 	sessionTTL            time.Duration
 	random                io.Reader
@@ -244,8 +250,10 @@ type Server struct {
 }
 
 type session struct {
-	csrfDigest [sha256.Size]byte
-	expiresAt  time.Time
+	csrfDigest  [sha256.Size]byte
+	expiresAt   time.Time
+	trustDigest [sha256.Size]byte
+	trusted     bool
 }
 
 type systemClock struct{}
@@ -257,6 +265,9 @@ func (systemClock) Now() time.Time {
 // NewServer creates a service with a fresh one-time bootstrap secret. The
 // caller obtains the launcher URL only after Listen has selected the port.
 func NewServer(options Options) (*Server, error) {
+	if options.TLSCertificate != nil && (len(options.TLSCertificate.Certificate) == 0 || options.TLSCertificate.PrivateKey == nil) {
+		return nil, apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("TLS certificate is incomplete"))
+	}
 	bootstrapTTL := options.BootstrapTTL
 	if bootstrapTTL <= 0 {
 		bootstrapTTL = DefaultBootstrapTTL
@@ -287,7 +298,9 @@ func NewServer(options Options) (*Server, error) {
 	now := clock.Now().UTC()
 	commandToken := sha256.Sum256([]byte(options.CommandToken))
 	server := &Server{
+		tlsCertificate:        options.TLSCertificate,
 		product:               product,
+		browserTrust:          options.BrowserTrust,
 		bootstrapTTL:          bootstrapTTL,
 		sessionTTL:            sessionTTL,
 		random:                randomReader,
@@ -329,6 +342,21 @@ func NewServer(options Options) (*Server, error) {
 		server.terminalCommandBase = []string{"codex-folio"}
 	}
 	return server, nil
+}
+
+// SetTLSCertificate replaces the certificate presented by an HTTPS listener.
+// The service uses this after unlocking the vault while keeping its origin.
+func (server *Server) SetTLSCertificate(certificate tls.Certificate) error {
+	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("TLS certificate is incomplete"))
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.closed || (server.listener != nil && server.tlsCertificate == nil) {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("TLS identity cannot be installed on an HTTP listener"))
+	}
+	server.tlsCertificate = &certificate
+	return nil
 }
 
 func (server *Server) terminalCommand(arguments ...string) string {
@@ -380,7 +408,13 @@ func (server *Server) terminalCommandSuffixString() string {
 // not accept a caller-supplied bind address so a future CLI flag cannot turn
 // the MVP service into a LAN listener by accident.
 func (server *Server) Listen() (net.Listener, error) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	return server.ListenPort(0)
+}
+
+// ListenPort binds the dashboard to a repeatable loopback port. A collision
+// fails closed so browser trust never moves to a different origin silently.
+func (server *Server) ListenPort(port int) (net.Listener, error) {
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		server.recordDiagnostic(diagnostics.OperationHTTPListen, diagnostics.SeverityError, apperrors.HTTPAPIServiceUnavailable, diagnostics.Context{State: diagnostics.StateUnavailable})
 		return nil, apperrors.New(apperrors.HTTPAPIServiceUnavailable, err)
@@ -433,9 +467,24 @@ func (server *Server) Serve(listener net.Listener) error {
 		ErrorLog:          log.New(io.Discard, "", 0),
 	}
 	server.httpServer = httpServer
+	tlsEnabled := server.tlsCertificate != nil
 	server.mu.Unlock()
 
-	err := httpServer.Serve(listener)
+	serveListener := listener
+	if tlsEnabled {
+		serveListener = tls.NewListener(listener, &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+				server.mu.Lock()
+				defer server.mu.Unlock()
+				if server.tlsCertificate == nil {
+					return nil, errors.New("TLS identity is unavailable")
+				}
+				return server.tlsCertificate, nil
+			},
+		})
+	}
+	err := httpServer.Serve(serveListener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -525,6 +574,9 @@ func (server *Server) attachListener(listener net.Listener) error {
 	server.listener = listener
 	server.address = address
 	server.allowedHost = host
+	if server.tlsCertificate != nil {
+		origin = "https://" + host
+	}
 	server.origin = origin
 	return nil
 }
@@ -551,6 +603,10 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 	if !server.validOrigin(request) {
 		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
+		return
+	}
+	if strings.HasPrefix(server.Origin(), "https://") && !server.operational.Load() && !strings.HasPrefix(request.URL.Path, "/api/v1/command/") {
+		server.writeAPIError(response, http.StatusLocked, apperrors.VaultLocked)
 		return
 	}
 	if requiresOperationalState(request.URL.Path) && !server.operational.Load() {
@@ -702,6 +758,8 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.exchangeBootstrap(response, request)
+	case BrowserTrustPath:
+		server.browserTrustHandler(response, request)
 	case MetadataPath:
 		if !server.authorize(response, request) {
 			return
@@ -1179,32 +1237,22 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 		return
 	}
 
-	sessionBytes, err := server.randomBytes(randomTokenSize)
+	var trustDigest []byte
+	if server.browserTrust != nil {
+		candidate, trusted, trustErr := server.trustDigest(request)
+		if trustErr != nil {
+			server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+			return
+		}
+		if trusted {
+			trustDigest = candidate
+		}
+	}
+	csrfToken, err := server.issueSession(response, now, trustDigest)
 	if err != nil {
 		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
-	csrfBytes, err := server.randomBytes(randomTokenSize)
-	if err != nil {
-		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
-		return
-	}
-	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
-	csrfToken := base64.RawURLEncoding.EncodeToString(csrfBytes)
-	expiresAt := now.Add(server.sessionTTL)
-	sessionDigest := sha256.Sum256([]byte(sessionID))
-	server.mu.Lock()
-	server.sessions[sessionDigest] = session{csrfDigest: sha256.Sum256([]byte(csrfToken)), expiresAt: expiresAt}
-	server.mu.Unlock()
-
-	http.SetCookie(response, &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   maxAge(server.sessionTTL),
-	})
 	writeJSON(response, http.StatusOK, BootstrapResponse{CSRFToken: csrfToken})
 }
 
@@ -1230,6 +1278,13 @@ func (server *Server) authorize(response http.ResponseWriter, request *http.Requ
 		ok = false
 	}
 	server.mu.Unlock()
+	if ok && current.trusted {
+		trusted, err := server.browserTrust.BrowserTrusted(request.Context(), current.trustDigest[:])
+		if err != nil || !trusted {
+			server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
+			return false
+		}
+	}
 	if !ok {
 		if current.expiresAt.IsZero() {
 			server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
@@ -1310,6 +1365,7 @@ func (server *Server) Activate(services OperationalServices) error {
 		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("operational services are incomplete"))
 	}
 	server.selection = services.Selection
+	server.browserTrust = services.BrowserTrust
 	server.profiles = services.Profiles
 	server.profileLifecycle = services.ProfileLifecycle
 	server.profileAuthentication = services.ProfileAuthentication

@@ -53,6 +53,18 @@ export const copy = {
   relaunchCommand: "codex-folio service start",
   authorizationDetail:
     "Existing foreground Codex work is unchanged. Persistent service installation is not required.",
+  browserTrustTitle: "Trusted browser",
+  browserTrustPrompt:
+    "Trust this browser to reopen the dashboard using the local address printed by ordinary startup after ordinary restarts. Only choose this on a browser you control.",
+  browserTrustGrant: "Trust this browser",
+  browserTrustActive:
+    "This browser can renew its dashboard session after ordinary service and browser restarts.",
+  browserTrustInactive:
+    "This browser needs a fresh one-time terminal link after this session ends.",
+  browserTrustForget: "Forget this browser",
+  browserTrustRevokeAll: "Revoke all browsers",
+  browserTrustGranted: "This browser is trusted. You can revoke it in Settings.",
+  browserTrustFailed: "Browser trust could not be changed. Try again.",
   primary: "Primary window",
   secondary: "Secondary window",
   remaining: "remaining",

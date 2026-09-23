@@ -333,10 +333,27 @@ func TestPassphraseServiceReconcilesInterruptedMigrationBeforeUnlock(t *testing.
 	if err != nil {
 		t.Fatalf("passphrase service did not start after recovery: %v; stderr:%q", err, fixture.stderr.String())
 	}
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
 	health, err := client.UnlockVault(context.Background(), "correct")
 	if err != nil || health.ServiceState != httpapi.ServiceStateReady || !resumed.Load() {
 		t.Fatalf("recovered service unlock = health:%#v resumed:%t err:%v", health, resumed.Load(), err)
+	}
+	unlockedConnection, err := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlockedConnection.CertificateSHA256 == connection.CertificateSHA256 {
+		t.Fatal("temporary locked-service certificate was not replaced after unlock")
+	}
+	unlockedClient, err := newServiceCommandClient(unlockedConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopenedHealth, err := unlockedClient.ServiceHealth(context.Background()); err != nil || reopenedHealth.ServiceState != httpapi.ServiceStateReady {
+		t.Fatalf("unlocked HTTPS descriptor failed: %#v, %v", reopenedHealth, err)
 	}
 	if _, exists, err := readPassphraseMigrationRecord(paths); err != nil || exists {
 		t.Fatalf("journal after passphrase service recovery = exists:%t err:%v", exists, err)
@@ -394,7 +411,10 @@ func TestInterruptedMigrationRestoresPassphraseSelectionWhenDestinationFails(t *
 	if err != nil {
 		t.Fatalf("recovered passphrase service did not start: %v; stderr:%q", err, fixture.stderr.String())
 	}
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
 	health, err := client.UnlockVault(context.Background(), "correct")
 	if err != nil || health.ServiceState != httpapi.ServiceStateReady {
 		t.Fatalf("restored passphrase state did not unlock: health:%#v err:%v; stderr:%q", health, err, fixture.stderr.String())

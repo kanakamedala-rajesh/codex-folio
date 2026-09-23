@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/diagnostics"
@@ -26,6 +32,54 @@ type CommandClient struct {
 
 func NewCommandClient(origin, token string, doer HTTPDoer) *CommandClient {
 	return &CommandClient{origin: strings.TrimRight(origin, "/"), token: token, doer: doer}
+}
+
+// NewPinnedCommandClient authenticates the exact HTTPS identity before any
+// command token is sent. A private service descriptor supplies the fingerprint.
+func NewPinnedCommandClient(origin, token, certificateSHA256 string) (*CommandClient, error) {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("pinned command origin must be HTTPS")
+	}
+	host, _, err := net.SplitHostPort(parsed.Host)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return nil, errors.New("pinned command origin must be loopback")
+	}
+	want, err := hex.DecodeString(certificateSHA256)
+	if err != nil || len(want) != sha256.Size || hex.EncodeToString(want) != certificateSHA256 {
+		return nil, errors.New("invalid command certificate fingerprint")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		// The exact certificate pin below authenticates the peer. The machine's
+		// root pool need not trust this locally generated certificate.
+		InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return errors.New("command TLS peer did not present a certificate")
+			}
+			certificate := state.PeerCertificates[0]
+			got := sha256.Sum256(certificate.Raw)
+			if subtle.ConstantTimeCompare(got[:], want) != 1 {
+				return errors.New("command TLS certificate fingerprint mismatch")
+			}
+			if err := certificate.VerifyHostname(host); err != nil {
+				return err
+			}
+			now := time.Now()
+			if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+				return errors.New("command TLS certificate is outside its validity period")
+			}
+			return nil
+		},
+	}}
+	httpClient := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("command endpoint redirected")
+		},
+	}
+	return NewCommandClient(origin, token, httpClient), nil
 }
 
 func (client *CommandClient) GetSelection(ctx context.Context) (CommandSelectionResponse, error) {
@@ -256,7 +310,16 @@ func (client *CommandClient) httpDoer() HTTPDoer {
 	if client.doer != nil {
 		return client.doer
 	}
+	if strings.HasPrefix(client.origin, "https://") {
+		return unpinnedCommandDoer{}
+	}
 	return http.DefaultClient
+}
+
+type unpinnedCommandDoer struct{}
+
+func (unpinnedCommandDoer) Do(*http.Request) (*http.Response, error) {
+	return nil, errors.New("HTTPS command client requires a certificate pin")
 }
 
 const CommandDashboardPath = "/api/v1/command/dashboard"

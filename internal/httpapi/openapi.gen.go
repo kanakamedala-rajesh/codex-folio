@@ -21,8 +21,9 @@ const (
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "c143b5d7511bbffa8f19ea0ab0c86b22a12b5b5bef91e3093a0e978add1a53c6"
+	ContractSourceSHA256      = "2cd7ad305b646482f52f3b4b302e0aa5a437d8aa889efd557e1e12f0ceceb514"
 	BootstrapPath             = "/api/v1/bootstrap"
+	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
 	DiagnosticsPath           = "/api/v1/diagnostics"
 	UpdatesPath               = "/api/v1/updates"
@@ -753,6 +754,16 @@ type BootstrapRequest struct {
 
 type BootstrapResponse struct {
 	CSRFToken string `json:"csrf_token"`
+}
+
+type BrowserTrustRequest struct {
+	Action string `json:"action"`
+}
+
+type BrowserTrustResponse struct {
+	Trusted    bool    `json:"trusted"`
+	CSRFToken  *string `json:"csrf_token,omitempty"`
+	Credential *string `json:"credential,omitempty"`
 }
 
 type CollectionSettingsRequest struct {

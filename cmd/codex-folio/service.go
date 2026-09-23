@@ -2,9 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,7 +106,7 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		}
 		serviceArgs = args[2:]
 	}
-	if command != "status" && command != "start" && command != "install" && command != "uninstall" && command != "recovery" {
+	if command != "status" && command != "start" && command != "install" && command != "uninstall" && command != "recovery" && command != "certificate" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown service command", diagnosticSink)
 	}
 	options, err := parseServiceOptions(serviceArgs)
@@ -147,6 +152,8 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		return runServiceStatusWithEnrollment(paths, options, stdout, stderr, diagnosticSink, enrollment)
 	case "start":
 		return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, diagnosticSink)
+	case "certificate":
+		return runServiceCertificate(paths, options.json, stdout, stderr)
 	case "install":
 		return runServiceEnrollmentChange(enrollment.Install, options, stdout, stderr, diagnosticSink)
 	case "uninstall":
@@ -361,7 +368,11 @@ func runServiceStatusWithEnrollment(paths platform.Paths, options serviceOptions
 		if discoverErr != nil {
 			return writeServiceErrorWithDiagnostics(stderr, discoverErr, diagnosticSink)
 		}
-		health, err = httpapi.NewCommandClient(connection.Origin, connection.Token, nil).ServiceHealth(context.Background())
+		client, clientErr := newServiceCommandClient(connection)
+		if clientErr != nil {
+			return writeServiceErrorWithDiagnostics(stderr, clientErr, diagnosticSink)
+		}
+		health, err = client.ServiceHealth(context.Background())
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
@@ -498,8 +509,17 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 	}
+	var dashboardIdentity store.DashboardTLSIdentity
 	compose := func(stateStore *store.Store) (httpapi.OperationalServices, error) {
 		attachServiceDiagnosticStore(diagnosticSink, stateStore)
+		identity, identityErr := stateStore.LoadOrCreateDashboardTLSIdentity(context.Background())
+		if identityErr != nil {
+			return httpapi.OperationalServices{}, identityErr
+		}
+		if identityErr = writeDashboardRootCertificate(paths.Root, identity.RootCertificatePEM); identityErr != nil {
+			return httpapi.OperationalServices{}, identityErr
+		}
+		dashboardIdentity = identity
 		return composeServiceOperationalServices(paths, stateStore, options.enrolled)
 	}
 	var services httpapi.OperationalServices
@@ -554,6 +574,16 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
+	initialCertificate := dashboardIdentity.Certificate
+	if serviceLifecycle != nil {
+		initialCertificate, err = store.NewEphemeralDashboardTLSCertificate()
+		if err != nil {
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
+	serverOptions.TLSCertificate = &initialCertificate
 	serverOptions.TerminalCommandBase = []string{executable}
 	terminalMode := options.vaultMode
 	if options.migrationTarget != "" {
@@ -580,15 +610,32 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if serviceLifecycle != nil {
-		serviceLifecycle.SetActivator(server.Activate)
+		serviceLifecycle.SetActivator(func(unlocked httpapi.OperationalServices) error {
+			if len(dashboardIdentity.Certificate.Certificate) == 0 {
+				return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("dashboard HTTPS identity is unavailable"))
+			}
+			if err := server.SetTLSCertificate(dashboardIdentity.Certificate); err != nil {
+				return err
+			}
+			if err := owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, dashboardIdentity.Certificate)); err != nil {
+				_ = server.SetTLSCertificate(initialCertificate)
+				return err
+			}
+			if err := server.Activate(unlocked); err != nil {
+				_ = server.SetTLSCertificate(initialCertificate)
+				_ = owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, initialCertificate))
+				return err
+			}
+			return nil
+		})
 	}
-	listener, err := server.Listen()
+	listener, err := server.ListenPort(dashboardPort(paths.Root))
 	if err != nil {
 		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
+	if err := owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, initialCertificate)); err != nil {
 		_ = server.Close()
 		_ = stateOwner.Close()
 		_ = owner.Close()
@@ -603,6 +650,62 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 	}
 
 	return waitForStop(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func dashboardPort(root string) int {
+	root = filepath.Clean(root)
+	if runtime.GOOS == "windows" {
+		root = strings.ToLower(root)
+	}
+	digest := sha256.Sum256([]byte(root))
+	return 20000 + int(binary.BigEndian.Uint16(digest[:2]))%40000
+}
+
+func dashboardServiceClient(origin, token string, certificate tls.Certificate) platform.ServiceClient {
+	fingerprint := sha256.Sum256(certificate.Certificate[0])
+	return platform.ServiceClient{Origin: origin, Token: token, CertificateSHA256: hex.EncodeToString(fingerprint[:])}
+}
+
+func writeDashboardRootCertificate(root string, certificate []byte) error {
+	path := filepath.Join(root, dashboardRootCertificateFile)
+	info, err := os.Lstat(path)
+	if err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+		return errors.New("dashboard root certificate path is not a regular file")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if bytes.Equal(existing, certificate) {
+			return nil
+		}
+	}
+	file, err := os.CreateTemp(root, ".dashboard-root-ca-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(certificate); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if info != nil {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return os.Rename(file.Name(), path)
 }
 
 var waitForServiceOwnerRelease = waitForServiceOwnerReleaseSignal
@@ -698,7 +801,8 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		return httpapi.OperationalServices{}, err
 	}
 	services := httpapi.OperationalServices{
-		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
+		BrowserTrust: stateStore,
+		Selection:    selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
 		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: deliveryEnabled},
@@ -759,7 +863,8 @@ func (owner *serviceStateOwner) Close() error {
 
 func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, services httpapi.OperationalServices) httpapi.Options {
 	return httpapi.Options{
-		Diagnostics: diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
+		BrowserTrust: services.BrowserTrust,
+		Diagnostics:  diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
 		ProfileLifecycle: services.ProfileLifecycle, ProfileAuthentication: services.ProfileAuthentication,
 		ConfigurationPacks: services.ConfigurationPacks, Launches: services.Launches, Usage: services.Usage,
 		CollectionSettings: services.CollectionSettings,
@@ -1402,6 +1507,7 @@ func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service certificate [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service install [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service uninstall [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service recovery {verify|list|restore} [--state-root PATH] [--candidate ID] [--json]")
@@ -1463,7 +1569,10 @@ func writeReusedDashboard(paths platform.Paths, options serviceOptions, status p
 	if err != nil {
 		return err
 	}
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		return err
+	}
 	link, err := client.Dashboard(context.Background())
 	if err != nil {
 		return err

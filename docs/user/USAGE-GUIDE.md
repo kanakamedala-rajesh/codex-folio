@@ -211,7 +211,18 @@ terminal child with its input, output, working directory, signals, arguments and
 exit status preserved, while the companion remains available after Codex exits.
 Ordinary startup prints a non-secret dashboard address and a repeatable
 `service start` command for fresh browser authorization; it does not open a
-browser.
+browser. Before opening the HTTPS dashboard for the first time, run
+`./build/bin/codex-folio service certificate`, check the printed SHA-256
+fingerprint, and import its public certificate into your browser's trusted
+certificate authorities. This is a one-time browser or OS trust setup; do not
+bypass a certificate warning. On WSL2, import the certificate into the Windows
+browser you use to open the dashboard. Open the one-time link, then choose
+**Trust this browser** if it is your own browser and you want the current
+address to reopen after ordinary restarts. Leave it untrusted on a shared or
+private browser. The [comprehensive guide](COMPREHENSIVE-USAGE-GUIDE.md) covers
+platform-specific certificate setup and removal.
+In **Settings → Trusted browser**, use **Forget this browser** or **Revoke all
+browsers** to end access; open a fresh terminal link afterward.
 
 For a fresh ordinary installation, run the same plain command without
 `--vault-mode`. CodexFolio initializes the current user's supported native

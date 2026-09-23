@@ -213,7 +213,11 @@ func withLaunchCommandServiceAndUsage(input io.Reader, stderr io.Writer, paths p
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		return action(httpapi.NewCommandClient(connection.Origin, connection.Token, nil), input)
+		client, err := newServiceCommandClient(connection)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		return action(client, input)
 	}
 	owner, err := platform.Acquire(paths, ownerOptions)
 	if err != nil {

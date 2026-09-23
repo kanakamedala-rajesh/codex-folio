@@ -334,6 +334,18 @@
       ],
       "type": "object"
     },
+    "BrowserTrustRequest": {
+      "additionalProperties": false,
+      "properties": {"action": {"enum": ["grant", "forget", "revoke_all", "renew"], "type": "string"}},
+      "required": ["action"],
+      "type": "object"
+    },
+    "BrowserTrustResponse": {
+      "additionalProperties": false,
+      "properties": {"trusted": {"type": "boolean"}, "csrf_token": {"type": "string"}, "credential": {"description": "Origin-scoped browser trust credential returned only after explicit grant.", "type": "string"}},
+      "required": ["trusted"],
+      "type": "object"
+    },
     "MetadataResponse": {
       "additionalProperties": false,
       "properties": {
@@ -1374,6 +1386,23 @@
             },
             "description": "Exchanges a one-time launcher secret for a short-lived local session."
           }
+        }
+      }
+    },
+    "/api/v1/browser-trust": {
+      "get": {
+        "operationId": "getBrowserTrust",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/BrowserTrustResponse"}}}, "description": "Reports whether this authorized browser is trusted."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "manageBrowserTrust",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/BrowserTrustRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/BrowserTrustResponse"}}}, "description": "Grants, renews, or revokes browser trust."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }
     },

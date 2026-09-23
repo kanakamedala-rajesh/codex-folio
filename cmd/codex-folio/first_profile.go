@@ -22,7 +22,10 @@ func guideFirstProfile(paths platform.Paths, input io.Reader, stdout, stderr io.
 	if err != nil {
 		return false, writeServiceError(stderr, err)
 	}
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		return false, writeServiceError(stderr, err)
+	}
 	selection, err := client.GetSelection(context.Background())
 	if err != nil {
 		return false, writeServiceError(stderr, err)

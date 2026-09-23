@@ -578,6 +578,30 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 25,
+			name:    "persistent-browser-trust",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE browser_trust (
+					credential_digest BLOB PRIMARY KEY NOT NULL CHECK (length(credential_digest) = 32),
+					granted_at TEXT NOT NULL
+				)`)
+				return err
+			},
+		},
+		{
+			version: 26,
+			name:    "dashboard-tls-identity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE dashboard_tls_identity (
+					identity_id TEXT PRIMARY KEY NOT NULL CHECK (identity_id = 'dashboard'),
+					root_certificate_pem BLOB NOT NULL CHECK (typeof(root_certificate_pem) = 'blob'),
+					server_certificate_pem BLOB NOT NULL CHECK (typeof(server_certificate_pem) = 'blob'),
+					server_key_ciphertext BLOB NOT NULL CHECK (typeof(server_key_ciphertext) = 'blob')
+				)`)
+				return err
+			},
+		},
 	}
 }
 
@@ -832,6 +856,7 @@ var expectedTables = map[string][]string{
 	"configuration_pack_versions":    {"configuration_pack_version_id", "configuration_pack_id", "pack_version", "state", "content_digest", "content_json", "created_at"},
 	"correlation_evidence":           {"correlation_evidence_id", "managed_launch_id", "observed_session_id", "confidence", "evidence_type", "observed_at"},
 	"diagnostic_aggregates":          {"diagnostic_aggregate_id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"},
+	"dashboard_tls_identity":         {"identity_id", "root_certificate_pem", "server_certificate_pem", "server_key_ciphertext"},
 	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
@@ -849,6 +874,7 @@ var expectedTables = map[string][]string{
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
 	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
 	"telemetry_state":                {"telemetry_state_id", "enabled", "schema_version", "consented_at", "installation_id"},
+	"browser_trust":                  {"credential_digest", "granted_at"},
 	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
@@ -894,11 +920,12 @@ var expectedIndexes = []string{
 }
 
 var sensitiveColumns = map[string][]string{
-	"usage_aggregates":   {"source_scope_ciphertext"},
-	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
-	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
-	"project_identities": {"canonical_path_ciphertext"},
-	"usage_snapshots":    {"login_identity_ciphertext", "workspace_ciphertext"},
+	"dashboard_tls_identity": {"server_key_ciphertext"},
+	"usage_aggregates":       {"source_scope_ciphertext"},
+	"checkpoints":            {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
+	"identity_homes":         {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
+	"project_identities":     {"canonical_path_ciphertext"},
+	"usage_snapshots":        {"login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 func validateSchema(ctx context.Context, database *sql.DB) error {
