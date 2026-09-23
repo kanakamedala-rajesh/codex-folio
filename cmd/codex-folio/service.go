@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
@@ -757,6 +758,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
+	consentGate := &sync.RWMutex{}
 	notificationAdapter, err := platform.NewNotificationAdapter(platform.NotificationOptions{})
 	if err != nil {
 		return httpapi.OperationalServices{}, err
@@ -805,7 +807,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		Selection:    selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
-		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: deliveryEnabled},
+		CollectionSettings: &collectionSettingsCommandService{store: stateStore, gate: consentGate},
 		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
 		Checkpoints:          checkpoints,
 		CheckpointHistory:    browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
@@ -823,14 +825,16 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	}
 	services.Updates = updateService
 	services.Shutdown = telemetryServiceCloser{service: telemetryService}
-	if deliveryEnabled {
-		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
-		if err != nil {
-			_ = telemetryService.Close(context.Background())
-			return httpapi.OperationalServices{}, err
-		}
-		services.Background = &serviceCloserGroup{closers: []serviceCloser{startUpdateScheduler(updateService), startCollectionScheduler(scheduler)}}
+	scheduler, err := usage.NewScheduler(collectionConsentStore{ScheduleStore: stateStore, consentReader: stateStore}, collectionConsentRefresher{reader: stateStore, refresher: usageCommands, gate: consentGate}, usageClock{}, randomScheduleJitter)
+	if err != nil {
+		_ = telemetryService.Close(context.Background())
+		return httpapi.OperationalServices{}, err
 	}
+	background := []serviceCloser{startCollectionScheduler(scheduler)}
+	if deliveryEnabled {
+		background = append(background, startUpdateScheduler(updateService))
+	}
+	services.Background = &serviceCloserGroup{closers: background}
 	return services, nil
 }
 

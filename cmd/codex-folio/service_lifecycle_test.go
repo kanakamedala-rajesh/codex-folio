@@ -22,6 +22,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/usage"
 	"venkatasudha.com/codex-folio/internal/vault"
 )
 
@@ -197,7 +198,7 @@ func TestLockedServiceLifecycleSuppressesStateUntilOneSuccessfulUnlock(t *testin
 	}
 }
 
-func TestCollectionSchedulerExistsOnlyForExplicitEnrollment(t *testing.T) {
+func TestCollectionSchedulerConsentIsIndependentOfEnrollment(t *testing.T) {
 	root := testServiceTempDir(t)
 	override := root
 	paths, err := platform.ResolvePaths(platform.PathOptions{Platform: platform.Platform(runtime.GOOS), HomeDir: filepath.Join(root, "home"), OwnerHomeDir: filepath.Join(root, "home"), StateRootOverride: &override, Environment: map[string]string{}})
@@ -219,11 +220,12 @@ func TestCollectionSchedulerExistsOnlyForExplicitEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("on-demand composition error = %v", err)
 	}
-	if onDemand.Background != nil {
-		t.Fatal("on-demand service unexpectedly started periodic collection")
+	if onDemand.Background == nil {
+		t.Fatal("on-demand service has no consent-aware worker")
 	}
-	if settings, enabled, err := onDemand.CollectionSettings.CollectionSettings(context.Background()); err != nil || enabled || settings.ActiveInterval == 0 {
-		t.Fatalf("on-demand collection settings = %#v/%v/%v", settings, enabled, err)
+	defer onDemand.Background.Close()
+	if settings, consent, err := onDemand.CollectionSettings.CollectionSettings(context.Background()); err != nil || consent != usage.CollectionConsentUndecided || settings.ActiveInterval == 0 {
+		t.Fatalf("on-demand collection settings = %#v/%v/%v", settings, consent, err)
 	}
 
 	enrolled, err := composeServiceOperationalServices(paths, stateStore, true)
@@ -233,8 +235,15 @@ func TestCollectionSchedulerExistsOnlyForExplicitEnrollment(t *testing.T) {
 	if enrolled.Background == nil {
 		t.Fatal("explicitly enrolled service did not start periodic collection")
 	}
-	if _, enabled, err := enrolled.CollectionSettings.CollectionSettings(context.Background()); err != nil || !enabled {
-		t.Fatalf("enrolled collection settings enabled = %v, error = %v", enabled, err)
+	if _, consent, err := enrolled.CollectionSettings.CollectionSettings(context.Background()); err != nil || consent != usage.CollectionConsentUndecided {
+		t.Fatalf("enrollment granted collection consent = %s, error = %v", consent, err)
+	}
+	accepted := usage.CollectionConsentAccepted
+	if _, _, err := onDemand.CollectionSettings.SetCollectionSettings(context.Background(), usage.DefaultCollectionSettings(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if _, consent, err := onDemand.CollectionSettings.CollectionSettings(context.Background()); err != nil || consent != accepted {
+		t.Fatalf("accepted on-demand collection consent = %s, error = %v", consent, err)
 	}
 	if err := enrolled.Background.Close(); err != nil {
 		t.Fatalf("scheduler Close() error = %v", err)

@@ -1779,7 +1779,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const collectionSettingsRequestLines = collectionSettingsRequestFields
-    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`)
     .join("\n");
   const collectionSettingsResponseLines = collectionSettingsResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)

@@ -6,7 +6,10 @@ organizes local profiles and launches your installed Codex; Codex owns account
 sign-in and provider communication.
 
 For a first foreground launch, build the CLI and run `./build/bin/codex-folio`
-with no subcommand. When no profile is ready, choose `r` to register an existing
+with no subcommand. A one-time prompt offers background collection of supported
+usage metadata. Choose yes for periodic collection or no for on-demand refresh
+only; the choice is remembered and can be changed in Dashboard Settings. It does
+not enroll OS-login startup. When no profile is ready, choose `r` to register an existing
 Codex home in place or `m` to create an isolated Managed Identity Home. Give it
 an alias and display name, complete Codex's sign-in if needed, then choose the
 ready profile in the picker to launch. A referenced home remains shared with
@@ -262,8 +265,9 @@ means this recoverable transition still needs attention; do not delete the
 database, passphrase vault, migration journal or recovery directory. This is a
 same-installation protection change, not portable credential backup.
 
-This automatic on-demand lifetime does not install OS-login startup or enable
-periodic collection. Those remain separate, explicit choices. To stop this
+This automatic on-demand lifetime does not install OS-login startup or grant
+periodic collection consent. The setup prompt remembers that separate choice;
+declining leaves foreground launch and on-demand refresh available. To stop this
 detached on-demand owner in this development slice, identify the owning process
 with `service status --json` and use an orderly platform process stop; the
 dedicated companion stop workflow is delivered separately.

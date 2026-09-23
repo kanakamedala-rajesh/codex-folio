@@ -437,17 +437,19 @@
         "active_interval_seconds": {"type": "integer", "minimum": 300, "maximum": 86400},
         "idle_interval_seconds": {"type": "integer", "minimum": 300, "maximum": 86400},
         "provider_minimum_seconds": {"type": "integer", "minimum": 300, "maximum": 300},
-        "scheduler_enabled": {"description": "True only for this explicitly enrolled, unlocked service process.", "type": "boolean"},
+        "scheduler_enabled": {"description": "True when periodic collection has explicit consent in this unlocked service process.", "type": "boolean"},
+        "consent": {"description": "Remembered background collection choice, independent of OS-login enrollment.", "enum": ["undecided", "accepted", "declined"], "type": "string"},
         "provider_floor_basis": {"description": "Stable evidence label for the conservative polling floor.", "enum": ["codex_app_server_supported_read_no_published_polling_cadence"], "type": "string"}
       },
-      "required": ["active_interval_seconds", "idle_interval_seconds", "provider_minimum_seconds", "scheduler_enabled", "provider_floor_basis"],
+      "required": ["active_interval_seconds", "idle_interval_seconds", "provider_minimum_seconds", "scheduler_enabled", "consent", "provider_floor_basis"],
       "type": "object"
     },
     "CollectionSettingsRequest": {
       "additionalProperties": false,
       "properties": {
         "active_interval_seconds": {"type": "integer", "minimum": 300, "maximum": 86400},
-        "idle_interval_seconds": {"type": "integer", "minimum": 300, "maximum": 86400}
+        "idle_interval_seconds": {"type": "integer", "minimum": 300, "maximum": 86400},
+        "consent": {"enum": ["accepted", "declined"], "type": "string"}
       },
       "required": ["active_interval_seconds", "idle_interval_seconds"],
       "type": "object"
@@ -1243,7 +1245,7 @@
       "get": {
         "operationId": "getCollectionSettings",
         "responses": {
-          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsResponse"}}}, "description": "Returns persisted browser-safe periodic collection settings and enrollment state."},
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsResponse"}}}, "description": "Returns persisted browser-safe periodic collection settings and consent state."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       },
@@ -1251,7 +1253,7 @@
         "operationId": "setCollectionSettings",
         "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsRequest"}}}, "required": true},
         "responses": {
-          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsResponse"}}}, "description": "Persists bounded active and idle intervals without enrolling a service."},
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/CollectionSettingsResponse"}}}, "description": "Persists bounded intervals and, when explicitly supplied, background collection consent without OS-login enrollment."},
           "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }

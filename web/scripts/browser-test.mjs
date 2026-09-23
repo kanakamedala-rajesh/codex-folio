@@ -894,7 +894,10 @@ try {
       assert.match(settings, /Native per-user mechanism: systemd-user/);
       assert.match(settings, /codex-folio service install/);
       check("Settings exposes native enrollment status and explicit terminal guidance");
-      assert.match(settings, /Periodic collection schedule[\s\S]*On demand · Saved intervals/);
+      assert.match(
+        settings,
+        /Periodic collection schedule[\s\S]*Periodic collection has not been chosen/,
+      );
       assert.equal(
         await page.getByLabel("Managed Launch interval · minutes", { exact: true }).inputValue(),
         "5",
@@ -922,6 +925,28 @@ try {
         "45",
       );
       check("Settings persists bounded collection intervals without enrolling the service");
+      await page.getByRole("button", { name: "Enable periodic collection", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page.getByText("Periodic collection enabled.", { exact: true }).waitFor();
+      assert.equal(
+        (await (await page.request.get(new URL("/api/v1/collection-settings", link).href)).json())
+          .consent,
+        "accepted",
+      );
+      await page.getByRole("button", { name: "Decline periodic collection", exact: true }).click();
+      await page
+        .getByText("Periodic collection declined; on-demand refresh remains available.", {
+          exact: true,
+        })
+        .waitFor();
+      const declinedSchedule = await (
+        await page.request.get(new URL("/api/v1/collection-settings", link).href)
+      ).json();
+      assert.equal(declinedSchedule.consent, "declined");
+      assert.equal(declinedSchedule.scheduler_enabled, false);
+      check(
+        "Settings consent controls are keyboard-accessible and independent of OS-login enrollment",
+      );
 
       const portableSection = page.locator(
         'section[aria-labelledby="portable-configuration-title"]',

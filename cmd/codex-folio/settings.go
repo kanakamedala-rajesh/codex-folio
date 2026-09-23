@@ -48,11 +48,7 @@ func runSettings(args []string, stdout, stderr io.Writer, resolvePaths servicePa
 		if options.json {
 			return writeServiceJSON(stdout, current)
 		}
-		state := "disabled; on-demand collection only"
-		if current.SchedulerEnabled {
-			state = "enabled by explicit native service enrollment"
-		}
-		fmt.Fprintf(stdout, "Periodic collection: %s\nActive interval: %d minutes\nIdle interval: %d minutes\nProvider-safe floor: %d minutes\n", state, current.ActiveIntervalSeconds/60, current.IdleIntervalSeconds/60, current.ProviderMinimumSeconds/60)
+		fmt.Fprintf(stdout, "Periodic collection: %s\nActive interval: %d minutes\nIdle interval: %d minutes\nProvider-safe floor: %d minutes\n", current.Consent, current.ActiveIntervalSeconds/60, current.IdleIntervalSeconds/60, current.ProviderMinimumSeconds/60)
 		return nil
 	})
 }

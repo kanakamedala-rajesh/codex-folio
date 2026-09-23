@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "2cd7ad305b646482f52f3b4b302e0aa5a437d8aa889efd557e1e12f0ceceb514" as const;
+  "828558a5b6063444f535173efcd81c2c4d48c668ad33991b2db86815eaaef34e" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -760,6 +760,7 @@ export interface MetadataResponse {
 export interface CollectionSettingsRequest {
   active_interval_seconds: number;
   idle_interval_seconds: number;
+  consent?: string;
 }
 
 export interface CollectionSettingsResponse {
@@ -767,6 +768,7 @@ export interface CollectionSettingsResponse {
   idle_interval_seconds: number;
   provider_minimum_seconds: number;
   scheduler_enabled: boolean;
+  consent: string;
   provider_floor_basis: string;
 }
 

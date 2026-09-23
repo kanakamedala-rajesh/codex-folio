@@ -62,6 +62,9 @@ func runWithServicePathResolverAndCodexResolverAndForegroundDependenciesAndCompa
 		if code := ensureEverydayCompanion(paths, options.serviceOptions, promptInput, stdout, stderr, startCompanion); code != exitSuccess {
 			return code
 		}
+		if code := offerCollectionConsent(paths, promptInput, stdout, stderr); code != exitSuccess {
+			return code
+		}
 		if proceed, code := guideFirstProfile(paths, promptInput, stdout, stderr); !proceed {
 			return code
 		}

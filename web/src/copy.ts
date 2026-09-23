@@ -113,9 +113,19 @@ export const copy = {
   enrollmentGuidance: "Review or change enrollment in your local terminal:",
   collectionSchedule: "Periodic collection schedule",
   collectionScheduleEnabled:
-    "Enabled by explicit native service enrollment for this service session.",
+    "Periodic collection is enabled while the companion runs. OS-login enrollment remains separate.",
   collectionScheduleDisabled:
-    "On demand · Saved intervals do not enroll or start a persistent service.",
+    "Periodic collection is declined. Launches and on-demand refresh remain available.",
+  collectionConsentUndecided:
+    "Periodic collection has not been chosen. On-demand use remains available.",
+  collectionConsentScope:
+    "Optional periodic reads use supported usage metadata and store bounded local snapshots. Conversation text and credentials are excluded. This choice does not enroll OS login.",
+  collectionConsentEnable: "Enable periodic collection",
+  collectionConsentDecline: "Decline periodic collection",
+  collectionConsentSaving: "Saving background collection choice.",
+  collectionConsentAccepted: "Periodic collection enabled.",
+  collectionConsentDeclined: "Periodic collection declined; on-demand refresh remains available.",
+  collectionConsentFailed: "Background collection choice was not changed.",
   collectionScheduleFloor: (minutes: number) =>
     `Provider-safe minimum · ${number.format(minutes)} minutes · Supported App Server read with no published polling cadence`,
   collectionActiveMinutes: "Managed Launch interval · minutes",

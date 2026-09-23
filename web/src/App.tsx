@@ -1015,6 +1015,32 @@ export function App() {
       setBusy(false);
     }
   }
+  async function chooseCollectionConsent(consent: "accepted" | "declined") {
+    if (operation.current || !collectionSettings) return;
+    operation.current = true;
+    setBusy(true);
+    setMessage(c.collectionConsentSaving);
+    try {
+      const saved = await api.setCollectionSettings(
+        {
+          active_interval_seconds: collectionSettings.active_interval_seconds,
+          idle_interval_seconds: collectionSettings.idle_interval_seconds,
+          consent,
+        },
+        { headers: { "X-CodexFolio-CSRF": csrf.current } },
+      );
+      setCollectionSettings(saved);
+      setMessage(
+        consent === "accepted" ? c.collectionConsentAccepted : c.collectionConsentDeclined,
+      );
+    } catch (error) {
+      failure(error);
+      setMessage(c.collectionConsentFailed);
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
   async function editProfile(request: ProfileEditRequest) {
     if (operation.current) return;
     operation.current = true;
@@ -1791,10 +1817,35 @@ export function App() {
                         {c.collectionSchedule}
                       </h2>
                       <p className="mb-4 max-w-[75ch]">
-                        {collectionSettings?.scheduler_enabled
+                        {collectionSettings?.consent === "accepted"
                           ? c.collectionScheduleEnabled
-                          : c.collectionScheduleDisabled}
+                          : collectionSettings?.consent === "declined"
+                            ? c.collectionScheduleDisabled
+                            : c.collectionConsentUndecided}
                       </p>
+                      <p className="mb-3 max-w-[75ch] text-muted">{c.collectionConsentScope}</p>
+                      <div className="mb-5 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            busy || !collectionSettings || collectionSettings.consent === "accepted"
+                          }
+                          onClick={() => void chooseCollectionConsent("accepted")}
+                          className="min-h-11 rounded border border-rule px-4 py-2 font-semibold hover:border-accent disabled:opacity-60"
+                        >
+                          {c.collectionConsentEnable}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            busy || !collectionSettings || collectionSettings.consent === "declined"
+                          }
+                          onClick={() => void chooseCollectionConsent("declined")}
+                          className="min-h-11 rounded border border-rule px-4 py-2 font-semibold hover:border-accent disabled:opacity-60"
+                        >
+                          {c.collectionConsentDecline}
+                        </button>
+                      </div>
                       <p className="mb-4 max-w-[75ch] text-muted">
                         {c.collectionScheduleFloor(
                           (collectionSettings?.provider_minimum_seconds ?? 300) / 60,

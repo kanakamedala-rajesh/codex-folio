@@ -21,7 +21,7 @@ const (
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "2cd7ad305b646482f52f3b4b302e0aa5a437d8aa889efd557e1e12f0ceceb514"
+	ContractSourceSHA256      = "828558a5b6063444f535173efcd81c2c4d48c668ad33991b2db86815eaaef34e"
 	BootstrapPath             = "/api/v1/bootstrap"
 	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
@@ -767,8 +767,9 @@ type BrowserTrustResponse struct {
 }
 
 type CollectionSettingsRequest struct {
-	ActiveIntervalSeconds int64 `json:"active_interval_seconds"`
-	IdleIntervalSeconds   int64 `json:"idle_interval_seconds"`
+	ActiveIntervalSeconds int64   `json:"active_interval_seconds"`
+	IdleIntervalSeconds   int64   `json:"idle_interval_seconds"`
+	Consent               *string `json:"consent,omitempty"`
 }
 
 type CollectionSettingsResponse struct {
@@ -776,6 +777,7 @@ type CollectionSettingsResponse struct {
 	IdleIntervalSeconds    int64  `json:"idle_interval_seconds"`
 	ProviderMinimumSeconds int64  `json:"provider_minimum_seconds"`
 	SchedulerEnabled       bool   `json:"scheduler_enabled"`
+	Consent                string `json:"consent"`
 	ProviderFloorBasis     string `json:"provider_floor_basis"`
 }
 

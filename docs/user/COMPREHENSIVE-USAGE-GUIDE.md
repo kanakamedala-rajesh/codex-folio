@@ -86,8 +86,8 @@ sessions. Registering a repository adds a Project Identity, not a session.
 Usage refresh and activity refresh collect different evidence.
 
 A fresh root does not reset remote quotas, change the account's plan or workspace,
-copy default-home history, or enroll a native service. Foreground startup has no
-periodic scheduler; refresh manually unless you explicitly test enrollment.
+copy default-home history, or enroll a native service. Periodic collection stays
+off until the separate setup prompt or Dashboard Settings records acceptance.
 
 ## Build and identify the binary
 
@@ -171,11 +171,16 @@ start` remains available.
 
 ### Periodic usage collection
 
-Periodic collection runs only inside a service session started by an explicit
-native enrollment. Merely opening the dashboard, running a CLI command, or
-starting the foreground service does not enroll or enable the scheduler.
-Passphrase-backed sessions do not start it until the vault is successfully
-unlocked, and stop it again when the service session closes.
+Plain interactive startup offers background collection once while the choice is
+unanswered. The prompt explains that supported usage metadata is read and
+bounded local snapshots are stored; conversation text and credentials are not
+collected. Yes enables periodic collection while the companion is running. No
+remembers refusal and retains foreground launch and on-demand refresh. A
+non-interactive startup makes no choice. Dashboard Settings can later enable or
+decline collection. Automatic companion startup, profile creation, browser
+trust, PATH setup and OS-login enrollment do not grant this consent. Passphrase
+services do not collect while locked; the scheduler becomes available only after
+CLI unlock and stops when that service session closes.
 
 The defaults are five minutes while a Managed Launch is running and 30 minutes
 while idle. Read or update the persisted values through **Settings → Periodic
@@ -205,9 +210,10 @@ replay every missed interval.
 
 The scheduler reuses the existing collector, SQLite writer, retention workflow,
 owner lock, and native launch identity. It does not create a second daemon or
-writer. An idle enrolled service wakes at one-minute resolution, performs no
+writer. An idle companion wakes at one-minute resolution, performs no
 provider call before a profile is due, and writes schedule state only when the
-next attempt changes or a collection completes. The repository verification
+next attempt changes or a collection completes. Without accepted consent, each
+tick stops before reading profile targets or contacting a provider. The repository verification
 suite exercises active, idle, reset, retry, restart, coalescing, lock, API, CLI,
 and browser persistence paths; native runtime resource qualification remains
 part of the platform evidence recorded for release qualification.
@@ -269,8 +275,8 @@ through the authenticated `UnlockVault` command. It never places the passphrase
 in arguments, environment variables or persistent plaintext.
 
 The owner remains available after the foreground Codex child exits. Plain
-startup does not enroll it at OS login or enable periodic collection; those
-remain explicit and independent. It prints the current non-secret loopback
+startup does not enroll it at OS login or grant periodic collection consent;
+the interactive setup prompt offers that independent choice. It prints the current non-secret loopback
 dashboard address and a repeatable `service start` command that obtains fresh
 browser authorization without automatically opening a browser.
 
@@ -707,8 +713,8 @@ selection record, plain startup offers the guided migration above before native
 initialization. It does not create an empty replacement database or commit the
 destination choice before protected-state reopen succeeds.
 
-Ordinary startup never opens a browser, enrolls OS-login startup or grants
-periodic collection consent. Its printed dashboard address contains no
+Ordinary startup never opens a browser or enrolls OS-login startup. It offers
+periodic collection consent explicitly when unanswered. Its printed dashboard address contains no
 bootstrap credential; run the printed `service start` reopening command when a
 fresh one-time browser authorization URL is required.
 
@@ -1224,7 +1230,7 @@ when the change was only a test. For Cancel, verify the prior value remains.
 | Analytics | Open Capacity, Tokens, Projects, Models, Activity, Compare; change filters; compare each chart with its table | Correct scope and units, explicit missing metadata, no summed incompatible quotas; include a single-month chart check |
 | Analytics management | Project alias save/cancel; JSON/CSV export preview/cancel/download; retention save/reopen; purge preview/cancel | Alias persists only on save; actual file matches chosen format/fields; paths excluded unless requested; no deletion from preview/cancel |
 | Alerts | Active/History; keyboard tabs; thresholds invalid/valid/save/reopen; acknowledge an actual active alert | Invalid thresholds cannot save, history remains truthful, acknowledgement does not conceal a still-active condition. No active alert means acknowledgement is not yet tested |
-| Settings | Light/Dark/System and reload; collection intervals invalid/valid/save; notification privacy; diagnostics preview/cancel/download | Changes persist independently; invalid values are rejected; downloaded JSON is an actual file, not just success feedback |
+| Settings | Light/Dark/System and reload; accept/decline periodic collection by keyboard, save bounded intervals, notification privacy; diagnostics preview/cancel/download | Collection choice survives reload independently of OS-login enrollment; invalid values are rejected; downloaded JSON is an actual file, not just success feedback |
 | Settings data | Configuration export and import preview/cancel; checkpoint inventory/refresh, retention and export preview/cancel | Correct counts and exclusions; Cancel does not apply; each checkpoint identifies its state/revision. Import apply and plaintext export are separate choices |
 | Updates/telemetry | Manual update check; inspect separate automatic preference; expand telemetry prerequisites/schema | Manual check does not enable automatic checks; unconfigured production endpoints/telemetry remain explicitly unavailable |
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
@@ -20,18 +21,30 @@ type usageCommandService struct {
 }
 
 type collectionSettingsCommandService struct {
-	store   *store.Store
-	enabled bool
+	store *store.Store
+	gate  *sync.RWMutex
 }
 
-func (service *collectionSettingsCommandService) CollectionSettings(ctx context.Context) (usagefeature.CollectionSettings, bool, error) {
+func (service *collectionSettingsCommandService) CollectionSettings(ctx context.Context) (usagefeature.CollectionSettings, usagefeature.CollectionConsent, error) {
 	settings, err := service.store.CollectionSettings(ctx)
-	return settings, service.enabled, err
+	if err != nil {
+		return settings, "", err
+	}
+	consent, err := service.store.CollectionConsent(ctx)
+	return settings, consent, err
 }
 
-func (service *collectionSettingsCommandService) SetCollectionSettings(ctx context.Context, settings usagefeature.CollectionSettings) (usagefeature.CollectionSettings, bool, error) {
-	result, err := service.store.SetCollectionSettings(ctx, settings)
-	return result, service.enabled, err
+func (service *collectionSettingsCommandService) SetCollectionSettings(ctx context.Context, settings usagefeature.CollectionSettings, consent *usagefeature.CollectionConsent) (usagefeature.CollectionSettings, usagefeature.CollectionConsent, error) {
+	if consent != nil && service.gate != nil {
+		service.gate.Lock()
+		defer service.gate.Unlock()
+	}
+	result, err := service.store.SetCollectionSettingsWithConsent(ctx, settings, consent)
+	if err != nil {
+		return result, "", err
+	}
+	current, err := service.store.CollectionConsent(ctx)
+	return result, current, err
 }
 
 func newUsageCommandService(stateStore *store.Store, resolver launch.ExecutableResolver) (*usageCommandService, error) {

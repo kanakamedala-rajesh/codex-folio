@@ -602,6 +602,14 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 27,
+			name:    "collection-consent",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE settings ADD COLUMN collection_consent TEXT NOT NULL DEFAULT 'undecided' CHECK (collection_consent IN ('undecided', 'accepted', 'declined'))`)
+				return err
+			},
+		},
 	}
 }
 
@@ -872,7 +880,7 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "collection_consent", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
 	"telemetry_state":                {"telemetry_state_id", "enabled", "schema_version", "consented_at", "installation_id"},
 	"browser_trust":                  {"credential_digest", "granted_at"},
 	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},

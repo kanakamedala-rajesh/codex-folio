@@ -17,6 +17,47 @@ type collectionSchedulerRunner struct {
 	once   sync.Once
 }
 
+// The worker exists for an on-demand companion, but each tick consults the
+// durable choice before reading targets or refreshing a profile. A changed
+// choice therefore takes effect without restarting the service.
+type collectionConsentStore struct {
+	usage.ScheduleStore
+	consentReader interface {
+		CollectionConsent(context.Context) (usage.CollectionConsent, error)
+	}
+}
+
+type collectionConsentRefresher struct {
+	reader interface {
+		CollectionConsent(context.Context) (usage.CollectionConsent, error)
+	}
+	refresher usage.ScheduledRefresher
+	gate      *sync.RWMutex
+}
+
+func (refresher collectionConsentRefresher) Refresh(ctx context.Context, alias, reason string) (usage.Snapshot, error) {
+	if refresher.gate != nil {
+		refresher.gate.RLock()
+		defer refresher.gate.RUnlock()
+	}
+	choice, err := refresher.reader.CollectionConsent(ctx)
+	if err != nil {
+		return usage.Snapshot{}, err
+	}
+	if choice != usage.CollectionConsentAccepted {
+		return usage.Snapshot{}, usage.ErrCollectionNotConsented
+	}
+	return refresher.refresher.Refresh(ctx, alias, reason)
+}
+
+func (repository collectionConsentStore) CollectionScheduleTargets(ctx context.Context) ([]usage.ScheduleTarget, error) {
+	consent, err := repository.consentReader.CollectionConsent(ctx)
+	if err != nil || consent != usage.CollectionConsentAccepted {
+		return nil, err
+	}
+	return repository.ScheduleStore.CollectionScheduleTargets(ctx)
+}
+
 func startCollectionScheduler(scheduler *usage.Scheduler) *collectionSchedulerRunner {
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := &collectionSchedulerRunner{cancel: cancel, done: make(chan struct{})}
