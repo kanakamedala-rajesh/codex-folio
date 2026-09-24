@@ -610,6 +610,27 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 28,
+			name:    "unassigned-session-identity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE observed_sessions ADD COLUMN attribution_provenance TEXT NOT NULL DEFAULT 'legacy_profile_observation' CHECK (attribution_provenance IN ('legacy_profile_observation', 'managed_launch', 'unassigned'))`,
+					`UPDATE observed_sessions SET attribution_provenance = 'unassigned' WHERE profile_id IS NULL`,
+					`DROP INDEX idx_observed_sessions_source_identity`,
+					`DELETE FROM correlation_evidence WHERE observed_session_id IN (SELECT observed_session_id FROM (SELECT observed_session_id, ROW_NUMBER() OVER (PARTITION BY source, source_session_id ORDER BY rtrim(COALESCE(last_observed_at, started_at), 'Z') DESC, observed_session_id) AS rank FROM observed_sessions WHERE source_session_id IS NOT NULL) WHERE rank > 1)`,
+					`UPDATE observed_sessions SET profile_id = NULL, attribution_provenance = 'unassigned', correlation_state = 'uncorrelated' WHERE source_session_id IS NOT NULL AND (source, source_session_id) IN (SELECT source, source_session_id FROM observed_sessions GROUP BY source, source_session_id HAVING COUNT(DISTINCT COALESCE(profile_id, '')) > 1)`,
+					`DELETE FROM correlation_evidence WHERE observed_session_id IN (SELECT observed_session_id FROM observed_sessions WHERE profile_id IS NULL)`,
+					`DELETE FROM observed_sessions WHERE observed_session_id IN (SELECT observed_session_id FROM (SELECT observed_session_id, ROW_NUMBER() OVER (PARTITION BY source, source_session_id ORDER BY rtrim(COALESCE(last_observed_at, started_at), 'Z') DESC, observed_session_id) AS rank FROM observed_sessions WHERE source_session_id IS NOT NULL) WHERE rank > 1)`,
+					`CREATE UNIQUE INDEX idx_observed_sessions_source_identity ON observed_sessions (source, source_session_id) WHERE source_session_id IS NOT NULL`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -871,7 +892,7 @@ var expectedTables = map[string][]string{
 	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id", "continuation_checkpoint_id", "continuation_revision", "boot_session_id"},
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
-	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},
+	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state", "attribution_provenance"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},

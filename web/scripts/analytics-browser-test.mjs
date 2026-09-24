@@ -312,10 +312,15 @@ export async function testAnalytics({
     assert.equal(loaded.status(), 200);
     assert.equal(new URL(loaded.url()).searchParams.get("profile"), "Work");
     assert.equal(new URL(loaded.url()).searchParams.has("project"), false);
+    const scopedActivity = (await loaded.json()).records;
+    assert.ok(
+      scopedActivity.every((record) => record.profile_alias === "Work" && record.profile_id),
+    );
     await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
     await page.getByText(/normalized activity records loaded\./).waitFor();
     assert.match(await page.locator("main").innerText(), evidence);
-    if (tabName === "Tokens") assert.match(await page.getByRole("table").innerText(), /\b0\b/);
+    if (tabName === "Tokens")
+      assert.ok(!scopedActivity.some((record) => record.tokens_used === "0"));
     assert.doesNotMatch(await page.locator("main").innerText(), /Managed Launch Launch/);
     assert.ok(await page.getByRole("img").count());
     assert.ok(await page.getByRole("table").count());
@@ -453,39 +458,31 @@ export async function testAnalytics({
   assert.equal(personal.status(), 200);
   assert.equal(new URL(personal.url()).searchParams.get("profile"), "Personal");
   const personalRecords = (await personal.json()).records;
-  assert.ok(personalRecords.some((record) => record.tokens_used === "84"));
-  assert.equal(
-    await page.getByRole("combobox", { name: "History range", exact: true }).inputValue(),
-    "90-days",
+  assert.ok(personalRecords.some((record) => record.tokens_used === "21"));
+  assert.ok(
+    personalRecords.every((record) => record.profile_alias === "Personal" && record.profile_id),
   );
+  assert.ok(!personalRecords.some((record) => record.tokens_used === "84"));
   await page.getByText(/normalized activity records loaded\./).waitFor();
-  assert.match(await page.getByRole("table").innerText(), /Atlas Research[\s\S]*Zephyr/);
 
-  const ninetyDayTabs = [
-    ["Tokens", "Token observations", 1, /84/],
-    ["Projects", "Projects", 2, /Zephyr/],
-    ["Models", "Models", 1, /gpt-5/],
-    [
-      "Activity",
-      "Activity",
-      personalRecords.length,
-      new RegExp(`${personalRecords.length} matching records`),
-    ],
+  const personalTabs = [
+    ["Tokens", "Token observations", /21[\s\S]*Observed during session/],
+    ["Models", "Models", /gpt-5/],
+    ["Activity", "Activity", new RegExp(`${personalRecords.length} matching records`)],
+    ["Projects", "Projects", /Atlas Research/],
   ];
-  for (const [tabName, heading, rows, oldEvidence] of ninetyDayTabs) {
-    const filteredResponse = page.waitForResponse(
+  for (const [tabName, heading, evidence] of personalTabs) {
+    const response = page.waitForResponse(
       (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
     );
     await page.getByRole("button", { name: tabName, exact: true }).click();
-    assert.equal((await filteredResponse).status(), 200);
+    const loaded = await response;
+    assert.equal(loaded.status(), 200);
+    assert.equal(new URL(loaded.url()).searchParams.get("profile"), "Personal");
+    assert.deepEqual((await loaded.json()).records, personalRecords);
     await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
-    await page.locator("main").filter({ hasText: oldEvidence }).waitFor();
-    assert.equal(await page.getByRole("table").locator("tbody tr").count(), rows, tabName);
-    assert.match(await page.locator("main").innerText(), oldEvidence);
-    if (tabName === "Projects") {
-      const zephyrRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "Zephyr" });
-      assert.equal(await zephyrRow.locator("td").nth(2).innerText(), "1");
-    }
+    assert.match(await page.locator("main").innerText(), evidence);
+    assert.doesNotMatch(await page.locator("main").innerText(), /84[\s\S]*Observed during session/);
   }
 
   const rangeResponse = page.waitForResponse(
@@ -496,36 +493,16 @@ export async function testAnalytics({
   assert.equal(recent.status(), 200);
   assert.equal(new URL(recent.url()).searchParams.get("profile"), "Personal");
   assert.equal(new URL(recent.url()).searchParams.has("project"), false);
-
-  const thirtyDayTabs = [
-    ["Tokens", "Token observations", null, /Token metrics are unsupported/, /84/],
-    ["Projects", "Projects", 2, /Zephyr/, null],
-    ["Models", "Models", null, /Model metadata is unsupported/, /gpt-5/],
-    [
-      "Activity",
-      "Activity",
-      personalRecords.length - 1,
-      new RegExp(`${personalRecords.length - 1} matching records`),
-      new RegExp(`${personalRecords.length} matching records`),
-    ],
-  ];
-  for (const [tabName, heading, rows, expected, oldEvidence] of thirtyDayTabs) {
-    const filteredResponse = page.waitForResponse(
-      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
-    );
-    await page.getByRole("button", { name: tabName, exact: true }).click();
-    assert.equal((await filteredResponse).status(), 200);
-    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
-    await page.locator("main").filter({ hasText: expected }).waitFor();
-    if (rows === null) assert.equal(await page.getByRole("table").count(), 0);
-    else assert.equal(await page.getByRole("table").locator("tbody tr").count(), rows, tabName);
-    assert.match(await page.locator("main").innerText(), expected);
-    if (oldEvidence) assert.doesNotMatch(await page.locator("main").innerText(), oldEvidence);
-    if (tabName === "Projects") {
-      const zephyrRow = page.getByRole("table").locator("tbody tr").filter({ hasText: "Zephyr" });
-      assert.equal(await zephyrRow.locator("td").nth(2).innerText(), "0");
-    }
-  }
+  assert.deepEqual((await recent.json()).records, personalRecords);
+  const recentActivity = page.waitForResponse(
+    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  assert.equal((await recentActivity).status(), 200);
+  assert.match(
+    await page.locator("main").innerText(),
+    new RegExp(`${personalRecords.length} matching records`),
+  );
 
   const restoreRangeResponse = page.waitForResponse(
     (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
@@ -544,32 +521,18 @@ export async function testAnalytics({
   assert.equal(zephyr.status(), 200);
   assert.equal(zephyrQuery.get("profile"), "Personal");
   assert.ok(zephyrQuery.get("project"));
+  assert.equal(
+    (await zephyr.json()).records.length,
+    0,
+    "Unassigned Zephyr history is excluded from Personal",
+  );
   await filterSummary.click();
   assert.equal(await filterDisclosure.evaluate((element) => element.open), false);
   assert.match(await filterSummary.innerText(), /Zephyr/);
-  assert.doesNotMatch(await filterSummary.innerText(), /All projects/);
   await filterSummary.click();
-  assert.match(await page.getByRole("table").innerText(), /Zephyr/);
-  assert.doesNotMatch(await page.getByRole("table").innerText(), /Atlas Research/);
-
-  const filteredTabs = [
-    ["Models", "Models", /gpt-5[\s\S]*1/],
-    ["Activity", "Activity", /Observed Session/],
-    ["Tokens", "Token observations", /84/],
-    ["Projects", "Projects", /Zephyr[\s\S]*1/],
-  ];
-  for (const [tabName, heading, expected] of filteredTabs) {
-    const filteredResponse = page.waitForResponse(
-      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
-    );
-    await page.getByRole("button", { name: tabName, exact: true }).click();
-    const filtered = await filteredResponse;
-    const query = new URL(filtered.url()).searchParams;
-    assert.equal(query.get("profile"), "Personal");
-    assert.equal(query.get("project"), zephyrQuery.get("project"));
-    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
-    assert.match(await page.getByRole("table").innerText(), expected);
-  }
+  await page
+    .getByText("No Managed Launch or Observed Session matches these filters.", { exact: true })
+    .waitFor();
 
   const atlasResponse = page.waitForResponse(
     (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
@@ -577,29 +540,24 @@ export async function testAnalytics({
   await page
     .getByRole("combobox", { name: "Project", exact: true })
     .selectOption({ label: "Atlas Research" });
-  assert.equal((await atlasResponse).status(), 200);
-  const unsupportedTokenResponse = page.waitForResponse(
-    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
-  );
-  await page.getByRole("button", { name: "Tokens", exact: true }).click();
-  assert.equal((await unsupportedTokenResponse).status(), 200);
-  await page
-    .getByText("Token metrics are unsupported for the records matching these filters.", {
-      exact: true,
-    })
-    .waitFor();
-  const unsupportedModelResponse = page.waitForResponse(
-    (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
-  );
-  await page.getByRole("button", { name: "Models", exact: true }).click();
-  assert.equal((await unsupportedModelResponse).status(), 200);
-  await page
-    .getByText("Model metadata is unsupported for the records matching these filters.", {
-      exact: true,
-    })
-    .waitFor();
+  const atlas = await atlasResponse;
+  assert.equal(atlas.status(), 200);
+  assert.ok((await atlas.json()).records.some((record) => record.tokens_used === "21"));
+  for (const [tabName, heading, evidence] of [
+    ["Tokens", "Token observations", /21/],
+    ["Models", "Models", /gpt-5/],
+    ["Activity", "Activity", /Observed Session/],
+  ]) {
+    const response = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: tabName, exact: true }).click();
+    assert.equal((await response).status(), 200);
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    assert.match(await page.getByRole("table").innerText(), evidence);
+  }
   check(
-    "project-aware analytics tabs share profile, history, and Project Alias filters, send supported service filters, preserve exact zeroes, and state absent dimensions explicitly",
+    "project-aware analytics tabs keep Personal profile, history and Project Alias filters; Unassigned Zephyr history stays outside profile totals",
   );
   check(
     "Project Alias editing uses the authenticated generated client and never projects canonical paths",

@@ -920,7 +920,42 @@ export const launchCopy = {
 export const sessionsCopy = {
   locallyDerived: "Locally derived",
   title: "Sessions",
-  subtitle: "Managed Launches and Observed Sessions retain separate boundaries.",
+  subtitle:
+    "Overall history includes Unassigned History. Managed Launches and Observed Sessions retain separate boundaries.",
+  unassigned: "Unassigned History",
+  sourceReviewTitle: "Review local history sources",
+  sourceReviewDetail:
+    "Review supported local sources before choosing an import. Registration and background collection do not grant import consent. Import reads source metadata without changing source files; unknown ownership stays Unassigned History.",
+  reviewSources: "Review sources",
+  reviewingSources: "Reviewing sources…",
+  sourceReviewFailed: "Sources could not be reviewed. Check service availability and try again.",
+  noSources:
+    "No local history sources were found. Register or locate a supported Codex home, then review again.",
+  sourceCount: "{count} candidate sessions",
+  sourceState: {
+    supported: "Supported",
+    missing: "Missing",
+    unavailable: "Unavailable",
+    unsupported: "Unsupported",
+    schema_invalid: "Unsupported schema",
+  },
+  sourceAction: {
+    missing:
+      "This source is unavailable. Check that its Codex home still exists, then review again.",
+    unavailable:
+      "This source could not be read. Check access to its Codex home, then review again.",
+    unsupported:
+      "This source format is unsupported. Update CodexFolio or choose a supported local source.",
+    schema_invalid:
+      "This source has an unsupported schema. Update CodexFolio or choose a supported local source.",
+  },
+  unsupportedSource: "This source cannot be imported. Choose a supported local source.",
+  importConsent: "I choose to import this source's supported session metadata.",
+  importSource: "Import source",
+  importing: "Importing source…",
+  importResult:
+    "Import complete. {count} new sessions were added; {existing} existing sessions were skipped. The timeline is reloading.",
+  importFailed: "Import failed. No success is assumed. Review the source and try again.",
   metadata: "Metadata only. No prompts, responses, commands or diffs.",
   filterNote: "Timeline filters do not change Selected Profile or a running Launch Profile.",
   profile: "Profile",
@@ -965,6 +1000,12 @@ export const sessionsCopy = {
   source: "Source",
   version: "Source version",
   provenance: "Provenance",
+  attribution: "Ownership attribution",
+  attributionState: {
+    managed_launch: "Explicit Managed Launch session match",
+    legacy_profile_observation: "Existing profile link; ownership evidence unchanged",
+    unassigned: "Unknown ownership",
+  },
   correlation: "Correlation",
   confidence: "Correlation confidence",
   evidenceType: "Correlation evidence",

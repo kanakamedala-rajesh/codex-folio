@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "828558a5b6063444f535173efcd81c2c4d48c668ad33991b2db86815eaaef34e" as const;
+  "03978736fd5ee17c50ca708525d88afdd1f58653a7cf2c25d99cf04b4f01eea4" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -689,6 +689,27 @@ export interface ConfigurationPackResponse {
   promotion_preview?: ConfigurationPromotionPreview;
 }
 
+export interface ActivitySource {
+  source_id: string;
+  label: string;
+  status: string;
+  session_count: number;
+}
+
+export interface ActivitySourcesResponse {
+  sources: ActivitySource[];
+}
+
+export interface ActivitySourceImportRequest {
+  source_id: string;
+  consent: boolean;
+}
+
+export interface ActivitySourceImportResponse {
+  imported_count: number;
+  already_present_count: number;
+}
+
 export interface ActivityRecord {
   record_type: string;
   id: string;
@@ -701,6 +722,7 @@ export interface ActivityRecord {
   source: string;
   source_version: string;
   provenance: string;
+  attribution_provenance?: string;
   started_at: string;
   last_observed_at: string;
   lifecycle: string;
@@ -1106,6 +1128,17 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ActivityResponse } } };
     };
   };
+  "/api/v1/activity/sources": {
+    get: {
+      operationId: "getActivitySources";
+      responses: { 200: { content: { "application/json": ActivitySourcesResponse } } };
+    };
+    post: {
+      operationId: "importActivitySource";
+      requestBody: ActivitySourceImportRequest;
+      responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
+    };
+  };
   "/api/v1/bootstrap": {
     post: {
       operationId: "exchangeBootstrap";
@@ -1274,6 +1307,11 @@ export interface CodexFolioApiClient {
     projectId?: string,
     init?: RequestInit,
   ): Promise<ActivityResponse>;
+  getActivitySources(init?: RequestInit): Promise<ActivitySourcesResponse>;
+  importActivitySource(
+    request: ActivitySourceImportRequest,
+    init?: RequestInit,
+  ): Promise<ActivitySourceImportResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
   manageBrowserTrust(
@@ -1572,6 +1610,38 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ActivityResponse;
+    },
+    async getActivitySources(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/sources", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourcesResponse;
+    },
+    async importActivitySource(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/sources", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourceImportResponse;
     },
     async exchangeBootstrap(request, init = {}) {
       const headers = new Headers(init.headers);

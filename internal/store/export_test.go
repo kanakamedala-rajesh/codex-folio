@@ -120,3 +120,31 @@ func TestAnalyticsExportFiltersNormalizedEvidenceAndDisclosesPathsExplicitly(t *
 }
 
 func int64Pointer(value int64) *int64 { return &value }
+
+func TestCombinedIdentityActivityExportExcludesUnassignedHistory(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{
+		{SourceSessionID: "linked", ProfileID: "profile-1", Source: activity.SourceLocalMetadata, SourceVersion: "0.153.4", StartedAt: at, LastObservedAt: at},
+		{SourceSessionID: "unassigned", Source: activity.SourceLocalMetadata, SourceVersion: "0.153.4", StartedAt: at, LastObservedAt: at},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(history) != 2 {
+		t.Fatalf("overall history = %#v/%v", history, err)
+	}
+	records, err := stateStore.ExportAnalytics(ctx, activity.ExportRequest{
+		Format: "json", Datasets: []string{"activity"}, Scope: usage.ScopeCombinedIdentity,
+		ProfileID: "*", ProjectID: "*", From: "all", To: "all",
+	})
+	if err != nil || records.Activity == nil || len(*records.Activity) != 1 || (*records.Activity)[0].SourceSessionID != "linked" {
+		t.Fatalf("combined activity export = %#v/%v", records.Activity, err)
+	}
+}

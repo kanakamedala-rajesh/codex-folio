@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,14 @@ func TestLocalActivityReaderReadsOnlySupportedThreadMetadata(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.ReadFile(filepath.Join(home, localStateDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := NewLocalActivityReader().Probe(context.Background(), home)
+	if err != nil || inspection.Status != activity.SourceStatusSupported || inspection.SessionCount != 2 {
+		t.Fatalf("Probe() = %#v, %v", inspection, err)
+	}
 
 	sessions, err := NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: home, SourceVersion: "0.150.1"})
 	if err != nil {
@@ -52,11 +61,73 @@ func TestLocalActivityReaderReadsOnlySupportedThreadMetadata(t *testing.T) {
 	if sessions[0].Model != "" || sessions[0].TokensUsed == nil || *sessions[0].TokensUsed != 0 {
 		t.Fatalf("optional metadata = %#v", sessions[0])
 	}
+	after, err := os.ReadFile(filepath.Join(home, localStateDatabase))
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("source database changed during probe/read: %v", err)
+	}
 }
 
 func TestLocalActivityReaderReturnsNoSessionsWithoutCodexState(t *testing.T) {
-	sessions, err := NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: t.TempDir(), SourceVersion: "0.150.1"})
+	home := t.TempDir()
+	inspection, err := NewLocalActivityReader().Probe(context.Background(), home)
+	if err != nil || inspection.Status != activity.SourceStatusMissing {
+		t.Fatalf("Probe() = %#v, %v", inspection, err)
+	}
+	sessions, err := NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: home, SourceVersion: "0.150.1"})
 	if err != nil || len(sessions) != 0 {
 		t.Fatalf("Read() = %#v, %v", sessions, err)
+	}
+}
+
+func TestLocalActivityReaderReportsUnavailableNonregularSource(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, localStateDatabase), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := NewLocalActivityReader().Probe(context.Background(), home)
+	if err != nil || inspection.Status != activity.SourceStatusUnavailable {
+		t.Fatalf("Probe() = %#v, %v", inspection, err)
+	}
+}
+
+func TestLocalActivityReaderReportsUnsupportedAndInvalidSchema(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        string
+		malformedRow bool
+		status       string
+		readError    error
+	}{
+		{name: "unsupported layout", setup: `CREATE TABLE unrelated (id TEXT)`, status: activity.SourceStatusUnsupported, readError: activity.ErrActivityUnsupportedSource},
+		{name: "missing required column", setup: `CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER)`, status: activity.SourceStatusSchemaInvalid, readError: activity.ErrActivityInvalidSchema},
+		{name: "malformed row", setup: `CREATE TABLE threads (id TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, model TEXT, cwd TEXT, tokens_used INTEGER)`, malformedRow: true, status: activity.SourceStatusSchemaInvalid, readError: activity.ErrActivityInvalidSchema},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			database, err := sql.Open("sqlite", filepath.Join(home, localStateDatabase))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(test.setup); err != nil {
+				t.Fatal(err)
+			}
+			if test.malformedRow {
+				if _, err := database.Exec(`INSERT INTO threads VALUES (?, 1000, 2000, NULL, ?, 0)`, "invalid-id", t.TempDir()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+			inspection, err := NewLocalActivityReader().Probe(context.Background(), home)
+			if err != nil || inspection.Status != test.status {
+				t.Fatalf("Probe() = %#v, %v; want %q", inspection, err, test.status)
+			}
+			_, err = NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: home, SourceVersion: LocalActivitySourceVersion})
+			if !errors.Is(err, test.readError) {
+				t.Fatalf("Read() error = %v; want %v", err, test.readError)
+			}
+		})
 	}
 }

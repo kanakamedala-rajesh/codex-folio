@@ -59,6 +59,9 @@ func (store *Store) ExportAnalytics(ctx context.Context, request activity.Export
 		if err == nil {
 			exported := []activity.ActivityExportRecord{}
 			for _, record := range records {
+				if request.Scope == usage.ScopeCombinedIdentity && record.ProfileID == "" {
+					continue
+				}
 				if exportRecordMatches(record.ProfileID, record.ProjectID, record.StartedAt, record.LastObservedAt, profileID, request.ProjectID, request.From, request.To) {
 					exported = append(exported, activity.ActivityExportRecord{TimelineRecord: record})
 				}

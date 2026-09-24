@@ -1,5 +1,12 @@
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { UsageRefreshError, type ActivityRecord, type ActivityResponse } from "./generated/openapi";
+import {
+  UsageRefreshError,
+  type ActivityRecord,
+  type ActivityResponse,
+  type ActivitySource,
+  type ActivitySourceImportResponse,
+  type ActivitySourcesResponse,
+} from "./generated/openapi";
 import { sessionsCopy as c, sessionStateCopy, provenanceCopy } from "./copy";
 
 export type SessionFilters = {
@@ -14,6 +21,8 @@ type Props = {
   filters: SessionFilters;
   setFilters: (value: SessionFilters) => void;
   read: () => Promise<ActivityResponse>;
+  reviewSources: () => Promise<ActivitySourcesResponse>;
+  importSource: (sourceId: string) => Promise<ActivitySourceImportResponse>;
   expired: (error: unknown) => void;
   heading: RefObject<HTMLHeadingElement | null>;
 };
@@ -30,6 +39,8 @@ const instant = (value: string) =>
   value && Number.isFinite(Date.parse(value)) ? date.format(new Date(value)) : c.unavailable;
 const key = (record: ActivityRecord) => `${record.record_type}:${record.id}`;
 const managed = (record: ActivityRecord) => record.record_type === "managed_launch";
+const ownership = (record: ActivityRecord) =>
+  record.profile_id ? record.profile_alias : c.unassigned;
 const projectName = (record: ActivityRecord) =>
   record.project_alias || record.project_basename || c.unavailable;
 const provenance = (record: ActivityRecord) =>
@@ -42,7 +53,7 @@ const hasRelationship = (record: ActivityRecord) =>
 function Facts({ record }: { record: ActivityRecord }) {
   const pairs = [
     [c.type, label(record.record_type)],
-    [managed(record) ? c.launchProfile : c.profile, record.profile_alias],
+    [managed(record) ? c.launchProfile : c.profile, ownership(record)],
     [c.project, projectName(record)],
     [c.basename, record.project_basename || c.unavailable],
     [managed(record) ? c.launchRecorded : c.observedStarted, instant(record.started_at)],
@@ -81,6 +92,15 @@ function Evidence({ record }: { record: ActivityRecord }) {
     [c.source, label(record.source)],
     [c.version, record.source_version || c.unavailable],
     [c.provenance, provenance(record)],
+    ...(!managed(record)
+      ? [
+          [
+            c.attribution,
+            c.attributionState[record.attribution_provenance as keyof typeof c.attributionState] ??
+              c.unavailable,
+          ],
+        ]
+      : []),
     [c.correlation, label(record.correlation_state)],
     [c.confidence, label(record.correlation_confidence)],
     [c.evidenceType, label(record.correlation_evidence_type)],
@@ -113,7 +133,15 @@ function Evidence({ record }: { record: ActivityRecord }) {
   );
 }
 
-export function Sessions({ filters, setFilters, read, expired, heading }: Props) {
+export function Sessions({
+  filters,
+  setFilters,
+  read,
+  reviewSources,
+  importSource,
+  expired,
+  heading,
+}: Props) {
   const [records, setRecords] = useState<ActivityRecord[]>([]);
   const [loadedAt, setLoadedAt] = useState(0);
   const [busy, setBusy] = useState(true);
@@ -124,6 +152,51 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const fetchRecords = useEffectEvent(() => read());
   const reportExpired = useEffectEvent((error: unknown) => expired(error));
   const [reload, setReload] = useState(0);
+  const [sources, setSources] = useState<ActivitySource[]>([]);
+  const [sourcesBusy, setSourcesBusy] = useState(false);
+  const [sourcesError, setSourcesError] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
+  const [consentedSource, setConsentedSource] = useState("");
+  const [importing, setImporting] = useState("");
+  const [importResult, setImportResult] = useState("");
+  async function review() {
+    setSourcesBusy(true);
+    setSourcesError(false);
+    setImportResult("");
+    try {
+      const result = await reviewSources();
+      setSources(result.sources);
+      setReviewed(true);
+      setConsentedSource("");
+    } catch (error) {
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) expired(error);
+      else setSourcesError(true);
+    } finally {
+      setSourcesBusy(false);
+    }
+  }
+  async function importReviewed(source: ActivitySource) {
+    if (source.status !== "supported" || consentedSource !== source.source_id || importing) return;
+    setImporting(source.source_id);
+    setImportResult("");
+    try {
+      const result = await importSource(source.source_id);
+      setImportResult(
+        c.importResult
+          .replace("{count}", number.format(result.imported_count))
+          .replace("{existing}", number.format(result.already_present_count)),
+      );
+      setConsentedSource("");
+      setBusy(true);
+      setFailed(false);
+      setReload((value) => value + 1);
+    } catch (error) {
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) expired(error);
+      else setImportResult(c.importFailed);
+    } finally {
+      setImporting("");
+    }
+  }
   useEffect(() => {
     let cancelled = false;
     void fetchRecords()
@@ -168,7 +241,10 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const filtered = records.filter(
     (record) =>
       !invalidDates &&
-      (!filters.profile || record.profile_id === filters.profile) &&
+      (!filters.profile ||
+        (filters.profile === "__unassigned__"
+          ? !record.profile_id
+          : record.profile_id === filters.profile)) &&
       (!filters.project || record.project_id === filters.project) &&
       (!filters.type || record.record_type === filters.type) &&
       Date.parse(record.started_at) >= lower &&
@@ -179,7 +255,11 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const visible = filtered.slice(currentPage * 25, (currentPage + 1) * 25);
   const selected = records.find((record) => key(record) === selectedKey);
   const profiles = [
-    ...new Map(records.map((record) => [record.profile_id, record.profile_alias])).entries(),
+    ...new Map(
+      records
+        .filter((record) => record.profile_id)
+        .map((record) => [record.profile_id, record.profile_alias]),
+    ).entries(),
   ];
   const projects = [
     ...new Map(
@@ -223,7 +303,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
           tabIndex={-1}
           className="mb-4 max-w-[30ch] text-[clamp(1.8rem,3.3vw,2.75rem)] font-bold leading-[1.16] tracking-[-0.025em]"
         >
-          {selected ? `${label(selected.record_type)} · ${selected.profile_alias}` : c.title}
+          {selected ? `${label(selected.record_type)} · ${ownership(selected)}` : c.title}
         </h1>
         <p className="text-muted">{selected ? c.metadata : c.subtitle}</p>
       </header>
@@ -254,7 +334,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
               related.map((record) => (
                 <section key={key(record)} className="border-b border-rule py-4">
                   <h3 className="mb-4 font-bold">
-                    {label(record.record_type)} · {record.profile_alias}
+                    {label(record.record_type)} · {ownership(record)}
                   </h3>
                   <Facts record={record} />
                   <Evidence record={record} />
@@ -267,6 +347,89 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
         </>
       ) : null}
       <div hidden={Boolean(selected)}>
+        <section className="mb-7 border-b border-rule pb-6" aria-labelledby="source-review-title">
+          <h2 id="source-review-title" className="mb-3 text-[1.4rem] font-bold">
+            {c.sourceReviewTitle}
+          </h2>
+          <p className="mb-4 max-w-[75ch] text-muted">{c.sourceReviewDetail}</p>
+          <button
+            className={button}
+            disabled={sourcesBusy || Boolean(importing)}
+            onClick={() => void review()}
+          >
+            {sourcesBusy ? c.reviewingSources : c.reviewSources}
+          </button>
+          {sourcesBusy && (
+            <p role="status" className="mt-3">
+              {c.reviewingSources}
+            </p>
+          )}
+          {sourcesError && (
+            <p role="alert" className="mt-3 text-warning">
+              {c.sourceReviewFailed}
+            </p>
+          )}
+          {reviewed && !sources.length && (
+            <p role="status" className="mt-3">
+              {c.noSources}
+            </p>
+          )}
+          {reviewed && sources.length > 0 && (
+            <div className="mt-5 grid gap-4">
+              {sources.map((source) => (
+                <section
+                  key={source.source_id}
+                  className="min-w-0 rounded border border-rule p-4"
+                  aria-label={source.label}
+                >
+                  <h3 className="mb-2 font-bold wrap-anywhere">{source.label}</h3>
+                  <p className="mb-3 text-sm text-muted">
+                    {c.sourceCount.replace("{count}", number.format(source.session_count))} ·{" "}
+                    {c.sourceState[source.status as keyof typeof c.sourceState] ??
+                      c.unsupportedSource}
+                  </p>
+                  {source.status === "supported" ? (
+                    <>
+                      <label className="mb-3 flex min-h-11 items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={consentedSource === source.source_id}
+                          disabled={Boolean(importing)}
+                          onChange={(event) =>
+                            setConsentedSource(event.target.checked ? source.source_id : "")
+                          }
+                        />
+                        <span>{c.importConsent}</span>
+                      </label>
+                      <button
+                        className={button}
+                        disabled={consentedSource !== source.source_id || Boolean(importing)}
+                        onClick={() => void importReviewed(source)}
+                      >
+                        {importing === source.source_id ? c.importing : c.importSource}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-warning">
+                      {c.sourceAction[source.status as keyof typeof c.sourceAction] ??
+                        c.unsupportedSource}
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
+          )}
+          {importResult && (
+            <p role="status" className="mt-4">
+              {importResult}
+            </p>
+          )}
+          {importing && (
+            <p role="status" className="mt-4">
+              {c.importing}
+            </p>
+          )}
+        </section>
         <div className="mb-4 flex flex-wrap items-end gap-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 max-sm:[&_label]:w-full">
           <label>
             {c.profile}
@@ -276,6 +439,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
               onChange={(e) => change("profile", e.target.value)}
             >
               <option value="">{c.allProfiles}</option>
+              <option value="__unassigned__">{c.unassigned}</option>
               {profiles.map(([id, alias]) => (
                 <option value={id} key={id}>
                   {alias}
@@ -401,7 +565,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
                     {provenance(record)} · {label(record.source)}
                   </small>
                 </td>
-                <td className={cell}>{record.profile_alias}</td>
+                <td className={cell}>{ownership(record)}</td>
                 <td className={cell}>{projectName(record)}</td>
                 <td className={cell}>
                   {managed(record) ? label(record.lifecycle) : c.lastSeen}
@@ -427,7 +591,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
           {visible.map((record) => (
             <details className="border-b border-rule py-3" key={key(record)}>
               <summary className="min-h-11 cursor-pointer py-3 font-semibold wrap-anywhere">
-                {instant(record.started_at)} · {label(record.record_type)} · {record.profile_alias}
+                {instant(record.started_at)} · {label(record.record_type)} · {ownership(record)}
               </summary>
               <Facts record={record} />
               <p className="mb-4 text-sm text-muted">

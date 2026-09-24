@@ -1551,6 +1551,13 @@ export function App() {
                 filters={sessionFilters}
                 setFilters={setSessionFilters}
                 read={() => api.getActivity()}
+                reviewSources={() => api.getActivitySources()}
+                importSource={(sourceId) =>
+                  api.importActivitySource(
+                    { source_id: sourceId, consent: true },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
                 expired={failure}
                 heading={heading}
               />

@@ -16,12 +16,13 @@ import (
 const (
 	APIVersion                = "v1"
 	ActivityPath              = "/api/v1/activity"
+	ActivitySourcesPath       = "/api/v1/activity/sources"
 	AlertsPath                = "/api/v1/alerts"
 	AnalyticsPath             = "/api/v1/analytics"
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "828558a5b6063444f535173efcd81c2c4d48c668ad33991b2db86815eaaef34e"
+	ContractSourceSHA256      = "03978736fd5ee17c50ca708525d88afdd1f58653a7cf2c25d99cf04b4f01eea4"
 	BootstrapPath             = "/api/v1/bootstrap"
 	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
@@ -705,6 +706,27 @@ type HandoffResult struct {
 	Management *CheckpointManagementResponse `json:"management,omitempty"`
 }
 
+type ActivitySource struct {
+	SourceId     string `json:"source_id"`
+	Label        string `json:"label"`
+	Status       string `json:"status"`
+	SessionCount int64  `json:"session_count"`
+}
+
+type ActivitySourcesResponse struct {
+	Sources []ActivitySource `json:"sources"`
+}
+
+type ActivitySourceImportRequest struct {
+	SourceId string `json:"source_id"`
+	Consent  bool   `json:"consent"`
+}
+
+type ActivitySourceImportResponse struct {
+	ImportedCount       int64 `json:"imported_count"`
+	AlreadyPresentCount int64 `json:"already_present_count"`
+}
+
 type ActivityRecord struct {
 	RecordType                 string  `json:"record_type"`
 	Id                         string  `json:"id"`
@@ -717,6 +739,7 @@ type ActivityRecord struct {
 	Source                     string  `json:"source"`
 	SourceVersion              string  `json:"source_version"`
 	Provenance                 string  `json:"provenance"`
+	AttributionProvenance      *string `json:"attribution_provenance,omitempty"`
 	StartedAt                  string  `json:"started_at"`
 	LastObservedAt             string  `json:"last_observed_at"`
 	Lifecycle                  string  `json:"lifecycle"`
@@ -1361,6 +1384,57 @@ func (client *Client) GetActivity(ctx context.Context, profileAlias, projectID s
 		return result, response, err
 	}
 	return result, response, nil
+}
+
+func (client *Client) GetActivitySources(ctx context.Context) (ActivitySourcesResponse, *http.Response, error) {
+	var result ActivitySourcesResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ActivitySourcesPath, nil)
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return result, response, fmt.Errorf("GET %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
+}
+
+func (client *Client) ImportActivitySource(ctx context.Context, input ActivitySourceImportRequest) (ActivitySourceImportResponse, *http.Response, error) {
+	var result ActivitySourceImportResponse
+	body, err := json.Marshal(input)
+	if err != nil {
+		return result, nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ActivitySourcesPath, bytes.NewReader(body))
+	if err != nil {
+		return result, nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return result, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return result, response, fmt.Errorf("POST %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+	}
+	err = json.NewDecoder(response.Body).Decode(&result)
+	return result, response, err
 }
 
 func (client *Client) GetAnalytics(ctx context.Context, scope string) (AnalyticsResponse, *http.Response, error) {

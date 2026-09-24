@@ -635,6 +635,27 @@ instants in your OS display zone; custom from/through dates are inclusive.
 All dates are shown by default. Longer results have keyboard-accessible pages.
 Filters survive details and navigation within the authorized page.
 
+Choose **Review sources** to inspect detected local history sources. The review
+shows each source's support state and candidate session count. A supported
+source requires a separate consent checkbox before **Import source** becomes
+available. Leaving consent unchecked or leaving the page imports nothing;
+profile registration and background collection consent do not authorize this
+action. Import reads supported metadata without changing source files. The
+result reports newly added sessions; repeating an import skips previously
+retained source sessions. Missing sources can be reviewed again after their
+Codex home is restored. Unsupported formats or schemas require a compatible
+CodexFolio reader or another supported source; they are not silently imported.
+
+Unknown historical ownership is labeled **Unassigned History** throughout the
+overall timeline, details and profile filter. This filter is only a history
+view; Unassigned History is not a selectable Identity Profile and does not
+contribute to any individual-profile total or the profile-based Combined
+Identity View. An imported session is not attributed to the current sign-in
+solely because its source came from that Identity Home. Managed Launch and
+Observed Session records remain distinct. Observed details show whether
+ownership came from an explicit Managed Launch session match, a preexisting
+profile link, or remains unknown.
+
 **Reload timeline** reads retained service metadata; it does not run collection.
 Use the existing `activity refresh PROFILE` CLI workflow to collect supported
 local metadata. A failed reload keeps the previous records and their original
@@ -1226,7 +1247,7 @@ when the change was only a test. For Cancel, verify the prior value remains.
 | Overview | Select each scope; Refresh; Open details; move history selector; dismiss guidance; Open Alerts; inspect alternatives | Correct account/source/window/time, explicit missing data, corresponding history values; do not treat Unsupported as zero or a second limit |
 | Profiles | Add/resume; expand details; edit/save/reopen; edit/cancel; Select; reauthenticate intentionally | Ready/Pending states reflect setup, local metadata persists, cancellation preserves values, future selection is explicit |
 | Shared Configuration Packs | Create a small nonsecret draft; inspect exact documents/digests; approve; assign; preview projection; test conflict review | Approval/version/assignment are distinct; preview identifies changes and preserves local conflicts. Apply only to a disposable managed test profile |
-| Sessions | Reload; profile/project/date/type filters; empty result; next/previous pages; open both record types; return and inspect filter retention | Records match filters and inclusive display dates; Managed Launch and Observed Session remain distinct; detail is metadata-only |
+| Sessions | Review sources; inspect supported/missing/unsupported states; leave consent unchecked, then consent to import a supported source; repeat import; reload; Unassigned History/profile/project/date/type filters; empty result; pages; open both record types; return and inspect filter retention | Refusal imports nothing; result and timeline show imported metadata without duplicate source sessions; unknown ownership stays Unassigned and out of profile totals; records match filters and inclusive dates; record types stay distinct; detail is metadata-only |
 | Analytics | Open Capacity, Tokens, Projects, Models, Activity, Compare; change filters; compare each chart with its table | Correct scope and units, explicit missing metadata, no summed incompatible quotas; include a single-month chart check |
 | Analytics management | Project alias save/cancel; JSON/CSV export preview/cancel/download; retention save/reopen; purge preview/cancel | Alias persists only on save; actual file matches chosen format/fields; paths excluded unless requested; no deletion from preview/cancel |
 | Alerts | Active/History; keyboard tabs; thresholds invalid/valid/save/reopen; acknowledge an actual active alert | Invalid thresholds cannot save, history remains truthful, acknowledgement does not conceal a still-active condition. No active alert means acknowledgement is not yet tested |

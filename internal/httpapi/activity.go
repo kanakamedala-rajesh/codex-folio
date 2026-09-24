@@ -21,6 +21,58 @@ import (
 type CommandActivityService interface {
 	Refresh(context.Context, string) ([]activity.TimelineRecord, error)
 	List(context.Context, activity.Filters) ([]activity.TimelineRecord, error)
+	ReviewSources(context.Context) ([]activity.SourceReview, error)
+	ImportSource(context.Context, string, bool) (activity.ImportResult, error)
+}
+
+func (server *Server) activitySources(response http.ResponseWriter, request *http.Request) {
+	if server.activities == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	switch request.Method {
+	case http.MethodGet:
+		sources, err := server.activities.ReviewSources(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+			return
+		}
+		items := make([]ActivitySource, 0, len(sources))
+		for _, source := range sources {
+			items = append(items, ActivitySource{SourceId: source.SourceID, Label: source.Label, Status: source.Status, SessionCount: int64(source.SessionCount)})
+		}
+		writeJSON(response, http.StatusOK, ActivitySourcesResponse{Sources: items})
+	case http.MethodPost:
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+		if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		var input ActivitySourceImportRequest
+		decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || input.Consent != true {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		result, err := server.activities.ImportSource(request.Context(), input.SourceId, input.Consent)
+		if err != nil {
+			server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
+			return
+		}
+		writeJSON(response, http.StatusOK, ActivitySourceImportResponse{ImportedCount: int64(result.ImportedCount), AlreadyPresentCount: int64(result.AlreadyPresentCount)})
+	default:
+		server.writeMethodError(response, "GET, POST")
+	}
 }
 
 type CommandActivityRequest struct {
@@ -161,6 +213,9 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 			LastObservedAt: formatUsageTime(record.LastObservedAt), Lifecycle: record.Lifecycle, Model: record.Model,
 			CorrelationState: record.Correlation.State, CorrelationManagedLaunchId: record.Correlation.ManagedLaunchID,
 			CorrelationEvidenceType: record.Correlation.EvidenceType, CorrelationConfidence: record.Correlation.Confidence,
+		}
+		if record.AttributionProvenance != "" {
+			item.AttributionProvenance = &record.AttributionProvenance
 		}
 		if record.ContinuationCheckpointID != "" {
 			item.ContinuationCheckpointId = &record.ContinuationCheckpointID

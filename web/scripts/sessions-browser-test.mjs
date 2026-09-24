@@ -38,11 +38,60 @@ export async function testSessions({
   ])
     assert.ok(!raw.includes(excluded), excluded);
   const records = JSON.parse(raw).records;
+  assert.ok(
+    records.some((record) => record.record_type === "observed_session" && !record.profile_id),
+  );
+  const combinedResponse = await page.request.get(
+    new URL("/api/v1/analytics?scope=combined_identity", link).href,
+  );
+  assert.equal(combinedResponse.status(), 200);
+  const combinedActivity = (await combinedResponse.json()).activity;
+  assert.ok(combinedActivity.length > 0);
+  assert.ok(
+    combinedActivity.every((record) => record.profile_id),
+    "Combined Identity View excludes Unassigned History",
+  );
+  const reviewButton = page.getByRole("button", { name: "Review sources", exact: true });
+  await reviewButton.focus();
+  await page.keyboard.press("Enter");
+  const reviewedSources = await (
+    await page.request.get(new URL("/api/v1/activity/sources", link).href)
+  ).json();
+  assert.ok(Array.isArray(reviewedSources.sources));
+  for (const source of reviewedSources.sources) {
+    const card = page.getByRole("region", { name: source.label, exact: true });
+    await card.waitFor();
+    if (source.status === "supported") {
+      assert.equal(await card.getByRole("button", { name: "Import source" }).isDisabled(), true);
+    } else {
+      assert.equal(await card.getByRole("button", { name: "Import source" }).count(), 0);
+    }
+  }
+  await page
+    .getByRole("region", { name: "Default Codex home", exact: true })
+    .getByText(
+      "This source format is unsupported. Update CodexFolio or choose a supported local source.",
+    )
+    .waitFor();
+  await page
+    .getByRole("region", { name: "Configured Codex home", exact: true })
+    .getByText(
+      "This source has an unsupported schema. Update CodexFolio or choose a supported local source.",
+    )
+    .waitFor();
+  assert.deepEqual(
+    (await (await page.request.get(new URL("/api/v1/activity", link).href)).json()).records,
+    records,
+    "review and unchecked consent leave activity unchanged",
+  );
   const observed = records.filter((record) => record.record_type === "observed_session");
   assert.equal(observed.length, 4);
-  const correlated = observed.find((record) => record.correlation_state === "correlated");
-  const contradictory = observed.find((record) => record.correlation_state === "contradictory");
-  assert.ok(correlated && contradictory);
+  const correlated = observed.find((record) => record.tokens_used === "42");
+  assert.ok(correlated);
+  assert.equal(correlated.correlation_state, "correlated");
+  assert.ok(correlated.profile_id);
+  assert.ok(observed.some((record) => !record.profile_id));
+  assert.ok(observed.some((record) => !record.profile_id && !record.model));
   const related = records.find((record) => record.id === correlated.correlation_managed_launch_id);
   assert.equal(related.record_type, "managed_launch");
   assert.equal(related.tokens_used, "");
@@ -58,12 +107,21 @@ export async function testSessions({
   await select("Record type", "observed_session");
   assert.equal(await rows().count(), 4);
   await select("Profile", correlated.profile_id);
-  assert.equal(await rows().count(), 3);
+  assert.equal(
+    await rows().count(),
+    observed.filter((record) => record.profile_id === correlated.profile_id).length,
+  );
   await select("Project", correlated.project_id);
-  assert.equal(await rows().count(), 2);
+  assert.equal(
+    await rows().count(),
+    observed.filter(
+      (record) =>
+        record.profile_id === correlated.profile_id && record.project_id === correlated.project_id,
+    ).length,
+  );
   await capture("sessions-filtered-wide", 1440, 1000);
   await scanAccessibility("sessions");
-  await rows().nth(1).getByRole("button", { name: "Open details", exact: true }).focus();
+  await rows().first().getByRole("button", { name: "Open details", exact: true }).focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.activeElement?.tagName === "H1");
   let text = await page.locator("main").innerText();
@@ -81,16 +139,13 @@ export async function testSessions({
   await scanAccessibility("session-detail");
   await page.getByRole("button", { name: "Back to Sessions", exact: true }).click();
   await page.waitForFunction(() => document.activeElement?.textContent === "Open details");
-  assert.equal(await rows().count(), 2);
-  await rows().first().getByRole("button", { name: "Open details", exact: true }).click();
-  text = await page.locator("main").innerText();
-  assert.match(text, /Contradictory/);
-  assert.match(text, /No supported relationship to another record is established/);
-  assert.ok(!text.includes("Launch Profile (immutable)"));
-  await page.getByRole("button", { name: "Back to Sessions", exact: true }).click();
+  await select("Profile", "__unassigned__");
   await select("Project", "");
+  assert.equal(await rows().count(), observed.filter((record) => !record.profile_id).length);
   await rows().first().getByRole("button", { name: "Open details", exact: true }).click();
   text = await page.locator("main").innerText();
+  assert.match(text, /Observed Session · Unassigned History/);
+  assert.match(text, /Unknown ownership/);
   assert.match(text, /Partial metadata/);
   assert.match(text, /0 · Locally derived/);
   assert.match(text, /Uncorrelated/);
@@ -102,9 +157,19 @@ export async function testSessions({
     const date = new Date(value);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }, correlated.started_at);
+  const unassignedOnDay = await page.evaluate(
+    ({ records, day }) =>
+      records.filter((record) => {
+        if (record.profile_id) return false;
+        const date = new Date(record.started_at);
+        const local = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+        return local === day;
+      }).length,
+    { records: observed, day: localDay },
+  );
   await page.getByLabel("From date", { exact: true }).fill(localDay);
   await page.getByLabel("Through date", { exact: true }).fill(localDay);
-  assert.equal(await rows().count(), 3);
+  assert.equal(await rows().count(), unassignedOnDay);
   await page.getByLabel("From date", { exact: true }).fill("2099-01-01");
   await page.getByRole("alert").filter({ hasText: "Choose a through date" }).waitFor();
   assert.equal(await rows().count(), 0);
@@ -124,6 +189,22 @@ export async function testSessions({
   await capture("sessions-wide", 1440, 1000);
   await capture("sessions-medium", 900, 1000);
   await capture("sessions-narrow", 390, 844);
+  await reviewButton.focus();
+  await page.keyboard.press("Enter");
+  const supportedSource = reviewedSources.sources.find((source) => source.status === "supported");
+  if (supportedSource) {
+    const card = page.getByRole("region", { name: supportedSource.label, exact: true });
+    const consent = card.getByRole("checkbox", {
+      name: "I choose to import this source's supported session metadata.",
+      exact: true,
+    });
+    await consent.focus();
+    await page.keyboard.press("Space");
+    assert.equal(await card.getByRole("button", { name: "Import source" }).isEnabled(), true);
+    await page.keyboard.press("Space");
+    assert.equal(await card.getByRole("button", { name: "Import source" }).isDisabled(), true);
+  }
+  await scanAccessibility("sessions-source-review-narrow");
   const disclosure = page.locator("main details").first();
   await disclosure.locator("summary").focus();
   await page.keyboard.press("Enter");
@@ -241,8 +322,46 @@ export async function testSessions({
   check(
     "real-service Sessions pagination covers 26 independent records, keyboard Next, Previous, boundary disabling, filter reset and exact fixture cleanup",
   );
+  const repeatSource = reviewedSources.sources.find(
+    (source) => source.status === "supported" && source.session_count > 0,
+  );
+  assert.ok(repeatSource, "fixture exposes a supported source with sessions");
+  await reviewButton.click();
+  const repeatCard = page.getByRole("region", { name: repeatSource.label, exact: true });
+  await repeatCard.waitFor();
+  const importOnce = async () => {
+    await repeatCard.getByRole("checkbox", { name: /I choose to import this source/ }).check();
+    const imported = page.waitForResponse(
+      (item) =>
+        new URL(item.url()).pathname === "/api/v1/activity/sources" &&
+        item.request().method() === "POST",
+    );
+    await repeatCard.getByRole("button", { name: "Import source", exact: true }).click();
+    const response = await imported;
+    assert.equal(response.status(), 200, await response.text());
+    const result = await response.json();
+    await page.getByRole("status").filter({ hasText: "Import complete." }).waitFor();
+    return result;
+  };
+  const firstImport = await importOnce();
+  const afterFirstImport = (
+    await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
+  ).records;
+  assert.equal(afterFirstImport.length, records.length + firstImport.imported_count);
+  const secondImport = await importOnce();
+  assert.equal(secondImport.imported_count, 0, "repeat import adds no source sessions");
+  assert.ok(
+    secondImport.already_present_count > 0,
+    "repeat import reports existing source sessions",
+  );
+  await page.getByRole("status").filter({ hasText: "0 new sessions were added" }).waitFor();
+  assert.deepEqual(
+    (await (await page.request.get(new URL("/api/v1/activity", link).href)).json()).records,
+    afterFirstImport,
+    "repeat import leaves normalized activity unchanged",
+  );
   await nav("Overview").click();
   check(
-    "Sessions filters, independent correlated/contradictory/partial facts, safe metadata, keyboard return, retained filters, themes, responsive reflow and failed-read recovery",
+    "Sessions source review, consent and repeat import; Unassigned History and Combined Identity exclusion; filters, metadata, keyboard return, responsive reflow and failed-read recovery",
   );
 }

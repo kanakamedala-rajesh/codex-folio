@@ -9,6 +9,10 @@ import (
 
 type activityReader struct{ sessions []SourceSession }
 
+func (reader activityReader) Probe(context.Context, string) (SourceInspection, error) {
+	return SourceInspection{Status: SourceStatusSupported, SessionCount: len(reader.sessions)}, nil
+}
+
 func (reader activityReader) Read(context.Context, ReadRequest) ([]SourceSession, error) {
 	return append([]SourceSession(nil), reader.sessions...), nil
 }
@@ -17,6 +21,10 @@ type activityRepository struct {
 	target   ProfileTarget
 	saved    []ObservedSessionRecord
 	timeline []TimelineRecord
+}
+
+func (repository *activityRepository) ListActivitySources(context.Context) ([]SourceTarget, error) {
+	return []SourceTarget{{ID: "home-1", Label: repository.target.Alias, IdentityHome: repository.target.IdentityHome}}, nil
 }
 
 func (repository *activityRepository) ResolveActivityProfile(context.Context, string) (ProfileTarget, error) {
@@ -68,7 +76,7 @@ func TestRefreshStoresOnlyNormalizedObservedSessionMetadata(t *testing.T) {
 		t.Fatalf("saved records = %#v", repository.saved)
 	}
 	saved := repository.saved[0]
-	if saved.ProfileID != "profile-1" || saved.ProfileAlias != "Work" || saved.ProjectID != "project-1" || saved.ProjectAlias != "Folio" || saved.ProjectBasename != "codex-folio" {
+	if saved.ProfileID != "" || saved.ProfileAlias != "" || saved.ProjectID != "project-1" || saved.ProjectAlias != "Folio" || saved.ProjectBasename != "codex-folio" {
 		t.Fatalf("saved association = %#v", saved)
 	}
 	if saved.SourceSessionID == "" || saved.SourceVersion != "0.150.1" || saved.Model != "gpt-5" || saved.TokensUsed == nil || *saved.TokensUsed != 42 {
@@ -77,6 +85,26 @@ func TestRefreshStoresOnlyNormalizedObservedSessionMetadata(t *testing.T) {
 }
 
 func tokenCount(value int64) *int64 { return &value }
+
+func TestImportRequiresConsentAndLeavesUnknownHistoryUnassigned(t *testing.T) {
+	start := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	repository := &activityRepository{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
+	service, err := NewService(ServiceOptions{Repository: repository, Reader: activityReader{sessions: []SourceSession{{SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d", Source: SourceLocalMetadata, StartedAt: start, LastObservedAt: start}}}, Projects: activityProjects{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := service.ReviewSources(context.Background())
+	if err != nil || len(sources) != 1 || sources[0].SessionCount != 1 || len(repository.saved) != 0 {
+		t.Fatalf("review = %#v, saved = %#v, error = %v", sources, repository.saved, err)
+	}
+	if _, err := service.ImportSource(context.Background(), "home-1", "state_5", false); !errors.Is(err, ErrActivityInvalid) || len(repository.saved) != 0 {
+		t.Fatalf("refused import saved %#v: %v", repository.saved, err)
+	}
+	result, err := service.ImportSource(context.Background(), "home-1", "state_5", true)
+	if err != nil || result.ImportedCount != 1 || len(repository.saved) != 1 || repository.saved[0].ProfileID != "" {
+		t.Fatalf("import = %#v, saved = %#v, error = %v", result, repository.saved, err)
+	}
+}
 
 func TestRefreshLeavesUnsupportedWorkingDirectoryUnassociated(t *testing.T) {
 	repository := &activityRepository{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}

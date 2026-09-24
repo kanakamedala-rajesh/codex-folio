@@ -101,6 +101,15 @@ func (service *usageCommandService) View(ctx context.Context, scope string) (usa
 		filters.ProfileAlias = view.Candidates[0].Alias
 	}
 	records, err := service.store.ListActivity(ctx, filters)
+	if err == nil && view.Scope == usagefeature.ScopeCombinedIdentity {
+		profileRecords := records[:0]
+		for _, record := range records {
+			if record.ProfileID != "" {
+				profileRecords = append(profileRecords, record)
+			}
+		}
+		records = profileRecords
+	}
 	return view, records, err
 }
 

@@ -17,6 +17,14 @@ direct Codex; registration does not import history. Pending setup can be resumed
 by running the plain command again. The longer manual workflow below is useful
 for checking multiple accounts and usage evidence.
 
+To bring supported existing sessions into overall history, open **Sessions**,
+choose **Review sources**, inspect each source's support state and session count,
+then explicitly consent to **Import source** for the source you choose. Refusing
+or leaving consent unchecked imports nothing. Unknown ownership appears as
+**Unassigned History** in the overall timeline; it is not a selectable profile
+and does not contribute to individual-profile or Combined Identity View totals.
+Import reads source metadata without changing Codex files.
+
 The commands below use **WSL/Linux with bash or zsh**, two terminals, and a
 browser. Run them from the CodexFolio repository root. For Windows/macOS and the
 full feature reference, see the [comprehensive guide](COMPREHENSIVE-USAGE-GUIDE.md).
@@ -187,7 +195,10 @@ session. All CodexFolio options belong **before** `--`.
 Reload Sessions. Inspect Managed Launch and Observed Session records separately;
 they are not necessarily one-to-one. **Reload timeline** reads retained data;
 `activity refresh` collects supported metadata from the registered home.
-For existing real history, use **Use existing sign-in** after choosing a referenced
+To import supported existing history, review sources and consent separately in
+Sessions. Use the **Unassigned History** profile filter to inspect records whose
+ownership is unknown. Repeat imports skip already retained source sessions.
+For an existing sign-in, use **Use existing sign-in** after choosing a referenced
 home in Profiles, or follow [Referenced Identity Home setup](COMPREHENSIVE-USAGE-GUIDE.md#register-a-referenced-identity-home).
 
 ## 7. Validate manually, then restart

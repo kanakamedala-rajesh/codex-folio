@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -254,6 +255,32 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 func runOverviewBrowser(t *testing.T, suite string) []byte {
 	t.Helper()
 	paths := launchTestPaths(t)
+	if suite == "deep" {
+		userHome := t.TempDir()
+		configuredHome := filepath.Join(userHome, "configured-codex")
+		t.Setenv("HOME", userHome)
+		t.Setenv("USERPROFILE", userHome)
+		t.Setenv("CODEX_HOME", configuredHome)
+		for _, fixture := range []struct{ path, schema string }{
+			{filepath.Join(userHome, ".codex"), `CREATE TABLE unrelated (id TEXT)`},
+			{configuredHome, `CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER)`},
+		} {
+			if err := os.MkdirAll(fixture.path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			database, err := sql.Open("sqlite", filepath.Join(fixture.path, "state_5.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(fixture.schema); err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	secureVault := seedReadyLaunchProfile(t, paths)
 	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
 	referencedMarker := filepath.Join(personalHome, "browser-removal-marker")

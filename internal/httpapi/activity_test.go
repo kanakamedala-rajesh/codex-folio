@@ -25,6 +25,17 @@ func (service *activityTestService) List(_ context.Context, filters activity.Fil
 	return append([]activity.TimelineRecord(nil), service.records...), nil
 }
 
+func (service *activityTestService) ReviewSources(context.Context) ([]activity.SourceReview, error) {
+	return []activity.SourceReview{{SourceID: "home-1", Label: "Work", Status: activity.SourceStatusSupported, SessionCount: 1}}, nil
+}
+
+func (service *activityTestService) ImportSource(_ context.Context, sourceID string, consent bool) (activity.ImportResult, error) {
+	if !consent || sourceID != "home-1" {
+		return activity.ImportResult{}, activity.ErrActivityInvalid
+	}
+	return activity.ImportResult{ImportedCount: 1}, nil
+}
+
 func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 	tokens := int64(42)
 	service := &activityTestService{records: []activity.TimelineRecord{{
@@ -48,6 +59,10 @@ func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var bootstrap BootstrapResponse
+	if err := json.NewDecoder(exchange.Body).Decode(&bootstrap); err != nil {
+		t.Fatal(err)
+	}
 	_ = exchange.Body.Close()
 	result, response, err := NewClient(origin, client).GetActivity(context.Background(), "Work", "project-1")
 	if err != nil {
@@ -64,6 +79,28 @@ func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 	for _, forbidden := range []string{"/private/", "prompt sentinel", "response sentinel", "credential sentinel"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("generated activity contains prohibited value %q: %s", forbidden, encoded)
+		}
+	}
+	sources, sourceResponse, err := NewClient(origin, client).GetActivitySources(context.Background())
+	if err != nil || len(sources.Sources) != 1 || sources.Sources[0].Status != activity.SourceStatusSupported {
+		t.Fatalf("sources = %#v, %v", sources, err)
+	}
+	_ = sourceResponse.Body.Close()
+	for _, attempt := range []struct {
+		body, csrf string
+		status     int
+	}{
+		{`{"source_id":"home-1","consent":true}`, "", http.StatusForbidden},
+		{`{"source_id":"home-1","consent":false}`, bootstrap.CSRFToken, http.StatusBadRequest},
+		{`{"source_id":"home-1","consent":true}`, bootstrap.CSRFToken, http.StatusOK},
+	} {
+		result, err := doRequest(client, http.MethodPost, origin+ActivitySourcesPath, server.Address(), origin, []byte(attempt.body), attempt.csrf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = result.Body.Close()
+		if result.StatusCode != attempt.status {
+			t.Fatalf("import response status = %d, want %d", result.StatusCode, attempt.status)
 		}
 	}
 }

@@ -140,6 +140,7 @@ function validateContract(contract, productVersion) {
   }
 
   const activityPath = `/api/${apiVersion}/activity`;
+  const activitySourcesPath = `${activityPath}/sources`;
   const alertsPath = `/api/${apiVersion}/alerts`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
   const historyPath = `/api/${apiVersion}/analytics/history`;
@@ -164,6 +165,7 @@ function validateContract(contract, productVersion) {
     contract.paths,
     [
       activityPath,
+      activitySourcesPath,
       alertsPath,
       analyticsPath,
       historyPath,
@@ -324,6 +326,20 @@ function validateContract(contract, productVersion) {
   }
   const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`, ["200", "default"]);
   assertEqual(errorResponseReference(activityOperation, `GET ${activityPath}`), "#/$defs/UsageErrorResponse", "activity error response reference");
+  const activitySourcesPathItem = contract.paths[activitySourcesPath];
+  assertObject(activitySourcesPathItem, `path ${activitySourcesPath}`);
+  assertExactKeys(activitySourcesPathItem, ["get", "post"], `path ${activitySourcesPath}`);
+  const getActivitySourcesOperation = activitySourcesPathItem.get;
+  const importActivitySourceOperation = activitySourcesPathItem.post;
+  assertExactKeys(getActivitySourcesOperation, ["operationId", "responses"], `GET ${activitySourcesPath}`);
+  assertExactKeys(importActivitySourceOperation, ["operationId", "requestBody", "responses"], `POST ${activitySourcesPath}`);
+  assertEqual(getActivitySourcesOperation.operationId, "getActivitySources", "source review operationId");
+  assertEqual(importActivitySourceOperation.operationId, "importActivitySource", "source import operationId");
+  assertEqual(responseReference(getActivitySourcesOperation, `GET ${activitySourcesPath}`, ["200", "default"]), "#/$defs/ActivitySourcesResponse", "source review response");
+  assertEqual(requestReference(importActivitySourceOperation.requestBody, `POST ${activitySourcesPath}`), "#/$defs/ActivitySourceImportRequest", "source import request");
+  assertEqual(responseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`, ["200", "default"]), "#/$defs/ActivitySourceImportResponse", "source import response");
+  assertEqual(errorResponseReference(getActivitySourcesOperation, `GET ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source review error response");
+  assertEqual(errorResponseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source import error response");
 
   const analyticsOperation = contract.paths[analyticsPath]?.get;
   assertObject(analyticsOperation, `GET ${analyticsPath}`);
@@ -548,6 +564,10 @@ function validateContract(contract, productVersion) {
     schemaNameFromReference(collectionSettingsResponseReference, "collection settings response"),
     "BrowserTrustRequest",
     "BrowserTrustResponse",
+    "ActivitySource",
+    "ActivitySourcesResponse",
+    "ActivitySourceImportRequest",
+    "ActivitySourceImportResponse",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -716,6 +736,8 @@ function validateContract(contract, productVersion) {
     apiVersion,
     activityOperationId: activityOperation.operationId,
     activityPath,
+    activitySourcesPath,
+    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivitySourceImportResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     activityRecordFields,
     activityRecordType: "ActivityRecord",
     activityResponseFields,
@@ -889,6 +911,8 @@ function renderGo(productVersion, sourceHash, contractShape) {
     apiVersion,
     activityOperationId,
     activityPath,
+    activitySourcesPath,
+    activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
     activityResponseFields,
@@ -998,6 +1022,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...activitySourceSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
@@ -1056,6 +1081,7 @@ import (
 const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
+\tActivitySourcesPath  = "${activitySourcesPath}"
 \tAlertsPath           = "${contractShape.alertsPath}"
 \tAnalyticsPath        = "${analyticsPath}"
 \tHistoryPath          = "${contractShape.historyPath}"
@@ -1346,6 +1372,43 @@ func (client *Client) ${activityMethod}(ctx context.Context, profileAlias, proje
 \t}
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
+}
+
+func (client *Client) GetActivitySources(ctx context.Context) (ActivitySourcesResponse, *http.Response, error) {
+\tvar result ActivitySourcesResponse
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ActivitySourcesPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ImportActivitySource(ctx context.Context, input ActivitySourceImportRequest) (ActivitySourceImportResponse, *http.Response, error) {
+\tvar result ActivitySourceImportResponse
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ActivitySourcesPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("POST %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
 }
 
 func (client *Client) ${analyticsMethod}(ctx context.Context, scope string) (${analyticsResponseType}, *http.Response, error) {
@@ -1689,6 +1752,8 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     apiVersion,
     activityOperationId,
     activityPath,
+    activitySourcesPath,
+    activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
     activityResponseFields,
@@ -1882,6 +1947,8 @@ ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name}
 ${contractShape.handoffSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.configurationSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${activitySourceSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 export interface ${activityRecordType} {
 ${activityRecordLines}
@@ -2153,6 +2220,17 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ${activityResponseType} } } };
     };
   };
+  "${activitySourcesPath}": {
+    get: {
+      operationId: "getActivitySources";
+      responses: { 200: { content: { "application/json": ActivitySourcesResponse } } };
+    };
+    post: {
+      operationId: "importActivitySource";
+      requestBody: ActivitySourceImportRequest;
+      responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
+    };
+  };
   "${bootstrapPath}": {
     post: {
       operationId: "${bootstrapOperationId}";
@@ -2321,6 +2399,11 @@ export interface CodexFolioApiClient {
     projectId?: string,
     init?: RequestInit,
   ): Promise<${activityResponseType}>;
+  getActivitySources(init?: RequestInit): Promise<ActivitySourcesResponse>;
+  importActivitySource(
+    request: ActivitySourceImportRequest,
+    init?: RequestInit,
+  ): Promise<ActivitySourceImportResponse>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
   getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
   manageBrowserTrust(
@@ -2619,6 +2702,38 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ${activityResponseType};
+    },
+    async getActivitySources(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${activitySourcesPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourcesResponse;
+    },
+    async importActivitySource(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${activitySourcesPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourceImportResponse;
     },
     async ${bootstrapOperationId}(request, init = {}) {
       const headers = new Headers(init.headers);

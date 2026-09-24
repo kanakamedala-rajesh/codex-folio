@@ -283,6 +283,7 @@
         "source": {"type": "string"},
         "source_version": {"type": "string"},
         "provenance": {"type": "string"},
+        "attribution_provenance": {"type": "string"},
         "started_at": {"type": "string"},
         "last_observed_at": {"type": "string"},
         "lifecycle": {"type": "string"},
@@ -306,6 +307,35 @@
         "records": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}}
       },
       "required": ["records"],
+      "type": "object"
+    },
+    "ActivitySource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {"type": "string"},
+        "label": {"type": "string"},
+        "status": {"type": "string"},
+        "session_count": {"type": "integer"}
+      },
+      "required": ["source_id", "label", "status", "session_count"],
+      "type": "object"
+    },
+    "ActivitySourcesResponse": {
+      "additionalProperties": false,
+      "properties": {"sources": {"type": "array", "items": {"$ref": "#/$defs/ActivitySource"}}},
+      "required": ["sources"],
+      "type": "object"
+    },
+    "ActivitySourceImportRequest": {
+      "additionalProperties": false,
+      "properties": {"source_id": {"type": "string"}, "consent": {"type": "boolean"}},
+      "required": ["source_id", "consent"],
+      "type": "object"
+    },
+    "ActivitySourceImportResponse": {
+      "additionalProperties": false,
+      "properties": {"imported_count": {"type": "integer"}, "already_present_count": {"type": "integer"}},
+      "required": ["imported_count", "already_present_count"],
       "type": "object"
     },
     "BootstrapRequest": {
@@ -1361,6 +1391,23 @@
             "content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}},
             "description": "Returns a stable redacted error code."
           }
+        }
+      }
+    },
+    "/api/v1/activity/sources": {
+      "get": {
+        "operationId": "getActivitySources",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/ActivitySourcesResponse"}}}, "description": "Review registered local metadata sources without importing them."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+        }
+      },
+      "post": {
+        "operationId": "importActivitySource",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/ActivitySourceImportRequest"}}}, "required": true},
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/ActivitySourceImportResponse"}}}, "description": "Import normalized metadata from one explicitly approved source."},
+          "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
         }
       }
     },

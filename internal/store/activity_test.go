@@ -2,13 +2,84 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/launch"
+	"venkatasudha.com/codex-folio/internal/usage"
 )
+
+func TestUnassignedMigrationPreservesLegacyAttributionWithoutDuplicatingSessions(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations()[:27] {
+		tx, err := database.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := migration.apply(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("migration %d: %v", migration.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"work", "personal"} {
+		if _, err := database.ExecContext(ctx, `INSERT INTO identity_profiles (profile_id, display_name, status, created_at, updated_at) VALUES (?, ?, 'ready', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct{ id, profile, session string }{
+		{"old-1", "work", "session-shared"}, {"old-2", "personal", "session-shared"}, {"old-3", "work", "session-unique"},
+	} {
+		if _, err := database.ExecContext(ctx, `INSERT INTO observed_sessions (observed_session_id, profile_id, source, source_session_id, source_version, started_at, last_observed_at, correlation_state) VALUES (?, ?, 'local_metadata', ?, 'state_5', '2026-09-01T00:00:00Z', '2026-09-01T00:01:00Z', 'uncorrelated')`, row.id, row.profile, row.session); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrations()[27].apply(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.QueryContext(ctx, `SELECT source_session_id, COALESCE(profile_id, ''), attribution_provenance FROM observed_sessions ORDER BY source_session_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := []string{}
+	for rows.Next() {
+		var session, profile, provenance string
+		if err := rows.Scan(&session, &profile, &provenance); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%s:%s:%s", session, profile, provenance))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"session-shared::unassigned", "session-unique:work:legacy_profile_observation"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("migrated = %v, want %v", got, want)
+	}
+}
 
 func TestObservedSessionsAndManagedLaunchesRemainDistinctAcrossRestart(t *testing.T) {
 	stateStore, secureVault, _, home := readyLaunchStore(t)
@@ -66,6 +137,63 @@ func TestObservedSessionsAndManagedLaunchesRemainDistinctAcrossRestart(t *testin
 	}
 	if timeline[0].ID == timeline[1].ID || timeline[0].SourceSessionID != sourceSessionID || timeline[1].Lifecycle != string(launch.StateExited) || timeline[1].ExitStatus == nil || *timeline[1].ExitStatus != 0 {
 		t.Fatalf("distinct records = %#v", timeline)
+	}
+}
+
+func TestUnassignedSessionDeduplicatesAcrossRegistrations(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	addReadyProfile(t, stateStore, "profile-2", "Personal")
+	start := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	first := activity.ObservedSessionRecord{SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: start, LastObservedAt: start}
+	if err := stateStore.SaveObservedSessions(context.Background(), []activity.ObservedSessionRecord{first}); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ProfileID, second.ProfileAlias = "profile-2", "Personal"
+	second.LastObservedAt = start.Add(time.Minute)
+	if err := stateStore.SaveObservedSessions(context.Background(), []activity.ObservedSessionRecord{second}); err != nil {
+		t.Fatal(err)
+	}
+	other := first
+	other.SourceSessionID = "018f4f70-6f77-7c3f-9b77-93aa087dfc4e"
+	if err := stateStore.SaveObservedSessions(context.Background(), []activity.ObservedSessionRecord{other}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := stateStore.ListActivity(context.Background(), activity.Filters{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("overall activity = %#v, %v", all, err)
+	}
+	for _, record := range all {
+		if record.ProfileID != "" || record.ProfileAlias != "Unassigned History" || record.AttributionProvenance != "unassigned" {
+			t.Fatalf("unassigned record = %#v", record)
+		}
+	}
+	personal, err := stateStore.ListActivity(context.Background(), activity.Filters{ProfileAlias: "Personal"})
+	if err != nil || len(personal) != 0 {
+		t.Fatalf("profile activity = %#v, %v", personal, err)
+	}
+	scope := usage.HistoryScope{ProfileID: "*", ProjectID: "*", From: "all", To: "all", Classes: []string{"observed_sessions"}}
+	preview, err := stateStore.PurgeAnalytics(context.Background(), scope, "")
+	var observedCount int64
+	for _, item := range preview.Counts {
+		if item.RecordClass == "observed_sessions" {
+			observedCount = item.Count
+		}
+	}
+	if err != nil || observedCount != 2 {
+		t.Fatalf("unassigned purge preview = %#v, %v", preview, err)
+	}
+	if _, err := stateStore.PurgeAnalytics(context.Background(), scope, preview.Confirmation); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := stateStore.ListActivity(context.Background(), activity.Filters{})
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("remaining unassigned records = %#v, %v", remaining, err)
 	}
 }
 

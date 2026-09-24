@@ -925,6 +925,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.getActivity(response, request)
+	case ActivitySourcesPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.activitySources(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {
