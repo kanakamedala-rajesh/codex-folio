@@ -436,6 +436,15 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		stderr = &companionStartupDiagnosticWriter{Writer: stderr, path: options.startupStatus}
 	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	if apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid {
+		// A concurrent discovery can briefly hold the owner lock before it
+		// releases it. Wait for a descriptor or for that lock to clear.
+		deadline := time.Now().Add(companionStartupTimeout)
+		for apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			status, err = platform.Discover(paths, platform.OwnerOptions{})
+		}
+	}
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
@@ -456,8 +465,9 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 	}
 
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
-	if err != nil {
-		if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
+	if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
+		deadline := time.Now().Add(companionStartupTimeout)
+		for {
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
 				if options.migrationTarget != "" {
@@ -474,7 +484,20 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 				}
 				return exitSuccess
 			}
+			if statusErr != nil && apperrors.Code(statusErr) != apperrors.PlatformServiceMetadataInvalid {
+				return writeServiceErrorWithDiagnostics(stderr, statusErr, diagnosticSink)
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+			owner, err = platform.Acquire(paths, platform.OwnerOptions{})
+			if apperrors.Code(err) != apperrors.PlatformServiceAlreadyRunning {
+				break
+			}
 		}
+	}
+	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	commandToken, err := newCommandToken()
