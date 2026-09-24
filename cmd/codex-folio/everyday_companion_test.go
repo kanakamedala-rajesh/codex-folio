@@ -502,11 +502,30 @@ func TestConcurrentEverydayStartsConvergeOnOneOwner(t *testing.T) {
 	if err != nil || !status.Running || fixture == nil {
 		t.Fatalf("concurrent owner = %#v fixture:%t error:%v", status, fixture != nil, err)
 	}
-	if startCalls < 1 || startCalls > 2 {
-		t.Fatalf("starter calls = %d, want one or two racing attempts converging on one owner", startCalls)
+	if startCalls < 1 || startCalls > 4 {
+		t.Fatalf("starter calls = %d, want bounded racing attempts converging on one owner", startCalls)
 	}
 	if health, err := httpapi.NewCommandClient(fixture.server.Origin(), "everyday-companion-command", nil).ServiceHealth(context.Background()); err != nil || health.ServiceState != httpapi.ServiceStateReady {
 		t.Fatalf("concurrent owner health = %#v, %v", health, err)
+	}
+}
+
+func TestContendedMigrationDoesNotReuseRunningCompanion(t *testing.T) {
+	paths := launchTestPaths(t)
+	startCalls := 0
+	starter := func(platform.Paths, serviceOptions) error {
+		startCalls++
+		return apperrors.New(apperrors.PlatformServiceAlreadyRunning, errors.New("another companion acquired ownership"))
+	}
+	_, _, err := startEverydayCompanionWithGuidance(paths, serviceOptions{
+		vaultMode:       platform.VaultModePassphrase,
+		migrationTarget: platform.VaultModeSecretService,
+	}, strings.NewReader(""), io.Discard, io.Discard, starter)
+	if apperrors.Code(err) != apperrors.VaultMigrationRequired {
+		t.Fatalf("contended migration error = %v, want %s", err, apperrors.VaultMigrationRequired)
+	}
+	if startCalls != 1 {
+		t.Fatalf("starter calls = %d, want one refused migration attempt", startCalls)
 	}
 }
 

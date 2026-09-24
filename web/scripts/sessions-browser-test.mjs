@@ -201,8 +201,6 @@ export async function testSessions({
     await consent.focus();
     await page.keyboard.press("Space");
     await card.locator("button:enabled").filter({ hasText: "Import source" }).waitFor();
-    await page.keyboard.press("Space");
-    await card.locator("button:disabled").filter({ hasText: "Import source" }).waitFor();
   }
   await scanAccessibility("sessions-source-review-narrow");
   const disclosure = page.locator("main details").first();

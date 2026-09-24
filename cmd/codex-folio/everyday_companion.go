@@ -96,20 +96,20 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 		_, _ = fmt.Fprintln(stderr, "codex-folio: passphrase storage requires an unlock on every companion restart")
 	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
-	if err != nil {
+	if apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid {
 		// An owner publishes its authenticated descriptor immediately after
 		// acquiring the lock. A concurrent plain start can observe that narrow
-		// interval; reuse it if publication completes, while retaining the
-		// original fail-closed metadata error when it does not.
-		if apperrors.Code(err) != apperrors.PlatformServiceMetadataInvalid {
-			return writeServiceError(stderr, err)
-		}
+		// interval. Wait for publication or for the transient lock to clear.
 		if options.migrationTarget != "" {
 			return writeServiceError(stderr, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage")))
 		}
-		if connection, waitErr := waitForCompanionClient(paths, time.Second, "", false); waitErr == nil {
-			return useEverydayCompanion(paths, connection, options, input, stdout, stderr)
+		deadline := time.Now().Add(companionStartupTimeout)
+		for apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			status, err = platform.Discover(paths, platform.OwnerOptions{})
 		}
+	}
+	if err != nil {
 		return writeServiceError(stderr, err)
 	}
 	if !status.Running {
@@ -158,9 +158,32 @@ func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOpt
 			return platform.ServiceClient{}, serviceOptions{}, err
 		}
 		options.startupStatus = statusPath
-		if err := start(paths, options); err != nil {
-			_ = os.Remove(statusPath)
-			return platform.ServiceClient{}, serviceOptions{}, err
+		for contention := 0; ; contention++ {
+			startErr := start(paths, options)
+			if startErr == nil {
+				break
+			}
+			if apperrors.Code(startErr) != apperrors.PlatformServiceAlreadyRunning {
+				_ = os.Remove(statusPath)
+				return platform.ServiceClient{}, serviceOptions{}, startErr
+			}
+			if options.migrationTarget != "" {
+				_ = os.Remove(statusPath)
+				return platform.ServiceClient{}, serviceOptions{}, migrationRequiredError(errors.New("stop the running passphrase companion and rerun codex-folio to migrate secure storage"))
+			}
+			wait := time.Second
+			if contention > 0 {
+				wait = companionStartupTimeout
+			}
+			if connection, waitErr := waitForCompanionClient(paths, wait, "", false); waitErr == nil {
+				_ = os.Remove(statusPath)
+				options.startupStatus = ""
+				return connection, options, nil
+			}
+			if contention > 0 {
+				_ = os.Remove(statusPath)
+				return platform.ServiceClient{}, serviceOptions{}, startErr
+			}
 		}
 		connection, waitErr := waitForCompanionClient(paths, companionStartupTimeout, statusPath, options.migrationTarget != "")
 		_ = os.Remove(statusPath)
