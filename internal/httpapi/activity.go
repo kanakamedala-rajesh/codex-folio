@@ -23,6 +23,44 @@ type CommandActivityService interface {
 	List(context.Context, activity.Filters) ([]activity.TimelineRecord, error)
 	ReviewSources(context.Context) ([]activity.SourceReview, error)
 	ImportSource(context.Context, string, bool) (activity.ImportResult, error)
+	Assign(context.Context, activity.Assignment) error
+}
+
+func (server *Server) assignActivity(response http.ResponseWriter, request *http.Request) {
+	if server.activities == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodPost)
+		return
+	}
+	if !server.validCSRF(request) {
+		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	var input ActivityAssignmentRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	if err := server.activities.Assign(request.Context(), activity.Assignment{SessionIDs: input.SessionIds, ProfileID: input.ProfileId}); err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
+		return
+	}
+	writeJSON(response, http.StatusOK, ActivityAssignmentResponse{AssignedCount: int64(len(input.SessionIds))})
 }
 
 func (server *Server) activitySources(response http.ResponseWriter, request *http.Request) {
@@ -216,6 +254,12 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 		}
 		if record.AttributionProvenance != "" {
 			item.AttributionProvenance = &record.AttributionProvenance
+		}
+		if record.OriginalProfileID != "" {
+			item.OriginalProfileId = &record.OriginalProfileID
+		}
+		if record.OriginalAttributionProvenance != "" {
+			item.OriginalAttributionProvenance = &record.OriginalAttributionProvenance
 		}
 		if record.ContinuationCheckpointID != "" {
 			item.ContinuationCheckpointId = &record.ContinuationCheckpointID

@@ -656,6 +656,18 @@ Observed Session records remain distinct. Observed details show whether
 ownership came from an explicit Managed Launch session match, a preexisting
 profile link, or remains unknown.
 
+To correct history, open an Observed Session and use **Correct ownership** for
+one session. For a bulk correction, select observed sessions on the current
+timeline page, choose a ready profile or **Unassigned History** under **Assign
+selected sessions**, then save. Each request accepts at most 100 sessions;
+invalid IDs or a profile that is not ready reject the whole request. Assignment
+changes the profile used by history filters, analytics activity and token totals,
+and normalized activity export. It does not edit Codex source files or the
+original profile link, its attribution, or correlation. Details label the effective
+ownership **User assigned** separately from source evidence. A correction or
+return to Unassigned survives repeated import. Combined Identity View remains
+the aggregate of profiles only.
+
 **Reload timeline** reads retained service metadata; it does not run collection.
 Use the existing `activity refresh PROFILE` CLI workflow to collect supported
 local metadata. A failed reload keeps the previous records and their original

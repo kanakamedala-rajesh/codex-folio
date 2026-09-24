@@ -930,6 +930,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.activitySources(response, request)
+	case ActivityAssignmentsPath:
+		if !server.authorize(response, request) {
+			return
+		}
+		server.assignActivity(response, request)
 	default:
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			if !server.authorize(response, request) {

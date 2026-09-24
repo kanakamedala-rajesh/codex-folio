@@ -106,27 +106,29 @@ type Correlation struct {
 }
 
 type TimelineRecord struct {
-	RecordType               string      `json:"record_type"`
-	ID                       string      `json:"id"`
-	SourceSessionID          string      `json:"source_session_id,omitempty"`
-	ProfileID                string      `json:"profile_id"`
-	ProfileAlias             string      `json:"profile_alias"`
-	ProjectID                string      `json:"project_id,omitempty"`
-	ProjectAlias             string      `json:"project_alias,omitempty"`
-	ProjectBasename          string      `json:"project_basename,omitempty"`
-	Source                   string      `json:"source"`
-	SourceVersion            string      `json:"source_version,omitempty"`
-	Provenance               string      `json:"provenance"`
-	AttributionProvenance    string      `json:"attribution_provenance,omitempty"`
-	StartedAt                time.Time   `json:"started_at"`
-	LastObservedAt           time.Time   `json:"last_observed_at"`
-	Lifecycle                string      `json:"lifecycle,omitempty"`
-	ContinuationCheckpointID string      `json:"continuation_checkpoint_id,omitempty"`
-	ContinuationRevision     string      `json:"continuation_revision,omitempty"`
-	ExitStatus               *int        `json:"exit_status,omitempty"`
-	Model                    string      `json:"model,omitempty"`
-	TokensUsed               *int64      `json:"tokens_used,omitempty"`
-	Correlation              Correlation `json:"correlation"`
+	RecordType                    string      `json:"record_type"`
+	ID                            string      `json:"id"`
+	SourceSessionID               string      `json:"source_session_id,omitempty"`
+	ProfileID                     string      `json:"profile_id"`
+	ProfileAlias                  string      `json:"profile_alias"`
+	ProjectID                     string      `json:"project_id,omitempty"`
+	ProjectAlias                  string      `json:"project_alias,omitempty"`
+	ProjectBasename               string      `json:"project_basename,omitempty"`
+	Source                        string      `json:"source"`
+	SourceVersion                 string      `json:"source_version,omitempty"`
+	Provenance                    string      `json:"provenance"`
+	AttributionProvenance         string      `json:"attribution_provenance,omitempty"`
+	OriginalProfileID             string      `json:"original_profile_id,omitempty"`
+	OriginalAttributionProvenance string      `json:"original_attribution_provenance,omitempty"`
+	StartedAt                     time.Time   `json:"started_at"`
+	LastObservedAt                time.Time   `json:"last_observed_at"`
+	Lifecycle                     string      `json:"lifecycle,omitempty"`
+	ContinuationCheckpointID      string      `json:"continuation_checkpoint_id,omitempty"`
+	ContinuationRevision          string      `json:"continuation_revision,omitempty"`
+	ExitStatus                    *int        `json:"exit_status,omitempty"`
+	Model                         string      `json:"model,omitempty"`
+	TokensUsed                    *int64      `json:"tokens_used,omitempty"`
+	Correlation                   Correlation `json:"correlation"`
 }
 
 type Filters struct {
@@ -139,6 +141,26 @@ type Repository interface {
 	ListActivitySources(context.Context) ([]SourceTarget, error)
 	SaveObservedSessions(context.Context, []ObservedSessionRecord) error
 	ListActivity(context.Context, Filters) ([]TimelineRecord, error)
+	AssignSessions(context.Context, []string, string) error
+}
+
+type Assignment struct {
+	SessionIDs []string
+	ProfileID  string
+}
+
+func (service *Service) Assign(ctx context.Context, assignment Assignment) error {
+	if service == nil || len(assignment.SessionIDs) == 0 || len(assignment.SessionIDs) > 100 || len(assignment.ProfileID) > 128 {
+		return ErrActivityInvalid
+	}
+	seen := make(map[string]bool, len(assignment.SessionIDs))
+	for _, id := range assignment.SessionIDs {
+		if strings.TrimSpace(id) == "" || len(id) > 128 || seen[id] {
+			return ErrActivityInvalid
+		}
+		seen[id] = true
+	}
+	return service.repository.AssignSessions(contextOrBackground(ctx), assignment.SessionIDs, assignment.ProfileID)
 }
 
 type ProjectResolver interface {

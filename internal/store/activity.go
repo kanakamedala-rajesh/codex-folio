@@ -221,6 +221,56 @@ func observedCorrelation(ctx context.Context, tx *sql.Tx, record activity.Observ
 	return activity.CorrelationUncorrelated, "", "", nil
 }
 
+// AssignSessions changes only the user override. Source identity and the
+// evidence-established profile remain attached to the observed row.
+func (store *Store) AssignSessions(ctx context.Context, ids []string, profileID string) error {
+	if store == nil || store.db == nil || len(ids) == 0 || len(ids) > 100 {
+		return apperrors.New(apperrors.ActivityRequestInvalid, activity.ErrActivityInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.Lock()
+	defer store.operationMu.Unlock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return coded(apperrors.StoreWriteFailed, err)
+	}
+	defer tx.Rollback()
+	if profileID != "" {
+		var ready int
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM identity_profiles p WHERE p.profile_id = ? AND p.status = 'ready' AND NOT EXISTS (SELECT 1 FROM profile_quarantine q WHERE q.profile_id = p.profile_id)`, profileID).Scan(&ready)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperrors.New(apperrors.ActivityRequestInvalid, activity.ErrActivityInvalid)
+		}
+		if err != nil {
+			return coded(apperrors.StoreReadFailed, err)
+		}
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" || seen[id] {
+			return apperrors.New(apperrors.ActivityRequestInvalid, activity.ErrActivityInvalid)
+		}
+		seen[id] = true
+		var exists int
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM observed_sessions WHERE observed_session_id = ? AND source = 'local_metadata'`, id).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperrors.New(apperrors.ActivityRequestInvalid, activity.ErrActivityInvalid)
+		}
+		if err != nil {
+			return coded(apperrors.StoreReadFailed, err)
+		}
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO observed_session_assignments (observed_session_id, profile_id, assigned_at) VALUES (?, ?, ?) ON CONFLICT(observed_session_id) DO UPDATE SET profile_id = excluded.profile_id, assigned_at = excluded.assigned_at`, id, nullableString(profileID), formatStoredTime(store.clock.Now().UTC())); err != nil {
+			return coded(apperrors.StoreWriteFailed, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return coded(apperrors.StoreWriteFailed, err)
+	}
+	return nil
+}
+
 func (store *Store) ListActivity(ctx context.Context, filters activity.Filters) ([]activity.TimelineRecord, error) {
 	if store == nil || store.db == nil {
 		return nil, coded(apperrors.StoreReadFailed, activity.ErrActivityUnavailable)
@@ -260,12 +310,17 @@ func (store *Store) ListActivity(ctx context.Context, filters activity.Filters) 
 }
 
 func (store *Store) listObservedSessions(ctx context.Context, filters activity.Filters) ([]activity.TimelineRecord, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT os.observed_session_id, os.source_session_id, COALESCE(os.profile_id, ''), COALESCE(a.alias, os.profile_id, 'deregistered'),
-		COALESCE(p.project_identity_id, ''), COALESCE(p.project_alias, ''), COALESCE(p.repository_basename, ''), os.attribution_provenance,
+	rows, err := store.db.QueryContext(ctx, `SELECT os.observed_session_id, os.source_session_id,
+		COALESCE(CASE WHEN assign.observed_session_id IS NOT NULL THEN assign.profile_id ELSE os.profile_id END, ''),
+		COALESCE(a.alias, CASE WHEN assign.observed_session_id IS NOT NULL THEN assign.profile_id ELSE os.profile_id END, 'deregistered'),
+		COALESCE(p.project_identity_id, ''), COALESCE(p.project_alias, ''), COALESCE(p.repository_basename, ''),
+		CASE WHEN assign.observed_session_id IS NOT NULL THEN 'user_assigned' ELSE os.attribution_provenance END,
+		COALESCE(os.profile_id, ''), os.attribution_provenance,
 		os.source, os.source_version, os.started_at, os.last_observed_at, COALESCE(os.model, ''), os.tokens_used,
 		os.correlation_state, ce.managed_launch_id, ce.evidence_type, ce.confidence
 		FROM observed_sessions os
-		LEFT JOIN cli_aliases a ON a.profile_id = os.profile_id
+		LEFT JOIN observed_session_assignments assign ON assign.observed_session_id = os.observed_session_id
+		LEFT JOIN cli_aliases a ON a.profile_id = CASE WHEN assign.observed_session_id IS NOT NULL THEN assign.profile_id ELSE os.profile_id END
 		LEFT JOIN project_identities p ON p.project_identity_id = os.project_identity_id
 		LEFT JOIN correlation_evidence ce ON ce.observed_session_id = os.observed_session_id
 		WHERE (? = '' OR a.alias = ? COLLATE NOCASE) AND (? = '' OR os.project_identity_id = ?)`,
@@ -281,7 +336,7 @@ func (store *Store) listObservedSessions(ctx context.Context, filters activity.F
 		var tokens sql.NullInt64
 		var managedLaunchID, evidenceType, confidence sql.NullString
 		if err := rows.Scan(&record.ID, &record.SourceSessionID, &record.ProfileID, &record.ProfileAlias,
-			&record.ProjectID, &record.ProjectAlias, &record.ProjectBasename, &record.AttributionProvenance, &record.Source, &record.SourceVersion,
+			&record.ProjectID, &record.ProjectAlias, &record.ProjectBasename, &record.AttributionProvenance, &record.OriginalProfileID, &record.OriginalAttributionProvenance, &record.Source, &record.SourceVersion,
 			&startedAt, &lastObservedAt, &record.Model, &tokens, &record.Correlation.State,
 			&managedLaunchID, &evidenceType, &confidence); err != nil {
 			return nil, coded(apperrors.StoreReadFailed, activity.ErrActivityUnavailable)

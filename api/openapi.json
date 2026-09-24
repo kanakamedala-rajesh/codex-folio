@@ -253,6 +253,7 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "record_type": {"type": "string"}, "id": {"type": "string"}, "source_session_id": {"type": "string"},
+		"original_profile_id": {"type": "string"}, "attribution_provenance": {"type": "string"}, "original_attribution_provenance": {"type": "string"},
         "profile_id": {"type": "string"}, "profile_alias": {"type": "string"}, "project_id": {"type": "string"},
         "project_alias": {"type": "string"}, "project_basename": {"type": "string"}, "source": {"type": "string"},
         "source_version": {"type": "string"}, "provenance": {"type": "string"}, "started_at": {"type": "string"},
@@ -283,7 +284,8 @@
         "source": {"type": "string"},
         "source_version": {"type": "string"},
         "provenance": {"type": "string"},
-        "attribution_provenance": {"type": "string"},
+        "attribution_provenance": {"type": "string"}, "original_attribution_provenance": {"type": "string"},
+		"original_profile_id": {"type": "string"},
         "started_at": {"type": "string"},
         "last_observed_at": {"type": "string"},
         "lifecycle": {"type": "string"},
@@ -338,6 +340,18 @@
       "required": ["imported_count", "already_present_count"],
       "type": "object"
     },
+	"ActivityAssignmentRequest": {
+	  "additionalProperties": false,
+	  "properties": {"session_ids": {"type": "array", "items": {"type": "string"}}, "profile_id": {"type": "string"}},
+	  "required": ["session_ids", "profile_id"],
+	  "type": "object"
+	},
+	"ActivityAssignmentResponse": {
+	  "additionalProperties": false,
+	  "properties": {"assigned_count": {"type": "integer"}},
+	  "required": ["assigned_count"],
+	  "type": "object"
+	},
     "BootstrapRequest": {
       "additionalProperties": false,
       "properties": {
@@ -1411,6 +1425,16 @@
         }
       }
     },
+	"/api/v1/activity/assignments": {
+	  "post": {
+	    "operationId": "assignActivity",
+	    "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityAssignmentRequest"}}}, "required": true},
+	    "responses": {
+	      "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/ActivityAssignmentResponse"}}}, "description": "Assign or return observed sessions to Unassigned History atomically."},
+	      "default": {"content": {"application/json": {"schema": {"$ref": "#/$defs/UsageErrorResponse"}}}, "description": "Returns a stable redacted error code."}
+	    }
+	  }
+	},
     "/api/v1/bootstrap": {
       "post": {
         "operationId": "exchangeBootstrap",

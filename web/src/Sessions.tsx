@@ -6,6 +6,7 @@ import {
   type ActivitySource,
   type ActivitySourceImportResponse,
   type ActivitySourcesResponse,
+  type ProfileSummary,
 } from "./generated/openapi";
 import { sessionsCopy as c, sessionStateCopy, provenanceCopy } from "./copy";
 
@@ -23,6 +24,8 @@ type Props = {
   read: () => Promise<ActivityResponse>;
   reviewSources: () => Promise<ActivitySourcesResponse>;
   importSource: (sourceId: string) => Promise<ActivitySourceImportResponse>;
+  assign: (sessionIds: string[], profileId: string) => Promise<unknown>;
+  profiles: ProfileSummary[];
   expired: (error: unknown) => void;
   heading: RefObject<HTMLHeadingElement | null>;
 };
@@ -92,6 +95,19 @@ function Evidence({ record }: { record: ActivityRecord }) {
     [c.source, label(record.source)],
     [c.version, record.source_version || c.unavailable],
     [c.provenance, provenance(record)],
+    ...(!managed(record) && record.original_profile_id
+      ? [[c.originalProfile, record.original_profile_id]]
+      : []),
+    ...(!managed(record) && record.attribution_provenance === "user_assigned"
+      ? [
+          [
+            c.originalAttribution,
+            c.attributionState[
+              record.original_attribution_provenance as keyof typeof c.attributionState
+            ] ?? c.unavailable,
+          ],
+        ]
+      : []),
     ...(!managed(record)
       ? [
           [
@@ -139,6 +155,8 @@ export function Sessions({
   read,
   reviewSources,
   importSource,
+  assign,
+  profiles: availableProfiles,
   expired,
   heading,
 }: Props) {
@@ -159,6 +177,29 @@ export function Sessions({
   const [consentedSource, setConsentedSource] = useState("");
   const [importing, setImporting] = useState("");
   const [importResult, setImportResult] = useState("");
+  const [checked, setChecked] = useState<string[]>([]);
+  const [assignmentTarget, setAssignmentTarget] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [assignmentStatus, setAssignmentStatus] = useState("");
+  async function saveAssignment(ids: string[]) {
+    if (!ids.length || assigning) return;
+    setAssigning(true);
+    setAssignmentStatus("");
+    try {
+      await assign(ids, assignmentTarget);
+      setChecked([]);
+      setAssignmentStatus(c.assignmentSaved.replace("{count}", number.format(ids.length)));
+      setBusy(true);
+      setFailed(false);
+      setReload((value) => value + 1);
+    } catch (error) {
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) expired(error);
+      else setAssignmentStatus(c.assignmentFailed);
+    } finally {
+      setAssigning(false);
+    }
+  }
+  const targetOptions = availableProfiles.filter((profile) => profile.status === "ready");
   async function review() {
     setSourcesBusy(true);
     setSourcesError(false);
@@ -327,6 +368,39 @@ export function Sessions({
               <Evidence record={selected} />
             </section>
           </div>
+          {!managed(selected) && (
+            <section className="mt-6 border-t border-rule py-6" aria-label={c.assignment}>
+              <h2 className="mb-3 text-[1.4rem] font-bold">{c.assignment}</h2>
+              <p className="mb-3 text-muted">{c.assignmentDetail}</p>
+              <label className="grid max-w-md gap-2">
+                {c.assignmentTarget}
+                <select
+                  className={input}
+                  value={assignmentTarget}
+                  onChange={(event) => setAssignmentTarget(event.target.value)}
+                >
+                  <option value="">{c.unassigned}</option>
+                  {targetOptions.map((profile) => (
+                    <option key={profile.profile_id} value={profile.profile_id}>
+                      {profile.display_name || profile.alias}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className={`${button} mt-3`}
+                disabled={assigning}
+                onClick={() => void saveAssignment([selected.id])}
+              >
+                {c.saveAssignment}
+              </button>
+              {assignmentStatus && (
+                <p role="status" className="mt-3">
+                  {assignmentStatus}
+                </p>
+              )}
+            </section>
+          )}
           <section className="mt-6 border-t border-rule py-6">
             <h2 className="mb-4 text-[1.4rem] font-bold">{c.related}</h2>
             <p className="mb-4 text-muted">{c.correlationNote}</p>
@@ -544,6 +618,37 @@ export function Sessions({
         <p className="mb-4 text-sm text-muted">
           {c.timeline} · {c.zone}: {zone}
         </p>
+        <section className="mb-4 rounded border border-rule p-4" aria-label={c.bulkAssignment}>
+          <h2 className="mb-2 text-[1.2rem] font-bold">{c.bulkAssignment}</h2>
+          <p className="mb-3 text-sm text-muted">{c.bulkDetail}</p>
+          <label className="grid max-w-md gap-2">
+            {c.assignmentTarget}
+            <select
+              className={input}
+              value={assignmentTarget}
+              onChange={(event) => setAssignmentTarget(event.target.value)}
+            >
+              <option value="">{c.unassigned}</option>
+              {targetOptions.map((profile) => (
+                <option key={profile.profile_id} value={profile.profile_id}>
+                  {profile.display_name || profile.alias}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className={`${button} mt-3`}
+            disabled={!checked.length || assigning}
+            onClick={() => void saveAssignment(checked)}
+          >
+            {c.saveSelected.replace("{count}", number.format(checked.length))}
+          </button>
+          {assignmentStatus && (
+            <p role="status" className="mt-3">
+              {assignmentStatus}
+            </p>
+          )}
+        </section>
         <table className="hidden w-full table-fixed border-collapse lg:table">
           <caption className="sr-only">{c.timeline}</caption>
           <thead>
@@ -575,6 +680,24 @@ export function Sessions({
                   </small>
                 </td>
                 <td className={cell}>
+                  {!managed(record) && (
+                    <label className="mb-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked.includes(record.id)}
+                        onChange={(event) =>
+                          setChecked((current) =>
+                            event.target.checked
+                              ? current.length < 100
+                                ? [...current, record.id]
+                                : current
+                              : current.filter((id) => id !== record.id),
+                          )
+                        }
+                      />
+                      {c.selectForAssignment}
+                    </label>
+                  )}
                   <button
                     className={button}
                     data-session-key={key(record)}
@@ -598,6 +721,24 @@ export function Sessions({
                 {provenance(record)} · {label(record.source)} · {label(record.correlation_state)} ·{" "}
                 {c.confidence}: {label(record.correlation_confidence)}
               </p>
+              {!managed(record) && (
+                <label className="mb-3 flex min-h-11 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={checked.includes(record.id)}
+                    onChange={(event) =>
+                      setChecked((current) =>
+                        event.target.checked
+                          ? current.length < 100
+                            ? [...current, record.id]
+                            : current
+                          : current.filter((id) => id !== record.id),
+                      )
+                    }
+                  />
+                  {c.selectForAssignment}
+                </label>
+              )}
               <button
                 className={button}
                 data-session-key={key(record)}

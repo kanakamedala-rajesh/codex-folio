@@ -631,6 +631,20 @@ func migrations() []migration {
 				return nil
 			},
 		},
+		{
+			version: 29,
+			name:    "historical-session-assignments",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE observed_session_assignments (
+					observed_session_id TEXT PRIMARY KEY NOT NULL,
+					profile_id TEXT,
+					assigned_at TEXT NOT NULL,
+					FOREIGN KEY (observed_session_id) REFERENCES observed_sessions (observed_session_id) ON DELETE CASCADE,
+					FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id) ON DELETE SET NULL
+				)`)
+				return err
+			},
+		},
 	}
 }
 
@@ -893,6 +907,7 @@ var expectedTables = map[string][]string{
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
 	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state", "attribution_provenance"},
+	"observed_session_assignments":   {"observed_session_id", "profile_id", "assigned_at"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},

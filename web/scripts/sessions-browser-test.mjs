@@ -1,4 +1,4 @@
-/* global document */
+/* global document, fetch */
 import { URL } from "node:url";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -373,8 +373,160 @@ export async function testSessions({
     afterMixedImport,
     "repeat import leaves normalized activity unchanged",
   );
+  const profileResponse = await page.request.get(new URL("/api/v1/profiles", link).href);
+  assert.equal(profileResponse.status(), 200);
+  const readyProfiles = (await profileResponse.json()).profiles.filter(
+    (profile) => profile.status === "ready",
+  );
+  const work = readyProfiles.find((profile) => profile.alias === "Work");
+  const personal = readyProfiles.find((profile) => profile.alias === "Personal");
+  assert.ok(work && personal);
+  await select("Profile", "__unassigned__");
+  const choices = page
+    .getByRole("table", { name: "Metadata timeline" })
+    .getByRole("checkbox", { name: "Select for assignment" });
+  await choices.nth(0).check();
+  await choices.nth(1).check();
+  const assignment = page.getByRole("region", { name: "Assign selected sessions" });
+  await assignment.getByRole("combobox", { name: "Assign to" }).selectOption(work.profile_id);
+  const authorizedAssignment = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/v1/activity/assignments" &&
+      request.method() === "POST",
+  );
+  await assignment.getByRole("button", { name: "Save 2 selected assignments" }).click();
+  const csrf = (await authorizedAssignment).headers()["x-codexfolio-csrf"];
+  assert.ok(csrf, "UI assignment sends a CSRF token");
+  await assignment
+    .getByRole("status")
+    .filter({ hasText: "Ownership updated for 2 sessions" })
+    .waitFor();
+  const assigned = (await (await page.request.get(new URL("/api/v1/activity", link).href)).json())
+    .records;
+  const newlyAssigned = assigned.filter(
+    (record) =>
+      record.attribution_provenance === "user_assigned" && record.profile_id === work.profile_id,
+  );
+  assert.equal(newlyAssigned.length, 2);
+  const workAnalytics = await page.request.get(
+    new URL(`/api/v1/activity?profile=${work.alias}`, link).href,
+  );
+  assert.equal(workAnalytics.status(), 200);
+  assert.equal(
+    (await workAnalytics.json()).records.filter((record) =>
+      newlyAssigned.some((item) => item.id === record.id),
+    ).length,
+    2,
+  );
+  await select("Profile", "");
+  const assignedRow = page
+    .getByRole("table", { name: "Metadata timeline" })
+    .getByRole("row")
+    .filter({ hasText: "Observed Session" })
+    .first();
+  await assignedRow.getByRole("button", { name: "Open details" }).click();
+  const detail = page.getByRole("region", { name: "Correct ownership" });
+  await detail.getByRole("combobox", { name: "Assign to" }).selectOption(personal.profile_id);
+  await detail.getByRole("button", { name: "Save assignment" }).click();
+  await detail.getByRole("status").filter({ hasText: "Ownership updated" }).waitFor();
+  await page.getByRole("button", { name: "Back to Sessions" }).click();
+  const corrected = (await (await page.request.get(new URL("/api/v1/activity", link).href)).json())
+    .records;
+  assert.ok(
+    corrected.some(
+      (record) =>
+        record.attribution_provenance === "user_assigned" &&
+        record.profile_id === personal.profile_id,
+    ),
+  );
+  for (const source of [workSource, personalSource]) await importOnce(source);
+  const stable = (await (await page.request.get(new URL("/api/v1/activity", link).href)).json())
+    .records;
+  assert.deepEqual(stable, corrected, "reimport preserves user corrections");
+  const assignmentURL = new URL("/api/v1/activity/assignments", link).href;
+  const combinedURL = new URL("/api/v1/analytics?scope=combined_identity", link).href;
+  const historyURL = new URL("/api/v1/activity", link).href;
+  const profileHistory = async (alias) => {
+    const url = new URL(historyURL);
+    url.searchParams.set("profile", alias);
+    const response = await page.request.get(url.href);
+    assert.equal(response.status(), 200);
+    return (await response.json()).records;
+  };
+  const combinedHistory = async () => {
+    const response = await page.request.get(combinedURL);
+    assert.equal(response.status(), 200);
+    return (await response.json()).activity;
+  };
+  const beforeReturnWork = await profileHistory(work.alias);
+  const beforeReturnPersonal = await profileHistory(personal.alias);
+  const beforeReturnCombined = await combinedHistory();
+  const workSession = newlyAssigned.find((record) =>
+    stable.some((item) => item.id === record.id && item.profile_id === work.profile_id),
+  );
+  assert.ok(workSession, "one bulk-assigned session remains in Work");
+  await select("Profile", work.profile_id);
+  await page
+    .getByRole("table", { name: "Metadata timeline" })
+    .locator(`button[data-session-key="observed_session:${workSession.id}"]`)
+    .click();
+  await detail.getByRole("combobox", { name: "Assign to" }).selectOption("");
+  await detail.getByRole("button", { name: "Save assignment" }).click();
+  await detail.getByRole("status").filter({ hasText: "Ownership updated" }).waitFor();
+  await page.getByRole("button", { name: "Back to Sessions" }).click();
+  const returned = (await (await page.request.get(historyURL)).json()).records;
+  const returnedSession = returned.find((record) => record.id === workSession.id);
+  assert.equal(returnedSession.profile_id, "");
+  assert.equal(returnedSession.attribution_provenance, "user_assigned");
+  const afterReturnWork = await profileHistory(work.alias);
+  const afterReturnPersonal = await profileHistory(personal.alias);
+  assert.equal(afterReturnWork.length, beforeReturnWork.length - 1);
+  assert.ok(!afterReturnWork.some((record) => record.id === workSession.id));
+  assert.deepEqual(afterReturnPersonal, beforeReturnPersonal);
+  const afterReturnCombined = await combinedHistory();
+  assert.equal(afterReturnCombined.length, beforeReturnCombined.length - 1);
+  assert.ok(!afterReturnCombined.some((record) => record.id === workSession.id));
+  await select("Profile", "__unassigned__");
+  assert.equal(
+    await rows().locator(`button[data-session-key="observed_session:${workSession.id}"]`).count(),
+    1,
+  );
+  const invalidAssignment = await page.request.post(assignmentURL, {
+    data: {
+      session_ids: [workSession.id, "missing-observed-session"],
+      profile_id: personal.profile_id,
+    },
+    headers: { Origin: new URL(link).origin, "X-CodexFolio-CSRF": csrf },
+  });
+  assert.equal(invalidAssignment.status(), 409);
+  assert.deepEqual((await (await page.request.get(historyURL)).json()).records, returned);
+  assert.deepEqual(await profileHistory(work.alias), afterReturnWork);
+  assert.deepEqual(await profileHistory(personal.alias), afterReturnPersonal);
+  assert.deepEqual(await combinedHistory(), afterReturnCombined);
+  const unauthenticatedStatus = await page.evaluate(
+    async ({ url, id, profileId }) =>
+      (
+        await fetch(url, {
+          method: "POST",
+          credentials: "omit",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_ids: [id], profile_id: profileId }),
+        })
+      ).status,
+    { url: assignmentURL, id: workSession.id, profileId: personal.profile_id },
+  );
+  assert.equal(unauthenticatedStatus, 401);
+  const csrfLessAssignment = await page.request.post(assignmentURL, {
+    data: { session_ids: [workSession.id], profile_id: personal.profile_id },
+    headers: { Origin: new URL(link).origin },
+  });
+  assert.equal(csrfLessAssignment.status(), 403);
+  assert.deepEqual((await (await page.request.get(historyURL)).json()).records, returned);
+  assert.deepEqual(await profileHistory(work.alias), afterReturnWork);
+  assert.deepEqual(await profileHistory(personal.alias), afterReturnPersonal);
+  assert.deepEqual(await combinedHistory(), afterReturnCombined);
   await nav("Overview").click();
   check(
-    "Sessions source review, consent, mixed-home and repeat import with shared-session dedup; Unassigned History and Combined Identity exclusion; filters, metadata, keyboard return, responsive reflow and failed-read recovery",
+    "Sessions source review, consent, mixed-home and repeat import with shared-session dedup; individual and bulk ownership correction, return to Unassigned, atomic validation, unauthorized and CSRF rejection, reimport stability, profile and combined totals, filters, metadata, keyboard return and responsive reflow",
   );
 }

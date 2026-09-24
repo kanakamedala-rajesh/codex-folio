@@ -197,6 +197,74 @@ func TestUnassignedSessionDeduplicatesAcrossRegistrations(t *testing.T) {
 	}
 }
 
+func TestHistoricalAssignmentIsAtomicAndSurvivesReimport(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	addReadyProfile(t, stateStore, "profile-2", "Personal")
+	ctx := context.Background()
+	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	first := activity.ObservedSessionRecord{SourceSessionID: "source-1", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at}
+	second := first
+	second.SourceSessionID = "source-2"
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("initial history = %#v, %v", all, err)
+	}
+	ids := []string{all[0].ID, all[1].ID}
+	if err := stateStore.AssignSessions(ctx, []string{ids[0], "missing"}, "profile-1"); err == nil {
+		t.Fatal("invalid bulk assignment succeeded")
+	}
+	work, err := stateStore.ListActivity(ctx, activity.Filters{ProfileAlias: "Work"})
+	if err != nil || len(work) != 0 {
+		t.Fatalf("partial assignment = %#v, %v", work, err)
+	}
+	if err := stateStore.AssignSessions(ctx, ids, "profile-1"); err != nil {
+		t.Fatal(err)
+	}
+	work, err = stateStore.ListActivity(ctx, activity.Filters{ProfileAlias: "Work"})
+	if err != nil || len(work) != 2 {
+		t.Fatalf("assigned total = %#v, %v", work, err)
+	}
+	for _, row := range work {
+		if row.AttributionProvenance != "user_assigned" || row.OriginalProfileID != "" || row.OriginalAttributionProvenance != "unassigned" {
+			t.Fatalf("attribution changed: %#v", row)
+		}
+	}
+	if err := stateStore.AssignSessions(ctx, []string{ids[0]}, "profile-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.AssignSessions(ctx, []string{ids[1]}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	all, err = stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("reimported history = %#v, %v", all, err)
+	}
+	personal, err := stateStore.ListActivity(ctx, activity.Filters{ProfileAlias: "Personal"})
+	if err != nil || len(personal) != 1 || personal[0].ID != ids[0] {
+		t.Fatalf("corrected total = %#v, %v", personal, err)
+	}
+	work, err = stateStore.ListActivity(ctx, activity.Filters{ProfileAlias: "Work"})
+	if err != nil || len(work) != 0 {
+		t.Fatalf("stale work total = %#v, %v", work, err)
+	}
+	for _, row := range all {
+		if row.ID == ids[1] && (row.ProfileID != "" || row.AttributionProvenance != "user_assigned") {
+			t.Fatalf("returned history = %#v", row)
+		}
+	}
+}
+
 func TestObservedSessionDoesNotGuessAcrossConflictingProfiles(t *testing.T) {
 	stateStore, err := openProfileTestStore(t)
 	if err != nil {

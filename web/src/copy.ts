@@ -923,6 +923,18 @@ export const sessionsCopy = {
   subtitle:
     "Overall history includes Unassigned History. Managed Launches and Observed Sessions retain separate boundaries.",
   unassigned: "Unassigned History",
+  assignment: "Correct ownership",
+  assignmentDetail:
+    "This changes the profile used for history totals. Original source and ownership attribution remain recorded separately.",
+  bulkAssignment: "Assign selected sessions",
+  bulkDetail:
+    "Select observed sessions on this page, then assign them to a profile or return them to Unassigned History. Up to 100 sessions at once.",
+  assignmentTarget: "Assign to",
+  selectForAssignment: "Select for assignment",
+  saveAssignment: "Save assignment",
+  saveSelected: "Save {count} selected assignments",
+  assignmentSaved: "Ownership updated for {count} sessions. History is reloading.",
+  assignmentFailed: "Ownership could not be updated. No partial change was saved.",
   sourceReviewTitle: "Review local history sources",
   sourceReviewDetail:
     "Review supported local sources before choosing an import. Registration and background collection do not grant import consent. Import reads source metadata without changing source files; unknown ownership stays Unassigned History.",
@@ -1001,10 +1013,13 @@ export const sessionsCopy = {
   version: "Source version",
   provenance: "Provenance",
   attribution: "Ownership attribution",
+  originalProfile: "Original profile link",
+  originalAttribution: "Original attribution",
   attributionState: {
     managed_launch: "Explicit Managed Launch session match",
     legacy_profile_observation: "Existing profile link; ownership evidence unchanged",
     unassigned: "Unknown ownership",
+    user_assigned: "User assigned; original attribution retained",
   },
   correlation: "Correlation",
   confidence: "Correlation confidence",

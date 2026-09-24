@@ -141,6 +141,7 @@ function validateContract(contract, productVersion) {
 
   const activityPath = `/api/${apiVersion}/activity`;
   const activitySourcesPath = `${activityPath}/sources`;
+  const activityAssignmentsPath = `${activityPath}/assignments`;
   const alertsPath = `/api/${apiVersion}/alerts`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
   const historyPath = `/api/${apiVersion}/analytics/history`;
@@ -166,6 +167,7 @@ function validateContract(contract, productVersion) {
     [
       activityPath,
       activitySourcesPath,
+      activityAssignmentsPath,
       alertsPath,
       analyticsPath,
       historyPath,
@@ -340,6 +342,14 @@ function validateContract(contract, productVersion) {
   assertEqual(responseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`, ["200", "default"]), "#/$defs/ActivitySourceImportResponse", "source import response");
   assertEqual(errorResponseReference(getActivitySourcesOperation, `GET ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source review error response");
   assertEqual(errorResponseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source import error response");
+  const assignActivityOperation = contract.paths[activityAssignmentsPath]?.post;
+  assertObject(assignActivityOperation, `POST ${activityAssignmentsPath}`);
+  assertExactKeys(contract.paths[activityAssignmentsPath], ["post"], `path ${activityAssignmentsPath}`);
+  assertExactKeys(assignActivityOperation, ["operationId", "requestBody", "responses"], `POST ${activityAssignmentsPath}`);
+  assertEqual(assignActivityOperation.operationId, "assignActivity", "assignment operationId");
+  assertEqual(requestReference(assignActivityOperation.requestBody, `POST ${activityAssignmentsPath}`), "#/$defs/ActivityAssignmentRequest", "assignment request");
+  assertEqual(responseReference(assignActivityOperation, `POST ${activityAssignmentsPath}`, ["200", "default"]), "#/$defs/ActivityAssignmentResponse", "assignment response");
+  assertEqual(errorResponseReference(assignActivityOperation, `POST ${activityAssignmentsPath}`), "#/$defs/UsageErrorResponse", "assignment error response");
 
   const analyticsOperation = contract.paths[analyticsPath]?.get;
   assertObject(analyticsOperation, `GET ${analyticsPath}`);
@@ -568,6 +578,8 @@ function validateContract(contract, productVersion) {
     "ActivitySourcesResponse",
     "ActivitySourceImportRequest",
     "ActivitySourceImportResponse",
+    "ActivityAssignmentRequest",
+    "ActivityAssignmentResponse",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -737,7 +749,8 @@ function validateContract(contract, productVersion) {
     activityOperationId: activityOperation.operationId,
     activityPath,
     activitySourcesPath,
-    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivitySourceImportResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    activityAssignmentsPath,
+    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivitySourceImportResponse", "ActivityAssignmentRequest", "ActivityAssignmentResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     activityRecordFields,
     activityRecordType: "ActivityRecord",
     activityResponseFields,
@@ -912,6 +925,7 @@ function renderGo(productVersion, sourceHash, contractShape) {
     activityOperationId,
     activityPath,
     activitySourcesPath,
+    activityAssignmentsPath,
     activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
@@ -1082,6 +1096,7 @@ const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
 \tActivitySourcesPath  = "${activitySourcesPath}"
+\tActivityAssignmentsPath = "${activityAssignmentsPath}"
 \tAlertsPath           = "${contractShape.alertsPath}"
 \tAnalyticsPath        = "${analyticsPath}"
 \tHistoryPath          = "${contractShape.historyPath}"
@@ -1753,6 +1768,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     activityOperationId,
     activityPath,
     activitySourcesPath,
+    activityAssignmentsPath,
     activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
@@ -2231,6 +2247,13 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
     };
   };
+  "${activityAssignmentsPath}": {
+    post: {
+      operationId: "assignActivity";
+      requestBody: ActivityAssignmentRequest;
+      responses: { 200: { content: { "application/json": ActivityAssignmentResponse } } };
+    };
+  };
   "${bootstrapPath}": {
     post: {
       operationId: "${bootstrapOperationId}";
@@ -2404,6 +2427,10 @@ export interface CodexFolioApiClient {
     request: ActivitySourceImportRequest,
     init?: RequestInit,
   ): Promise<ActivitySourceImportResponse>;
+  assignActivity(
+    request: ActivityAssignmentRequest,
+    init?: RequestInit,
+  ): Promise<ActivityAssignmentResponse>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
   getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
   manageBrowserTrust(
@@ -2734,6 +2761,23 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ActivitySourceImportResponse;
+    },
+    async assignActivity(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${activityAssignmentsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivityAssignmentResponse;
     },
     async ${bootstrapOperationId}(request, init = {}) {
       const headers = new Headers(init.headers);

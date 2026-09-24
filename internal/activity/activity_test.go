@@ -40,6 +40,10 @@ func (repository *activityRepository) ListActivity(context.Context, Filters) ([]
 	return append([]TimelineRecord(nil), repository.timeline...), nil
 }
 
+func (repository *activityRepository) AssignSessions(context.Context, []string, string) error {
+	return nil
+}
+
 type activityProjects struct{ project ProjectIdentity }
 
 func (projects activityProjects) Resolve(context.Context, string, string) (ProjectIdentity, error) {

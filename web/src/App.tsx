@@ -1558,6 +1558,13 @@ export function App() {
                     { headers: { "X-CodexFolio-CSRF": csrf.current } },
                   )
                 }
+                profiles={profiles}
+                assign={(sessionIds, profileId) =>
+                  api.assignActivity(
+                    { session_ids: sessionIds, profile_id: profileId },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
                 expired={failure}
                 heading={heading}
               />

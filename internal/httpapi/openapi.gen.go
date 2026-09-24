@@ -17,12 +17,13 @@ const (
 	APIVersion                = "v1"
 	ActivityPath              = "/api/v1/activity"
 	ActivitySourcesPath       = "/api/v1/activity/sources"
+	ActivityAssignmentsPath   = "/api/v1/activity/assignments"
 	AlertsPath                = "/api/v1/alerts"
 	AnalyticsPath             = "/api/v1/analytics"
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "03978736fd5ee17c50ca708525d88afdd1f58653a7cf2c25d99cf04b4f01eea4"
+	ContractSourceSHA256      = "f234f49e96a726de810907c9dd77c07bb16ba0d5ed763c0937dedc4d0a05d29c"
 	BootstrapPath             = "/api/v1/bootstrap"
 	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
@@ -540,25 +541,28 @@ type AnalyticsExportResult struct {
 }
 
 type ActivityExportRecord struct {
-	RecordType      string              `json:"record_type"`
-	Id              string              `json:"id"`
-	SourceSessionId *string             `json:"source_session_id,omitempty"`
-	ProfileId       string              `json:"profile_id"`
-	ProfileAlias    string              `json:"profile_alias"`
-	ProjectId       *string             `json:"project_id,omitempty"`
-	ProjectAlias    *string             `json:"project_alias,omitempty"`
-	ProjectBasename *string             `json:"project_basename,omitempty"`
-	Source          string              `json:"source"`
-	SourceVersion   *string             `json:"source_version,omitempty"`
-	Provenance      string              `json:"provenance"`
-	StartedAt       string              `json:"started_at"`
-	LastObservedAt  string              `json:"last_observed_at"`
-	Lifecycle       *string             `json:"lifecycle,omitempty"`
-	ExitStatus      *int64              `json:"exit_status,omitempty"`
-	Model           *string             `json:"model,omitempty"`
-	TokensUsed      *int64              `json:"tokens_used,omitempty"`
-	Correlation     ActivityCorrelation `json:"correlation"`
-	CanonicalPath   *string             `json:"canonical_path,omitempty"`
+	RecordType                    string              `json:"record_type"`
+	Id                            string              `json:"id"`
+	SourceSessionId               *string             `json:"source_session_id,omitempty"`
+	OriginalProfileId             *string             `json:"original_profile_id,omitempty"`
+	AttributionProvenance         *string             `json:"attribution_provenance,omitempty"`
+	OriginalAttributionProvenance *string             `json:"original_attribution_provenance,omitempty"`
+	ProfileId                     string              `json:"profile_id"`
+	ProfileAlias                  string              `json:"profile_alias"`
+	ProjectId                     *string             `json:"project_id,omitempty"`
+	ProjectAlias                  *string             `json:"project_alias,omitempty"`
+	ProjectBasename               *string             `json:"project_basename,omitempty"`
+	Source                        string              `json:"source"`
+	SourceVersion                 *string             `json:"source_version,omitempty"`
+	Provenance                    string              `json:"provenance"`
+	StartedAt                     string              `json:"started_at"`
+	LastObservedAt                string              `json:"last_observed_at"`
+	Lifecycle                     *string             `json:"lifecycle,omitempty"`
+	ExitStatus                    *int64              `json:"exit_status,omitempty"`
+	Model                         *string             `json:"model,omitempty"`
+	TokensUsed                    *int64              `json:"tokens_used,omitempty"`
+	Correlation                   ActivityCorrelation `json:"correlation"`
+	CanonicalPath                 *string             `json:"canonical_path,omitempty"`
 }
 
 type ActivityCorrelation struct {
@@ -727,32 +731,43 @@ type ActivitySourceImportResponse struct {
 	AlreadyPresentCount int64 `json:"already_present_count"`
 }
 
+type ActivityAssignmentRequest struct {
+	SessionIds []string `json:"session_ids"`
+	ProfileId  string   `json:"profile_id"`
+}
+
+type ActivityAssignmentResponse struct {
+	AssignedCount int64 `json:"assigned_count"`
+}
+
 type ActivityRecord struct {
-	RecordType                 string  `json:"record_type"`
-	Id                         string  `json:"id"`
-	SourceSessionId            string  `json:"source_session_id"`
-	ProfileId                  string  `json:"profile_id"`
-	ProfileAlias               string  `json:"profile_alias"`
-	ProjectId                  string  `json:"project_id"`
-	ProjectAlias               string  `json:"project_alias"`
-	ProjectBasename            string  `json:"project_basename"`
-	Source                     string  `json:"source"`
-	SourceVersion              string  `json:"source_version"`
-	Provenance                 string  `json:"provenance"`
-	AttributionProvenance      *string `json:"attribution_provenance,omitempty"`
-	StartedAt                  string  `json:"started_at"`
-	LastObservedAt             string  `json:"last_observed_at"`
-	Lifecycle                  string  `json:"lifecycle"`
-	ContinuationCheckpointId   *string `json:"continuation_checkpoint_id,omitempty"`
-	ContinuationRevision       *string `json:"continuation_revision,omitempty"`
-	ExitStatus                 string  `json:"exit_status"`
-	Model                      string  `json:"model"`
-	TokensUsed                 string  `json:"tokens_used"`
-	CorrelationState           string  `json:"correlation_state"`
-	CorrelationManagedLaunchId string  `json:"correlation_managed_launch_id"`
-	CorrelationEvidenceType    string  `json:"correlation_evidence_type"`
-	CorrelationConfidence      string  `json:"correlation_confidence"`
-	CanonicalPath              *string `json:"canonical_path,omitempty"`
+	RecordType                    string  `json:"record_type"`
+	Id                            string  `json:"id"`
+	SourceSessionId               string  `json:"source_session_id"`
+	ProfileId                     string  `json:"profile_id"`
+	ProfileAlias                  string  `json:"profile_alias"`
+	ProjectId                     string  `json:"project_id"`
+	ProjectAlias                  string  `json:"project_alias"`
+	ProjectBasename               string  `json:"project_basename"`
+	Source                        string  `json:"source"`
+	SourceVersion                 string  `json:"source_version"`
+	Provenance                    string  `json:"provenance"`
+	AttributionProvenance         *string `json:"attribution_provenance,omitempty"`
+	OriginalAttributionProvenance *string `json:"original_attribution_provenance,omitempty"`
+	OriginalProfileId             *string `json:"original_profile_id,omitempty"`
+	StartedAt                     string  `json:"started_at"`
+	LastObservedAt                string  `json:"last_observed_at"`
+	Lifecycle                     string  `json:"lifecycle"`
+	ContinuationCheckpointId      *string `json:"continuation_checkpoint_id,omitempty"`
+	ContinuationRevision          *string `json:"continuation_revision,omitempty"`
+	ExitStatus                    string  `json:"exit_status"`
+	Model                         string  `json:"model"`
+	TokensUsed                    string  `json:"tokens_used"`
+	CorrelationState              string  `json:"correlation_state"`
+	CorrelationManagedLaunchId    string  `json:"correlation_managed_launch_id"`
+	CorrelationEvidenceType       string  `json:"correlation_evidence_type"`
+	CorrelationConfidence         string  `json:"correlation_confidence"`
+	CanonicalPath                 *string `json:"canonical_path,omitempty"`
 }
 
 type ActivityResponse struct {

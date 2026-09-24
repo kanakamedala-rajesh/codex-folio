@@ -44,6 +44,14 @@ func (service *activityCommandService) List(ctx context.Context, filters activit
 	return service.workflow.List(ctx, filters)
 }
 
+func (service *activityCommandService) Assign(ctx context.Context, assignment activity.Assignment) error {
+	err := service.workflow.Assign(ctx, assignment)
+	if errors.Is(err, activity.ErrActivityInvalid) {
+		return apperrors.New(apperrors.ActivityRequestInvalid, err)
+	}
+	return err
+}
+
 func (service *activityCommandService) ReviewSources(ctx context.Context) ([]activity.SourceReview, error) {
 	return service.workflow.ReviewSources(ctx)
 }

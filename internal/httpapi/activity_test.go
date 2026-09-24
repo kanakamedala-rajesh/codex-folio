@@ -12,8 +12,19 @@ import (
 )
 
 type activityTestService struct {
-	records []activity.TimelineRecord
-	filters activity.Filters
+	records  []activity.TimelineRecord
+	filters  activity.Filters
+	assigned activity.Assignment
+}
+
+func TestActivityResponsePreservesAssignedLegacyAttribution(t *testing.T) {
+	response := ActivityResponseFor([]activity.TimelineRecord{{
+		RecordType: activity.RecordTypeObservedSession, ProfileID: "personal", AttributionProvenance: "user_assigned",
+		OriginalProfileID: "work", OriginalAttributionProvenance: "legacy_profile_observation",
+	}})
+	if len(response.Records) != 1 || response.Records[0].OriginalProfileId == nil || *response.Records[0].OriginalProfileId != "work" || response.Records[0].OriginalAttributionProvenance == nil || *response.Records[0].OriginalAttributionProvenance != "legacy_profile_observation" {
+		t.Fatalf("assigned legacy response = %#v", response)
+	}
 }
 
 func (service *activityTestService) Refresh(context.Context, string) ([]activity.TimelineRecord, error) {
@@ -36,6 +47,11 @@ func (service *activityTestService) ImportSource(_ context.Context, sourceID str
 	return activity.ImportResult{ImportedCount: 1}, nil
 }
 
+func (service *activityTestService) Assign(_ context.Context, assignment activity.Assignment) error {
+	service.assigned = assignment
+	return nil
+}
+
 func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 	tokens := int64(42)
 	service := &activityTestService{records: []activity.TimelineRecord{{
@@ -54,6 +70,14 @@ func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 
 	client := testClient(t)
 	origin := server.Origin()
+	unauthorized, err := doRequest(client, http.MethodPost, origin+ActivityAssignmentsPath, server.Address(), origin, []byte(`{"session_ids":["observed-1"],"profile_id":"profile-1"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized assignment = %d", unauthorized.StatusCode)
+	}
 	token := mustBootstrapToken(t, server.BootstrapURL())
 	exchange, err := doRequest(client, http.MethodPost, origin+BootstrapPath, server.Address(), origin, []byte(`{"bootstrap_token":"`+token+`"}`), "")
 	if err != nil {
@@ -86,6 +110,26 @@ func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 		t.Fatalf("sources = %#v, %v", sources, err)
 	}
 	_ = sourceResponse.Body.Close()
+	for _, attempt := range []struct {
+		body, csrf string
+		status     int
+	}{
+		{`{"session_ids":["observed-1"],"profile_id":"profile-1"}`, "", http.StatusForbidden},
+		{`{"session_ids":["observed-1"],"profile_id":"profile-1","extra":true}`, bootstrap.CSRFToken, http.StatusBadRequest},
+		{`{"session_ids":["observed-1"],"profile_id":"profile-1"}`, bootstrap.CSRFToken, http.StatusOK},
+	} {
+		response, err := doRequest(client, http.MethodPost, origin+ActivityAssignmentsPath, server.Address(), origin, []byte(attempt.body), attempt.csrf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != attempt.status {
+			t.Fatalf("assignment response = %d, want %d", response.StatusCode, attempt.status)
+		}
+	}
+	if len(service.assigned.SessionIDs) != 1 || service.assigned.ProfileID != "profile-1" {
+		t.Fatalf("assignment = %#v", service.assigned)
+	}
 	for _, attempt := range []struct {
 		body, csrf string
 		status     int

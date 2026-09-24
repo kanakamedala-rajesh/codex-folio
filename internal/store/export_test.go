@@ -148,3 +148,41 @@ func TestCombinedIdentityActivityExportExcludesUnassignedHistory(t *testing.T) {
 		t.Fatalf("combined activity export = %#v/%v", records.Activity, err)
 	}
 }
+
+func TestAssignedLegacySessionExportRetainsOriginalAttribution(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	addReadyProfile(t, stateStore, "profile-2", "Personal")
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{{
+		SourceSessionID: "legacy-linked", ProfileID: "profile-1", ProfileAlias: "Work",
+		Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %#v/%v", history, err)
+	}
+	if err := stateStore.AssignSessions(ctx, []string{history[0].ID}, "profile-2"); err != nil {
+		t.Fatal(err)
+	}
+	request := activity.ExportRequest{Format: "json", Datasets: []string{"activity"}, Scope: usage.ScopeSelectedProfile, ProfileID: "profile-2", ProjectID: "*", From: "all", To: "all"}
+	records, err := stateStore.ExportAnalytics(ctx, request)
+	if err != nil || records.Activity == nil || len(*records.Activity) != 1 {
+		t.Fatalf("activity export = %#v/%v", records.Activity, err)
+	}
+	row := (*records.Activity)[0]
+	if row.ProfileID != "profile-2" || row.AttributionProvenance != "user_assigned" || row.OriginalProfileID != "profile-1" || row.OriginalAttributionProvenance != "legacy_profile_observation" {
+		t.Fatalf("assigned legacy provenance = %#v", row)
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil || !strings.Contains(string(encoded), `"original_attribution_provenance":"legacy_profile_observation"`) {
+		t.Fatalf("normalized export = %s/%v", encoded, err)
+	}
+}

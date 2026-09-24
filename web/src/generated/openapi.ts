@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "03978736fd5ee17c50ca708525d88afdd1f58653a7cf2c25d99cf04b4f01eea4" as const;
+  "f234f49e96a726de810907c9dd77c07bb16ba0d5ed763c0937dedc4d0a05d29c" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -457,6 +457,9 @@ export interface ActivityExportRecord {
   record_type: string;
   id: string;
   source_session_id?: string;
+  original_profile_id?: string;
+  attribution_provenance?: string;
+  original_attribution_provenance?: string;
   profile_id: string;
   profile_alias: string;
   project_id?: string;
@@ -710,6 +713,15 @@ export interface ActivitySourceImportResponse {
   already_present_count: number;
 }
 
+export interface ActivityAssignmentRequest {
+  session_ids: string[];
+  profile_id: string;
+}
+
+export interface ActivityAssignmentResponse {
+  assigned_count: number;
+}
+
 export interface ActivityRecord {
   record_type: string;
   id: string;
@@ -723,6 +735,8 @@ export interface ActivityRecord {
   source_version: string;
   provenance: string;
   attribution_provenance?: string;
+  original_attribution_provenance?: string;
+  original_profile_id?: string;
   started_at: string;
   last_observed_at: string;
   lifecycle: string;
@@ -1139,6 +1153,13 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
     };
   };
+  "/api/v1/activity/assignments": {
+    post: {
+      operationId: "assignActivity";
+      requestBody: ActivityAssignmentRequest;
+      responses: { 200: { content: { "application/json": ActivityAssignmentResponse } } };
+    };
+  };
   "/api/v1/bootstrap": {
     post: {
       operationId: "exchangeBootstrap";
@@ -1312,6 +1333,10 @@ export interface CodexFolioApiClient {
     request: ActivitySourceImportRequest,
     init?: RequestInit,
   ): Promise<ActivitySourceImportResponse>;
+  assignActivity(
+    request: ActivityAssignmentRequest,
+    init?: RequestInit,
+  ): Promise<ActivityAssignmentResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
   getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
   manageBrowserTrust(
@@ -1642,6 +1667,23 @@ export function createCodexFolioApiClient(
         throw new UsageRefreshError(failure.code, response.status, failure.message);
       }
       return (await response.json()) as ActivitySourceImportResponse;
+    },
+    async assignActivity(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/assignments", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivityAssignmentResponse;
     },
     async exchangeBootstrap(request, init = {}) {
       const headers = new Headers(init.headers);

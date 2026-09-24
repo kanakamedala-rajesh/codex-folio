@@ -24,6 +24,10 @@ or leaving consent unchecked imports nothing. Unknown ownership appears as
 **Unassigned History** in the overall timeline; it is not a selectable profile
 and does not contribute to individual-profile or Combined Identity View totals.
 Import reads source metadata without changing Codex files.
+To correct ownership, open an observed session and choose **Correct ownership**,
+or select several observed sessions and use **Assign selected sessions**.
+Choose a ready profile or **Unassigned History**, then save. Repeat imports keep
+your corrections; the original ownership attribution remains visible separately.
 
 The commands below use **WSL/Linux with bash or zsh**, two terminals, and a
 browser. Run them from the CodexFolio repository root. For Windows/macOS and the
