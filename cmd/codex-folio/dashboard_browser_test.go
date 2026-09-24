@@ -417,6 +417,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	activities := seedDashboardActivity(t, state, projects, project, repository)
+	if suite == "deep" {
+		seedUnimportedDashboardSessions(t, state, repository)
+	}
 	plan, err := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: repository, ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -923,6 +926,37 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser selection changed the running Work launch")
 	}
 	return nil
+}
+
+func seedUnimportedDashboardSessions(t *testing.T, state *store.Store, repository string) {
+	t.Helper()
+	at := time.Now().UTC().Truncate(24 * time.Hour).Add(-23 * time.Hour)
+	for _, fixture := range []struct {
+		alias string
+		ids   []string
+	}{
+		{"Work", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc52"}},
+		{"Personal", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc53"}},
+	} {
+		target, err := state.ResolveActivityProfile(context.Background(), fixture.alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		database, err := sql.Open("sqlite", filepath.Join(target.IdentityHome, "state_5.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range fixture.ids {
+			_, err = database.Exec(`INSERT INTO threads (id, created_at_ms, updated_at_ms, source, model, cwd, tokens_used, title, preview, first_user_message) VALUES (?, ?, ?, 'cli', 'gpt-5', ?, 7, 'private title', 'private preview', 'private prompt')`, id, at.UnixMilli(), at.Add(time.Minute).UnixMilli(), repository)
+			if err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func dashboardPaginationRecords(state *store.Store, start time.Time, seed bool) error {

@@ -200,9 +200,9 @@ export async function testSessions({
     });
     await consent.focus();
     await page.keyboard.press("Space");
-    assert.equal(await card.getByRole("button", { name: "Import source" }).isEnabled(), true);
+    await card.locator("button:enabled").filter({ hasText: "Import source" }).waitFor();
     await page.keyboard.press("Space");
-    assert.equal(await card.getByRole("button", { name: "Import source" }).isDisabled(), true);
+    await card.locator("button:disabled").filter({ hasText: "Import source" }).waitFor();
   }
   await scanAccessibility("sessions-source-review-narrow");
   const disclosure = page.locator("main details").first();
@@ -322,46 +322,61 @@ export async function testSessions({
   check(
     "real-service Sessions pagination covers 26 independent records, keyboard Next, Previous, boundary disabling, filter reset and exact fixture cleanup",
   );
-  const repeatSource = reviewedSources.sources.find(
-    (source) => source.status === "supported" && source.session_count > 0,
+  const workSource = reviewedSources.sources.find(
+    (source) => source.label === "Work" && source.status === "supported",
   );
-  assert.ok(repeatSource, "fixture exposes a supported source with sessions");
+  const personalSource = reviewedSources.sources.find(
+    (source) => source.label === "Personal" && source.status === "supported",
+  );
+  assert.ok(workSource && personalSource, "fixture exposes both supported homes");
   await reviewButton.click();
-  const repeatCard = page.getByRole("region", { name: repeatSource.label, exact: true });
-  await repeatCard.waitFor();
-  const importOnce = async () => {
-    await repeatCard.getByRole("checkbox", { name: /I choose to import this source/ }).check();
+  const importOnce = async (source) => {
+    const card = page.getByRole("region", { name: source.label, exact: true });
+    await card.waitFor();
+    await card.getByRole("checkbox", { name: /I choose to import this source/ }).check();
     const imported = page.waitForResponse(
       (item) =>
         new URL(item.url()).pathname === "/api/v1/activity/sources" &&
         item.request().method() === "POST",
     );
-    await repeatCard.getByRole("button", { name: "Import source", exact: true }).click();
+    await card.getByRole("button", { name: "Import source", exact: true }).click();
     const response = await imported;
     assert.equal(response.status(), 200, await response.text());
     const result = await response.json();
     await page.getByRole("status").filter({ hasText: "Import complete." }).waitFor();
     return result;
   };
-  const firstImport = await importOnce();
-  const afterFirstImport = (
+  const workImport = await importOnce(workSource);
+  assert.equal(workImport.imported_count, 2, "Work imports a shared and a distinct new session");
+  const personalImport = await importOnce(personalSource);
+  assert.equal(personalImport.imported_count, 1, "Personal imports only its distinct new session");
+  assert.ok(personalImport.already_present_count > 0, "shared session is already present");
+  const afterMixedImport = (
     await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
   ).records;
-  assert.equal(afterFirstImport.length, records.length + firstImport.imported_count);
-  const secondImport = await importOnce();
-  assert.equal(secondImport.imported_count, 0, "repeat import adds no source sessions");
-  assert.ok(
-    secondImport.already_present_count > 0,
-    "repeat import reports existing source sessions",
-  );
+  assert.equal(afterMixedImport.length, records.length + 3);
+  for (const id of [
+    "018f4f70-6f77-7c3f-9b77-93aa087dfc51",
+    "018f4f70-6f77-7c3f-9b77-93aa087dfc52",
+    "018f4f70-6f77-7c3f-9b77-93aa087dfc53",
+  ]) {
+    const matching = afterMixedImport.filter((record) => record.source_session_id === id);
+    assert.equal(matching.length, 1, `${id} occurs once across source homes`);
+    assert.equal(matching[0].profile_id, "", "import does not infer ownership");
+  }
+  for (const source of [workSource, personalSource]) {
+    const repeated = await importOnce(source);
+    assert.equal(repeated.imported_count, 0, "repeat import adds no source sessions");
+    assert.ok(repeated.already_present_count > 0, "repeat import reports existing sessions");
+  }
   await page.getByRole("status").filter({ hasText: "0 new sessions were added" }).waitFor();
   assert.deepEqual(
     (await (await page.request.get(new URL("/api/v1/activity", link).href)).json()).records,
-    afterFirstImport,
+    afterMixedImport,
     "repeat import leaves normalized activity unchanged",
   );
   await nav("Overview").click();
   check(
-    "Sessions source review, consent and repeat import; Unassigned History and Combined Identity exclusion; filters, metadata, keyboard return, responsive reflow and failed-read recovery",
+    "Sessions source review, consent, mixed-home and repeat import with shared-session dedup; Unassigned History and Combined Identity exclusion; filters, metadata, keyboard return, responsive reflow and failed-read recovery",
   );
 }
