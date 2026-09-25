@@ -28,6 +28,10 @@ type launchCommandService struct {
 	continuations      *continuation.Service
 }
 
+func (service *launchCommandService) ActiveManagedLaunchCount(ctx context.Context) (int, error) {
+	return service.store.ActiveManagedLaunchCount(ctx)
+}
+
 func (service *launchCommandService) PrepareHandoff(ctx context.Context, request launch.PrepareRequest, version, checkpointID, revision string) (launch.Plan, error) {
 	if service.continuations == nil || service.authenticator == nil {
 		return launch.Plan{}, apperrors.New(apperrors.ContinuationCheckpointInvalid, continuation.ErrHandoffNotReady)

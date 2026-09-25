@@ -49,6 +49,7 @@ const (
 	CommandProfileLifecyclePath      = "/api/v1/command/profile-lifecycle"
 	CommandConfigurationPackPath     = "/api/v1/command/configuration-pack"
 	CommandLaunchPath                = "/api/v1/command/launch"
+	CommandStopPath                  = "/api/v1/command/stop"
 	CommandUsageRefreshPath          = "/api/v1/command/usage-refresh"
 	CommandUsageLatestPath           = "/api/v1/command/usage-latest"
 	CommandCollectionSettingsPath    = "/api/v1/command/collection-settings"
@@ -211,6 +212,10 @@ type Server struct {
 	profileAuthentication CommandProfileAuthenticationService
 	configurationPacks    *configpack.Service
 	launches              CommandLaunchService
+	stopMu                sync.Mutex
+	stopRequested         bool
+	stopCommitted         bool
+	stopReady             chan struct{}
 	usage                 CommandUsageService
 	collectionSettings    CollectionSettingsService
 	projects              *activity.ProjectService
@@ -312,6 +317,7 @@ func NewServer(options Options) (*Server, error) {
 		profileAuthentication: options.ProfileAuthentication,
 		configurationPacks:    options.ConfigurationPacks,
 		launches:              options.Launches,
+		stopReady:             make(chan struct{}),
 		usage:                 options.Usage,
 		collectionSettings:    options.CollectionSettings,
 		projects:              options.Projects,
@@ -496,6 +502,17 @@ func (server *Server) Serve(listener net.Listener) error {
 // and composition. Production callers should use Listen and Serve together.
 func (server *Server) Handler() http.Handler {
 	return server
+}
+
+// Drain lets an accepted stop reply reach its command client before cleanup.
+func (server *Server) Drain(ctx context.Context) error {
+	server.mu.Lock()
+	httpServer := server.httpServer
+	server.mu.Unlock()
+	if httpServer == nil {
+		return nil
+	}
+	return httpServer.Shutdown(ctx)
 }
 
 // Close stops the HTTP server, releases the listener, and invalidates every
@@ -689,6 +706,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		server.commandLaunch(response, request)
+	case CommandStopPath:
+		if !server.authorizeCommand(response, request) {
+			return
+		}
+		server.commandStop(response, request)
 	case CommandUsageRefreshPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -1455,7 +1477,7 @@ func (server *Server) Health() ServiceHealth {
 
 func requiresOperationalState(path string) bool {
 	switch path {
-	case CommandDashboardPath, CommandVaultPath, BootstrapPathName, "/", "/index.html", "/assets/app.js", "/assets/styles.css", BootstrapPath, MetadataPath:
+	case CommandDashboardPath, CommandVaultPath, CommandStopPath, BootstrapPathName, "/", "/index.html", "/assets/app.js", "/assets/styles.css", BootstrapPath, MetadataPath:
 		return false
 	default:
 		return strings.HasPrefix(path, "/api/")

@@ -109,6 +109,12 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 	}
 
 	var result CommandLaunchResponse
+	server.stopMu.Lock()
+	defer server.stopMu.Unlock()
+	if server.stopCommitted && (input.Action == "prepare" || input.Action == "prepare-handoff") {
+		server.writeAPIError(response, http.StatusConflict, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
 	switch strings.TrimSpace(input.Action) {
 	case "prepare":
 		plan, warning, actionErr := server.launches.Prepare(request.Context(), launch.PrepareRequest{
@@ -118,6 +124,7 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 		if err == nil {
 			result.Plan = &plan
 			result.Warning = warning
+			server.stopRequested = false
 		}
 	case "prepare-handoff":
 		plan, actionErr := server.launches.PrepareHandoff(request.Context(), launch.PrepareRequest{
@@ -126,13 +133,20 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 		err = actionErr
 		if err == nil {
 			result.Plan = &plan
+			server.stopRequested = false
 		}
 	case "started":
 		err = server.launches.MarkStarted(request.Context(), input.LeaseID, input.ProcessID)
 	case "exited":
 		result.Offer, err = server.launches.MarkExited(request.Context(), input.LeaseID, input.ExitStatus, input.Executable, input.Version)
+		if err == nil {
+			server.completeDeferredStop(request.Context())
+		}
 	case "abandoned":
 		err = server.launches.MarkAbandoned(request.Context(), input.LeaseID)
+		if err == nil {
+			server.completeDeferredStop(request.Context())
+		}
 	default:
 		err = apperrors.New(apperrors.LaunchPlanInvalid, launch.ErrPlanInvalid)
 	}

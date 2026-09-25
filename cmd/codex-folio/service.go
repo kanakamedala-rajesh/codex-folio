@@ -44,11 +44,13 @@ import (
 )
 
 type serviceOptions struct {
-	stateRoot *string
-	json      bool
-	enrolled  bool
-	candidate string
-	vaultMode platform.VaultMode
+	stateRoot  *string
+	json       bool
+	enrolled   bool
+	wait       bool
+	cancelStop bool
+	candidate  string
+	vaultMode  platform.VaultMode
 	// migrationTarget is an internal plain-start handoff. The detached service
 	// remains the sole SQLite/vault writer and commits this target only after
 	// destination reopen verification.
@@ -107,7 +109,7 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		}
 		serviceArgs = args[2:]
 	}
-	if command != "status" && command != "start" && command != "install" && command != "uninstall" && command != "recovery" && command != "certificate" {
+	if command != "status" && command != "start" && command != "stop" && command != "install" && command != "uninstall" && command != "recovery" && command != "certificate" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown service command", diagnosticSink)
 	}
 	options, err := parseServiceOptions(serviceArgs)
@@ -125,6 +127,9 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 	}
 	if options.enrolled && command != "start" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--enrolled is only valid for service start", diagnosticSink)
+	}
+	if (options.wait || options.cancelStop) && command != "stop" || options.wait && options.cancelStop {
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--wait and --cancel are only valid separately for service stop", diagnosticSink)
 	}
 	if options.migrationTarget != "" && command != "start" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--migrate-to is only valid for service start", diagnosticSink)
@@ -153,6 +158,8 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		return runServiceStatusWithEnrollment(paths, options, stdout, stderr, diagnosticSink, enrollment)
 	case "start":
 		return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, diagnosticSink)
+	case "stop":
+		return runServiceStop(paths, options, input, stdout, stderr)
 	case "certificate":
 		return runServiceCertificate(paths, options.json, stdout, stderr)
 	case "install":
@@ -210,6 +217,16 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 				return serviceOptions{}, errors.New("--enrolled may be supplied only once")
 			}
 			options.enrolled = true
+		case arg == "--wait":
+			if options.wait {
+				return serviceOptions{}, errors.New("duplicate --wait")
+			}
+			options.wait = true
+		case arg == "--cancel":
+			if options.cancelStop {
+				return serviceOptions{}, errors.New("duplicate --cancel")
+			}
+			options.cancelStop = true
 		case arg == "--state-root":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
 				return serviceOptions{}, errors.New("--state-root requires a value")
@@ -1095,6 +1112,23 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interfa
 	defer stop()
 	select {
 	case <-ctx.Done():
+	case <-server.StopReady():
+		drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = server.Drain(drainCtx)
+		cancel()
+		if code := closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink); code != exitSuccess {
+			return code
+		}
+		if options.enrolled && runtime.GOOS == "darwin" {
+			enrollment, err := newNativeServiceEnrollment(platform.Paths{Root: metadata.StateRoot}, options)
+			if err != nil {
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+			}
+			if err := enrollment.(*platform.ServiceEnrollment).StopCurrentSession(); err != nil {
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+			}
+		}
+		return exitSuccess
 	case err := <-serveErrors:
 		_ = stateStore.Close()
 		_ = owner.Close()
@@ -1534,6 +1568,7 @@ func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service stop [--state-root PATH] [--wait|--cancel] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service certificate [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service install [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service uninstall [--state-root PATH] [--json]")

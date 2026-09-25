@@ -328,6 +328,26 @@ func (enrollment *ServiceEnrollment) Start() error {
 	}
 }
 
+// StopCurrentSession unloads a macOS LaunchAgent without removing its login
+// definition. Call this only after the companion has committed and completed
+// its own safe shutdown.
+func (enrollment *ServiceEnrollment) StopCurrentSession() error {
+	if enrollment.platform != PlatformDarwin {
+		return nil
+	}
+	status, err := enrollment.Status()
+	if err != nil {
+		return err
+	}
+	if !status.Available {
+		return apperrors.New(apperrors.PlatformServiceUnavailable, errors.New("native per-user service mechanism is unavailable"))
+	}
+	if !status.Installed {
+		return nil
+	}
+	return enrollment.run("launchctl", "bootout", enrollment.launchTarget())
+}
+
 func (enrollment *ServiceEnrollment) Uninstall() (ServiceEnrollmentResult, error) {
 	before, err := enrollment.Status()
 	if err != nil {
@@ -540,7 +560,7 @@ func (enrollment *ServiceEnrollment) launchAgentDefinition() []byte {
 		_ = xml.EscapeText(&body, []byte(argument))
 		body.WriteString("</string>\n")
 	}
-	body.WriteString("</array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n</dict></plist>\n")
+	body.WriteString("</array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n</dict></plist>\n")
 	return []byte(body.String())
 }
 

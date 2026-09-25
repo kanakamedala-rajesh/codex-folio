@@ -124,16 +124,14 @@ or acquire the state owner directly when it is stopped. A different active root
 is an ownership conflict, not a way to start a parallel isolated service. Do not
 copy an active database, delete lock files, or edit runtime files.
 
-Before switching roots, exit active foreground Codex sessions and stop an
-on-demand owner orderly. A manually invoked foreground `service start` uses
-Ctrl-C in its service terminal; a detached owner created by plain startup can be
-identified with `service status --json` and stopped through the platform until
-the dedicated stop workflow is available. If the old owner is enrolled,
-run `service uninstall --state-root /absolute/path/to/old-state` to remove that
-enrollment, then inspect status and ensure its owner has stopped before starting
-the new root. Uninstall is not a reset and retains data. If a foreground owner is
-still running, stop it in its original terminal. Do not issue a blanket kill of
-Codex processes.
+Before switching roots, exit active foreground Codex sessions and run
+`service stop --state-root /absolute/path/to/old-state` for the old owner. If a
+Managed Launch is still active, accept deferred stop or finish that session
+first. Check `service status --json` for the old root before starting the new
+one. Stopping retains OS-login enrollment; use `service uninstall` separately
+only if you intend to remove or move that enrollment. A manually invoked
+foreground `service start` can also be stopped with Ctrl-C in its service
+terminal. Do not issue a blanket kill of Codex processes.
 
 Inspect or start the foreground owner:
 
@@ -168,6 +166,17 @@ profiles, authentication, vault data, configuration, and foreground Codex work.
 Repeated install/uninstall is safe and reports whether enrollment changed. When
 the native mechanism is unavailable, status says so and on-demand `service
 start` remains available.
+
+`service stop` requests orderly companion shutdown through the authenticated
+local command channel. An idle owner exits immediately. With pending or running
+Managed Launches, the command offers to wait until they finish; declining leaves
+the owner running. `service stop --wait` accepts deferred shutdown without a
+prompt; `service stop --cancel` clears that request. A newly accepted Managed
+Launch also cancels a pending stop. `--json` reports `state` and
+`active_launches` without prompting. Pending leases and uncertain state do not
+prove that shutdown is safe. Codex processes and recorded foreground exit facts
+are untouched. An intentional stop keeps OS-login enrollment for the next
+intended login or start; `service uninstall` is the separate removal action.
 
 ### Periodic usage collection
 

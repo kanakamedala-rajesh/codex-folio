@@ -295,10 +295,12 @@ same-installation protection change, not portable credential backup.
 
 This automatic on-demand lifetime does not install OS-login startup or grant
 periodic collection consent. The setup prompt remembers that separate choice;
-declining leaves foreground launch and on-demand refresh available. To stop this
-detached on-demand owner in this development slice, identify the owning process
-with `service status --json` and use an orderly platform process stop; the
-dedicated companion stop workflow is delivered separately.
+declining leaves foreground launch and on-demand refresh available. Run
+`codex-folio service stop` to stop an idle companion. If Managed Launches are
+active, choose whether to stop after they finish; `service stop --wait` makes
+that choice without a prompt, and `service stop --cancel` cancels a pending
+stop. Stopping never terminates Codex and leaves OS-login enrollment installed.
+The next plain `codex-folio` command starts the companion again.
 
 For the dashboard restart check, stop and rerun the plain command with the same
 state root and vault mode, then use the printed reopening command for a fresh
