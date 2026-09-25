@@ -705,6 +705,19 @@ Run the plain command from the working directory where Codex should start:
 ./build/bin/codex-folio --state-root /absolute/path --vault-mode passphrase
 ```
 
+On an interactive direct-binary start, CodexFolio offers optional command
+availability setup when its directory is absent from `PATH`. Answer `y` to add
+that directory to the current user's bash `.bashrc` and active login file
+(`.bash_profile`, `.bash_login`, or `.profile`), zsh `.zshrc`, or Windows user
+`Path`; the prompt names the directory before changing anything. A new
+terminal is required for the plain `codex-folio` command. Refusal leaves the
+environment unchanged and the direct binary remains usable. Repeating setup
+does not add a duplicate. If the shell is unsupported, the file cannot safely
+be changed, or another `codex-folio` command is already on `PATH`, follow the
+printed manual guidance and resolve the existing command deliberately. On
+Windows, sign out and back in if a new terminal still inherits an old `Path`.
+This setup does not install OS-login enrollment or enable collection.
+
 The picker lists only eligible Identity Profiles and marks Selected Profile
 with `*`. Press Enter to launch that highlighted profile, enter a displayed
 number to make an explicit selection and launch it, or enter `q` to cancel. If

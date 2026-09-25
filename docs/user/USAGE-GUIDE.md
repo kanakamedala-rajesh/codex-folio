@@ -6,7 +6,13 @@ organizes local profiles and launches your installed Codex; Codex owns account
 sign-in and provider communication.
 
 For a first foreground launch, build the CLI and run `./build/bin/codex-folio`
-with no subcommand. A one-time prompt offers background collection of supported
+with no subcommand. If its directory is not on `PATH`, an interactive prompt
+offers to add it for future plain `codex-folio` use. Approve only if you want
+that change; declining continues with the direct binary. On bash or zsh, the
+approved setup appends a line to `.bashrc` and the active bash login file, or to
+`.zshrc` for zsh; on Windows, it adds
+the binary directory to your user `Path`. Open a new terminal before trying
+the plain command. A separate prompt offers background collection of supported
 usage metadata. Choose yes for periodic collection or no for on-demand refresh
 only; the choice is remembered and can be changed in Dashboard Settings. It does
 not enroll OS-login startup. When no profile is ready, choose `r` to register an existing

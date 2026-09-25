@@ -59,6 +59,7 @@ func runWithServicePathResolverAndCodexResolverAndForegroundDependenciesAndCompa
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, newServiceDiagnosticSink())
 		}
+		offerCommandPathSetup(promptInput, stdout, stderr)
 		if code := ensureEverydayCompanion(paths, options.serviceOptions, promptInput, stdout, stderr, startCompanion); code != exitSuccess {
 			return code
 		}
@@ -194,6 +195,7 @@ func writeUsage(stdout io.Writer, metadata buildinfo.Metadata) {
 	fmt.Fprintln(stdout, "Local service foundation: encrypted state recovery is available.")
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Usage:")
+	fmt.Fprintln(stdout, "  codex-folio [--state-root PATH] [--vault-mode MODE]  (guided profile picker and optional PATH setup)")
 	fmt.Fprintln(stdout, "  codex-folio version [--json]")
 	fmt.Fprintln(stdout, "  codex-folio service {certificate|install|start|status|uninstall|recovery} [--state-root PATH] [--vault-mode secret-service|wsl-dpapi|passphrase] [--json]")
 	fmt.Fprintln(stdout, "  codex-folio vault unlock [--state-root PATH] [--json]")
