@@ -1610,6 +1610,7 @@ export function App() {
                 readActivity={(profileAlias, projectId) =>
                   api.getActivity(profileAlias, projectId).then((result) => result.records)
                 }
+                readOverallHistory={() => api.getAnalytics("overall_history")}
                 editProject={editAnalyticsProject}
                 expired={failure}
               />

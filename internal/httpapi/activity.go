@@ -251,6 +251,7 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 			LastObservedAt: formatUsageTime(record.LastObservedAt), Lifecycle: record.Lifecycle, Model: record.Model,
 			CorrelationState: record.Correlation.State, CorrelationManagedLaunchId: record.Correlation.ManagedLaunchID,
 			CorrelationEvidenceType: record.Correlation.EvidenceType, CorrelationConfidence: record.Correlation.Confidence,
+			HistoricalMetrics: []HistoricalSessionMetric{},
 		}
 		if record.AttributionProvenance != "" {
 			item.AttributionProvenance = &record.AttributionProvenance
@@ -272,6 +273,19 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 		}
 		if record.TokensUsed != nil {
 			item.TokensUsed = strconv.FormatInt(*record.TokensUsed, 10)
+		}
+		if record.RecordType == activity.RecordTypeObservedSession && record.Source == activity.SourceLocalMetadata {
+			metric := HistoricalSessionMetric{
+				MetricKey: "codex.local.tokens_used", Unit: "tokens", Source: record.Source,
+				SourceVersion: record.SourceVersion, Availability: "absent", Freshness: "historical",
+				CoverageStartAt: formatUsageTime(record.StartedAt), CoverageEndAt: formatUsageTime(record.LastObservedAt),
+			}
+			if record.TokensUsed != nil {
+				value := strconv.FormatInt(*record.TokensUsed, 10)
+				metric.Value = &value
+				metric.Availability = "available"
+			}
+			item.HistoricalMetrics = append(item.HistoricalMetrics, metric)
 		}
 		result.Records = append(result.Records, item)
 	}

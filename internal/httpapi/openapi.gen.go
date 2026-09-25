@@ -23,7 +23,7 @@ const (
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "f234f49e96a726de810907c9dd77c07bb16ba0d5ed763c0937dedc4d0a05d29c"
+	ContractSourceSHA256      = "de050ca28c176579f09c1a2253a466c4e49f60d2399b81aece34598fb1d11972"
 	BootstrapPath             = "/api/v1/bootstrap"
 	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
@@ -726,11 +726,6 @@ type ActivitySourceImportRequest struct {
 	Consent  bool   `json:"consent"`
 }
 
-type ActivitySourceImportResponse struct {
-	ImportedCount       int64 `json:"imported_count"`
-	AlreadyPresentCount int64 `json:"already_present_count"`
-}
-
 type ActivityAssignmentRequest struct {
 	SessionIds []string `json:"session_ids"`
 	ProfileId  string   `json:"profile_id"`
@@ -740,34 +735,68 @@ type ActivityAssignmentResponse struct {
 	AssignedCount int64 `json:"assigned_count"`
 }
 
+type HistoricalMetric struct {
+	MetricKey              string  `json:"metric_key"`
+	Value                  *string `json:"value,omitempty"`
+	Unit                   string  `json:"unit"`
+	Source                 string  `json:"source"`
+	SourceVersion          string  `json:"source_version"`
+	Availability           string  `json:"availability"`
+	Freshness              string  `json:"freshness"`
+	SessionCount           int64   `json:"session_count"`
+	MeasuredSessionCount   int64   `json:"measured_session_count"`
+	UnassignedSessionCount int64   `json:"unassigned_session_count"`
+	UnassignedValue        *string `json:"unassigned_value,omitempty"`
+	CoverageStartAt        string  `json:"coverage_start_at"`
+	CoverageEndAt          string  `json:"coverage_end_at"`
+}
+
+type HistoricalSessionMetric struct {
+	MetricKey       string  `json:"metric_key"`
+	Value           *string `json:"value,omitempty"`
+	Unit            string  `json:"unit"`
+	Source          string  `json:"source"`
+	SourceVersion   string  `json:"source_version"`
+	Availability    string  `json:"availability"`
+	Freshness       string  `json:"freshness"`
+	CoverageStartAt string  `json:"coverage_start_at"`
+	CoverageEndAt   string  `json:"coverage_end_at"`
+}
+
+type ActivitySourceImportResponse struct {
+	ImportedCount       int64 `json:"imported_count"`
+	AlreadyPresentCount int64 `json:"already_present_count"`
+}
+
 type ActivityRecord struct {
-	RecordType                    string  `json:"record_type"`
-	Id                            string  `json:"id"`
-	SourceSessionId               string  `json:"source_session_id"`
-	ProfileId                     string  `json:"profile_id"`
-	ProfileAlias                  string  `json:"profile_alias"`
-	ProjectId                     string  `json:"project_id"`
-	ProjectAlias                  string  `json:"project_alias"`
-	ProjectBasename               string  `json:"project_basename"`
-	Source                        string  `json:"source"`
-	SourceVersion                 string  `json:"source_version"`
-	Provenance                    string  `json:"provenance"`
-	AttributionProvenance         *string `json:"attribution_provenance,omitempty"`
-	OriginalAttributionProvenance *string `json:"original_attribution_provenance,omitempty"`
-	OriginalProfileId             *string `json:"original_profile_id,omitempty"`
-	StartedAt                     string  `json:"started_at"`
-	LastObservedAt                string  `json:"last_observed_at"`
-	Lifecycle                     string  `json:"lifecycle"`
-	ContinuationCheckpointId      *string `json:"continuation_checkpoint_id,omitempty"`
-	ContinuationRevision          *string `json:"continuation_revision,omitempty"`
-	ExitStatus                    string  `json:"exit_status"`
-	Model                         string  `json:"model"`
-	TokensUsed                    string  `json:"tokens_used"`
-	CorrelationState              string  `json:"correlation_state"`
-	CorrelationManagedLaunchId    string  `json:"correlation_managed_launch_id"`
-	CorrelationEvidenceType       string  `json:"correlation_evidence_type"`
-	CorrelationConfidence         string  `json:"correlation_confidence"`
-	CanonicalPath                 *string `json:"canonical_path,omitempty"`
+	RecordType                    string                    `json:"record_type"`
+	Id                            string                    `json:"id"`
+	SourceSessionId               string                    `json:"source_session_id"`
+	ProfileId                     string                    `json:"profile_id"`
+	ProfileAlias                  string                    `json:"profile_alias"`
+	ProjectId                     string                    `json:"project_id"`
+	ProjectAlias                  string                    `json:"project_alias"`
+	ProjectBasename               string                    `json:"project_basename"`
+	Source                        string                    `json:"source"`
+	SourceVersion                 string                    `json:"source_version"`
+	Provenance                    string                    `json:"provenance"`
+	AttributionProvenance         *string                   `json:"attribution_provenance,omitempty"`
+	OriginalAttributionProvenance *string                   `json:"original_attribution_provenance,omitempty"`
+	OriginalProfileId             *string                   `json:"original_profile_id,omitempty"`
+	StartedAt                     string                    `json:"started_at"`
+	LastObservedAt                string                    `json:"last_observed_at"`
+	Lifecycle                     string                    `json:"lifecycle"`
+	ContinuationCheckpointId      *string                   `json:"continuation_checkpoint_id,omitempty"`
+	ContinuationRevision          *string                   `json:"continuation_revision,omitempty"`
+	ExitStatus                    string                    `json:"exit_status"`
+	Model                         string                    `json:"model"`
+	TokensUsed                    string                    `json:"tokens_used"`
+	HistoricalMetrics             []HistoricalSessionMetric `json:"historical_metrics"`
+	CorrelationState              string                    `json:"correlation_state"`
+	CorrelationManagedLaunchId    string                    `json:"correlation_managed_launch_id"`
+	CorrelationEvidenceType       string                    `json:"correlation_evidence_type"`
+	CorrelationConfidence         string                    `json:"correlation_confidence"`
+	CanonicalPath                 *string                   `json:"canonical_path,omitempty"`
 }
 
 type ActivityResponse struct {
@@ -783,6 +812,7 @@ type AnalyticsResponse struct {
 	Aggregates           []UsageAggregate        `json:"aggregates"`
 	Ambiguities          []UsageMetricAmbiguity  `json:"ambiguities"`
 	Activity             []ActivityRecord        `json:"activity"`
+	HistoricalMetrics    []HistoricalMetric      `json:"historical_metrics"`
 	Recent               []UsageSnapshotResponse `json:"recent"`
 }
 

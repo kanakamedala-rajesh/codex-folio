@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "f234f49e96a726de810907c9dd77c07bb16ba0d5ed763c0937dedc4d0a05d29c" as const;
+  "de050ca28c176579f09c1a2253a466c4e49f60d2399b81aece34598fb1d11972" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -708,11 +708,6 @@ export interface ActivitySourceImportRequest {
   consent: boolean;
 }
 
-export interface ActivitySourceImportResponse {
-  imported_count: number;
-  already_present_count: number;
-}
-
 export interface ActivityAssignmentRequest {
   session_ids: string[];
   profile_id: string;
@@ -720,6 +715,39 @@ export interface ActivityAssignmentRequest {
 
 export interface ActivityAssignmentResponse {
   assigned_count: number;
+}
+
+export interface HistoricalMetric {
+  metric_key: string;
+  value?: string;
+  unit: string;
+  source: string;
+  source_version: string;
+  availability: string;
+  freshness: string;
+  session_count: number;
+  measured_session_count: number;
+  unassigned_session_count: number;
+  unassigned_value?: string;
+  coverage_start_at: string;
+  coverage_end_at: string;
+}
+
+export interface HistoricalSessionMetric {
+  metric_key: string;
+  value?: string;
+  unit: string;
+  source: string;
+  source_version: string;
+  availability: string;
+  freshness: string;
+  coverage_start_at: string;
+  coverage_end_at: string;
+}
+
+export interface ActivitySourceImportResponse {
+  imported_count: number;
+  already_present_count: number;
 }
 
 export interface ActivityRecord {
@@ -745,6 +773,7 @@ export interface ActivityRecord {
   exit_status: string;
   model: string;
   tokens_used: string;
+  historical_metrics: HistoricalSessionMetric[];
   correlation_state: string;
   correlation_managed_launch_id: string;
   correlation_evidence_type: string;
@@ -765,6 +794,7 @@ export interface AnalyticsResponse {
   aggregates: UsageAggregate[];
   ambiguities: UsageMetricAmbiguity[];
   activity: ActivityRecord[];
+  historical_metrics: HistoricalMetric[];
   recent: UsageSnapshotResponse[];
 }
 

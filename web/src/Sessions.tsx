@@ -84,6 +84,7 @@ function Facts({ record }: { record: ActivityRecord }) {
 }
 
 function Evidence({ record }: { record: ActivityRecord }) {
+  const historical = record.historical_metrics ?? [];
   const pairs = [
     [
       c.availability,
@@ -120,17 +121,7 @@ function Evidence({ record }: { record: ActivityRecord }) {
     [c.correlation, label(record.correlation_state)],
     [c.confidence, label(record.correlation_confidence)],
     [c.evidenceType, label(record.correlation_evidence_type)],
-    ...(!managed(record)
-      ? [
-          [c.model, record.model || c.unavailable],
-          [
-            c.tokens,
-            record.tokens_used === ""
-              ? c.unavailable
-              : `${number.format(BigInt(record.tokens_used))} · ${c.locallyDerived}`,
-          ],
-        ]
-      : []),
+    ...(!managed(record) ? [[c.model, record.model || c.unavailable]] : []),
     [c.id, record.id],
     ...(!managed(record) ? [[c.sourceId, record.source_session_id || c.unavailable]] : []),
   ];
@@ -144,6 +135,33 @@ function Evidence({ record }: { record: ActivityRecord }) {
           </div>
         ))}
       </dl>
+      {!managed(record) && (
+        <section aria-label={c.historicalMetrics} className="mt-5">
+          <h3 className="mb-2 font-semibold">{c.historicalMetrics}</h3>
+          {historical.length ? (
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              {historical.map((metric) => (
+                <div key={metric.metric_key} className="contents">
+                  <dt className="text-muted">
+                    {metric.metric_key === "codex.local.tokens_used" ? c.tokens : metric.metric_key}
+                  </dt>
+                  <dd className="mb-3 wrap-anywhere">
+                    {metric.value === undefined
+                      ? c.unavailable
+                      : `${number.format(BigInt(metric.value))} ${metric.unit}`}{" "}
+                    · {metric.availability} · {metric.source}
+                    {metric.source_version ? ` ${metric.source_version}` : ""} ·{" "}
+                    {provenance(record)}
+                    {` · ${c.historicalFreshness} · ${instant(metric.coverage_start_at)} – ${instant(metric.coverage_end_at)}`}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-muted">{c.noHistoricalMetrics}</p>
+          )}
+        </section>
+      )}
       {managed(record) && <p className="text-muted">{c.noMetrics}</p>}
     </>
   );

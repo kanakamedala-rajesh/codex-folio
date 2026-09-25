@@ -681,6 +681,13 @@ an Observed Session owns its source start/last-observed timestamps, model and
 token count when available. Last observed is neither a process exit nor a live
 heartbeat. Tokens are locally derived metadata; absent model/tokens remain
 unavailable, while a recorded zero remains zero.
+Supported imported `state_5` thread metadata provides a token count when the
+source records one. Session details identify the source, version, historical
+freshness and recorded coverage interval. The interval bounds the retained
+thread record; it is not measured active time. Missing, unsupported,
+schema-incompatible or unreadable sources produce no invented token values.
+Importing a session cannot reconstruct earlier provider quota or credit
+snapshots, and unsupported or unknown source fields are discarded.
 
 Only existing explicit source-session evidence establishes related records.
 Uncorrelated, ambiguous and contradictory states remain visible without an
@@ -876,6 +883,15 @@ evidence. Models report only supported locally observed metadata—not provider
 capability or task suitability. Activity keeps Managed Launch and Observed
 Session rows separate and carries source, provenance, lifecycle, and correlation
 state. An absent dimension is shown as unsupported or unavailable, never zero.
+The **Overall history** token view includes Unassigned History and identifies
+its contribution separately. Profile-scoped totals exclude Unassigned History;
+Combined Identity View remains the aggregate of profiles, not a substitute for
+overall history. Token coverage counts distinguish measured zero from sessions
+without a supported value. Local historical tokens remain distinct from
+provider-reported capacity and from Managed Launch lifecycle counts.
+Refreshing provider usage does not assign source-home threads to the refreshed
+profile. A supported empty source is shown as **No activity**; a missing or
+unreadable source remains unavailable until the source can be read again.
 
 Projects uses the encrypted app-local identity mapping but sends only Project
 Aliases and basenames to the browser. Choose **Edit Project Alias** to change the

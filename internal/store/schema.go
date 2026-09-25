@@ -645,6 +645,38 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 30,
+			name:    "usage-no-activity-availability",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`PRAGMA defer_foreign_keys = ON`,
+					`CREATE TABLE metric_availability_v30 (
+						metric_availability_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL,
+						state TEXT NOT NULL CHECK (state IN ('available', 'unsupported', 'temporarily_unavailable', 'stale', 'reauthentication_required', 'contradictory', 'no_activity')),
+						checked_at TEXT NOT NULL,
+						provenance_id TEXT,
+						reason TEXT NOT NULL DEFAULT '',
+						condition TEXT NOT NULL DEFAULT '',
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id),
+						FOREIGN KEY (metric_key) REFERENCES usage_metrics (metric_key),
+						FOREIGN KEY (provenance_id) REFERENCES metric_provenance (provenance_id)
+					)`,
+					`INSERT INTO metric_availability_v30 SELECT metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id, reason, condition FROM metric_availability`,
+					`DROP TABLE metric_availability`,
+					`ALTER TABLE metric_availability_v30 RENAME TO metric_availability`,
+					`CREATE INDEX idx_metric_availability_profile ON metric_availability (profile_id)`,
+					`CREATE INDEX idx_metric_availability_provenance ON metric_availability (provenance_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 

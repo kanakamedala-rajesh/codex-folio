@@ -270,6 +270,7 @@ export const stateCopy: Record<string, string> = {
   available: "Available",
   unsupported: "Unsupported",
   temporarily_unavailable: "Temporarily unavailable",
+  no_activity: "No activity in this source",
   stale: "Stale",
   partial: "Partial",
   contradictory: "Contradictory",
@@ -282,6 +283,8 @@ export const stateCopy: Record<string, string> = {
   field_missing: "Field missing",
   capability_unsupported: "Unsupported capability",
   collection_failed: "Collection failed",
+  history_attribution_unknown: "History needs profile assignment",
+  historical_measurement_absent: "Historical measurement absent",
   local_metadata: "Local metadata",
 };
 export const provenanceCopy: Record<string, string> = {
@@ -458,6 +461,17 @@ export const analyticsCopy = {
   tokensTitle: "Token observations",
   tokensSubtitle:
     "Observed-session token metadata only. Values keep their record, project, source and provenance.",
+  overallHistory: "Overall history (includes Unassigned History)",
+  historicalSummary: "Historical token coverage",
+  historicalSummaryDetail:
+    "All retained observed sessions, regardless of the History range filter. Supported local session metadata only; this does not reconstruct past provider quota or credit snapshots. Managed Launches never add duplicate token measures.",
+  historicalCoverage: (measured: number, total: number) =>
+    `${measured} of ${total} observed sessions have a supported token value`,
+  unassignedContribution: "Unassigned History contribution",
+  historicalPeriod: "Covered session times",
+  noHistoricalSummary:
+    "Historical token values are absent or unsupported; this does not mean zero activity.",
+  historicalSource: "Local session metadata",
   projectsTitle: "Projects",
   projectsSubtitle:
     "App-local Project Aliases and basenames. Canonical repository paths stay private.",
@@ -467,7 +481,8 @@ export const analyticsCopy = {
   activityTitle: "Activity",
   activitySubtitle:
     "Managed Launches and Observed Sessions remain distinct. Correlation never implies causation.",
-  noTokens: "Token metrics are unsupported for the records matching these filters.",
+  noTokens:
+    "No supported token values are available for these records. Missing history does not mean zero usage.",
   noProjects: "No Project Identity matches these filters.",
   noModels: "Model metadata is unsupported for the records matching these filters.",
   noActivity: "No Managed Launch or Observed Session matches these filters.",
@@ -482,6 +497,7 @@ export const analyticsCopy = {
   chartTableNote: "Bars summarize the same rows as the following accessible table.",
   record: "Record",
   tokens: "Tokens",
+  historicalFreshness: "Historical source observation",
   model: "Model",
   records: "Records",
   lastObserved: "Last observed",
@@ -919,6 +935,10 @@ export const launchCopy = {
 
 export const sessionsCopy = {
   locallyDerived: "Locally derived",
+  historicalMetrics: "Historical metrics",
+  noHistoricalMetrics:
+    "No supported historical token value is available for this session. Missing history does not mean zero usage.",
+  historicalFreshness: "Historical source observation",
   title: "Sessions",
   subtitle:
     "Overall history includes Unassigned History. Managed Launches and Observed Sessions retain separate boundaries.",

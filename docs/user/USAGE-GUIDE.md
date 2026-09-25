@@ -28,6 +28,13 @@ To correct ownership, open an observed session and choose **Correct ownership**,
 or select several observed sessions and use **Assign selected sessions**.
 Choose a ready profile or **Unassigned History**, then save. Repeat imports keep
 your corrections; the original ownership attribution remains visible separately.
+Sessions shows imported token counts only when supported local metadata records
+them; a recorded zero stays zero, while missing history remains unavailable.
+In Analytics, **Overall history** includes Unassigned contributions separately
+from profile totals. Importing sessions does not recreate past provider quota
+or credit snapshots; refresh provider usage separately for current evidence.
+Local profile token totals use imported ownership, not every thread in a shared
+Codex home.
 
 The commands below use **WSL/Linux with bash or zsh**, two terminals, and a
 browser. Run them from the CodexFolio repository root. For Windows/macOS and the

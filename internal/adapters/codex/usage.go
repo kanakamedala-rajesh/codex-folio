@@ -57,37 +57,37 @@ func (collector *UsageCollector) Collect(ctx context.Context, request usage.Coll
 }
 
 func (*UsageCollector) addLocalUsage(ctx context.Context, request usage.CollectionRequest, snapshot *usage.Snapshot) {
-	sessions, err := NewLocalActivityReader().Read(contextOrBackground(ctx), activity.ReadRequest{IdentityHome: request.IdentityHome, SourceVersion: LocalActivitySourceVersion})
-	values := map[string]float64{
-		"codex.local.tokens_used":      0,
-		"codex.local.session_duration": 0,
-	}
-	if err == nil {
-		for _, session := range sessions {
-			if session.TokensUsed != nil {
-				values["codex.local.tokens_used"] += float64(*session.TokensUsed)
-			}
-			values["codex.local.session_duration"] += session.LastObservedAt.Sub(session.StartedAt).Seconds()
-		}
-	}
+	inspection, err := NewLocalActivityReader().Probe(contextOrBackground(ctx), request.IdentityHome)
 	for index := range snapshot.Availability {
 		availability := &snapshot.Availability[index]
-		value, local := values[availability.MetricKey]
-		if !local {
+		if availability.MetricKey != "codex.local.tokens_used" && availability.MetricKey != "codex.local.session_duration" {
 			continue
 		}
 		availability.Provenance = usage.ProvenanceLocal
-		if err != nil {
+		if availability.MetricKey == "codex.local.session_duration" {
+			// Thread timestamps bound coverage; they do not measure active use.
+			availability.State, availability.Reason = usage.AvailabilityUnsupported, usage.ReasonUnsupported
+			continue
+		}
+		if err != nil || inspection.Status == activity.SourceStatusUnavailable {
 			availability.State, availability.Reason = usage.AvailabilityTemporarilyUnavailable, usage.ReasonCollectionFailed
 			continue
 		}
-		availability.State, availability.Reason = usage.AvailabilityAvailable, ""
-		metric := usage.Registry()[index]
-		snapshot.Observations = append(snapshot.Observations, usage.Observation{
-			Metric: metric, Value: value, ObservedAt: snapshot.CapturedAt, CapturedAt: snapshot.CapturedAt,
-			Source: usage.SourceLocalMetadata, SourceVersion: LocalActivitySourceVersion,
-			Provenance: usage.ProvenanceLocal, Freshness: usage.FreshnessFresh, Availability: usage.AvailabilityAvailable,
-		})
+		switch inspection.Status {
+		case activity.SourceStatusMissing:
+			availability.State, availability.Reason = usage.AvailabilityTemporarilyUnavailable, usage.ReasonHistoryAbsent
+		case activity.SourceStatusUnsupported:
+			availability.State, availability.Reason = usage.AvailabilityUnsupported, usage.ReasonUnsupported
+		case activity.SourceStatusSchemaInvalid:
+			availability.State, availability.Reason = usage.AvailabilityTemporarilyUnavailable, usage.ReasonMalformedSource
+		case activity.SourceStatusSupported:
+			if inspection.SessionCount == 0 {
+				availability.State, availability.Reason = usage.AvailabilityNoActivity, usage.ReasonNoActivity
+			} else {
+				// Source threads can belong to other profiles or Unassigned History.
+				availability.State, availability.Reason = usage.AvailabilityTemporarilyUnavailable, usage.ReasonAttributionUnknown
+			}
+		}
 	}
 }
 

@@ -294,13 +294,14 @@
         "exit_status": {"type": "string"},
         "model": {"type": "string"},
         "tokens_used": {"type": "string"},
+        "historical_metrics": {"type": "array", "items": {"$ref": "#/$defs/HistoricalSessionMetric"}},
         "correlation_state": {"type": "string"},
         "correlation_managed_launch_id": {"type": "string"},
         "correlation_evidence_type": {"type": "string"},
         "correlation_confidence": {"type": "string"},
         "canonical_path": {"type": "string"}
       },
-      "required": ["record_type", "id", "source_session_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"],
+      "required": ["record_type", "id", "source_session_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "historical_metrics", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"],
       "type": "object"
     },
     "ActivityResponse": {
@@ -310,6 +311,31 @@
       },
       "required": ["records"],
       "type": "object"
+    },
+    "HistoricalMetric": {
+      "type": "object", "additionalProperties": false,
+      "description": "A compatible historical local-metadata value. Coverage counts sessions, not active duration. An absent value is not zero.",
+      "properties": {
+        "metric_key": {"type": "string"}, "value": {"type": "string"}, "unit": {"type": "string"},
+        "source": {"type": "string"}, "source_version": {"type": "string"},
+        "availability": {"enum": ["available", "partial", "absent"], "type": "string"},
+        "freshness": {"type": "string"}, "session_count": {"type": "integer"},
+        "measured_session_count": {"type": "integer"}, "unassigned_session_count": {"type": "integer"},
+        "unassigned_value": {"type": "string"},
+        "coverage_start_at": {"type": "string"}, "coverage_end_at": {"type": "string"}
+      },
+      "required": ["metric_key", "unit", "source", "source_version", "availability", "freshness", "session_count", "measured_session_count", "unassigned_session_count", "coverage_start_at", "coverage_end_at"]
+    },
+    "HistoricalSessionMetric": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "metric_key": {"type": "string"}, "value": {"type": "string"}, "unit": {"type": "string"},
+        "source": {"type": "string"}, "source_version": {"type": "string"},
+        "availability": {"enum": ["available", "absent"], "type": "string"},
+        "freshness": {"type": "string"},
+        "coverage_start_at": {"type": "string"}, "coverage_end_at": {"type": "string"}
+      },
+      "required": ["metric_key", "unit", "source", "source_version", "availability", "freshness", "coverage_start_at", "coverage_end_at"]
     },
     "ActivitySource": {
       "additionalProperties": false,
@@ -960,7 +986,7 @@
     "AnalyticsResponse": {
       "additionalProperties": false,
       "properties": {
-        "scope": {"enum": ["selected_profile", "combined_identity"], "type": "string"},
+        "scope": {"enum": ["selected_profile", "combined_identity", "overall_history"], "type": "string"},
         "eligible_profile_count": {"type": "integer"},
         "recommended_profile_id": {"type": "string", "description": "Empty unless a unique eligible profile has comparable provider capacity captured no more than ten minutes ago. This evaluates companion-observable facts only, not model, tool, repository, workspace-policy, or task suitability."},
         "candidates": {"type": "array", "items": {"$ref": "#/$defs/UsageCandidate"}},
@@ -968,9 +994,10 @@
         "aggregates": {"type": "array", "items": {"$ref": "#/$defs/UsageAggregate"}},
         "ambiguities": {"type": "array", "items": {"$ref": "#/$defs/UsageMetricAmbiguity"}},
         "activity": {"type": "array", "items": {"$ref": "#/$defs/ActivityRecord"}},
+        "historical_metrics": {"type": "array", "items": {"$ref": "#/$defs/HistoricalMetric"}},
         "recent": {"type": "array", "items": {"$ref": "#/$defs/UsageSnapshotResponse"}}
       },
-      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity", "recent"],
+      "required": ["scope", "eligible_profile_count", "recommended_profile_id", "candidates", "profiles", "aggregates", "ambiguities", "activity", "historical_metrics", "recent"],
       "type": "object"
     },
     "AlertRecord": {

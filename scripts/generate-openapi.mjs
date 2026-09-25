@@ -580,6 +580,8 @@ function validateContract(contract, productVersion) {
     "ActivitySourceImportResponse",
     "ActivityAssignmentRequest",
     "ActivityAssignmentResponse",
+    "HistoricalMetric",
+    "HistoricalSessionMetric",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -750,7 +752,7 @@ function validateContract(contract, productVersion) {
     activityPath,
     activitySourcesPath,
     activityAssignmentsPath,
-    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivitySourceImportResponse", "ActivityAssignmentRequest", "ActivityAssignmentResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
+    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivityAssignmentRequest", "ActivityAssignmentResponse", "HistoricalMetric", "HistoricalSessionMetric", "ActivitySourceImportResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     activityRecordFields,
     activityRecordType: "ActivityRecord",
     activityResponseFields,

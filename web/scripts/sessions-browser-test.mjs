@@ -92,6 +92,13 @@ export async function testSessions({
   assert.ok(correlated.profile_id);
   assert.ok(observed.some((record) => !record.profile_id));
   assert.ok(observed.some((record) => !record.profile_id && !record.model));
+  const zero = observed.find((record) => record.tokens_used === "0");
+  assert.ok(zero, "source fixture includes recorded zero usage");
+  assert.equal(
+    zero.historical_metrics?.find((metric) => metric.metric_key === "codex.local.tokens_used")
+      ?.value,
+    "0",
+  );
   const related = records.find((record) => record.id === correlated.correlation_managed_launch_id);
   assert.equal(related.record_type, "managed_launch");
   assert.equal(related.tokens_used, "");
@@ -126,7 +133,7 @@ export async function testSessions({
   await page.waitForFunction(() => document.activeElement?.tagName === "H1");
   let text = await page.locator("main").innerText();
   assert.match(text, /Observed Session · Work/);
-  assert.match(text, /42 · Locally derived/);
+  assert.match(text, /42 tokens · available · local_metadata/);
   assert.match(text, /Explicit source session ID/);
   assert.match(text, /High/);
   assert.match(text, /Launch Profile \(immutable\)/);
@@ -147,7 +154,7 @@ export async function testSessions({
   assert.match(text, /Observed Session · Unassigned History/);
   assert.match(text, /Unknown ownership/);
   assert.match(text, /Partial metadata/);
-  assert.match(text, /0 · Locally derived/);
+  assert.match(text, /0 tokens · available · local_metadata/);
   assert.match(text, /Uncorrelated/);
   assert.match(text, /Unavailable/);
   await capture("session-partial-wide", 1440, 1000);
@@ -361,7 +368,63 @@ export async function testSessions({
     const matching = afterMixedImport.filter((record) => record.source_session_id === id);
     assert.equal(matching.length, 1, `${id} occurs once across source homes`);
     assert.equal(matching[0].profile_id, "", "import does not infer ownership");
+    assert.deepEqual(
+      matching[0].historical_metrics?.map((metric) => ({
+        metric_key: metric.metric_key,
+        value: metric.value,
+        unit: metric.unit,
+        availability: metric.availability,
+        source: metric.source,
+        freshness: metric.freshness,
+      })),
+      [
+        {
+          metric_key: "codex.local.tokens_used",
+          value: "7",
+          unit: "tokens",
+          availability: "available",
+          source: "local_metadata",
+          freshness: "historical",
+        },
+      ],
+    );
   }
+  const overallResponse = await page.request.get(
+    new URL("/api/v1/analytics?scope=overall_history", link).href,
+  );
+  assert.equal(overallResponse.status(), 200);
+  const overall = await overallResponse.json();
+  assert.equal(overall.scope, "overall_history");
+  assert.ok(
+    overall.historical_metrics.some(
+      (metric) =>
+        metric.metric_key === "codex.local.tokens_used" &&
+        metric.unit === "tokens" &&
+        metric.unassigned_session_count >= 3 &&
+        BigInt(metric.unassigned_value) >= 21n &&
+        metric.measured_session_count >= 3,
+    ),
+    `overall history includes supported imported Unassigned values and coverage: ${JSON.stringify(overall.historical_metrics)}`,
+  );
+  assert.ok(
+    !overall.historical_metrics.some((metric) => /credit|quota|percent/.test(metric.metric_key)),
+  );
+  await nav("Analytics").click();
+  await page.getByRole("button", { name: "Tokens", exact: true }).click();
+  await page.getByRole("combobox", { name: "Analytics scope" }).selectOption("");
+  await page.getByRole("region", { name: "Historical token coverage" }).waitFor();
+  const coverage = await page
+    .getByRole("region", { name: "Historical token coverage" })
+    .innerText();
+  assert.match(coverage, /Unassigned History contribution/);
+  assert.match(coverage, /observed sessions have a supported token value/);
+  await scanAccessibility("analytics-overall-history");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await scanAccessibility("analytics-overall-history-narrow");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await nav("Sessions").click();
+  await page.getByRole("status").filter({ hasText: "matching records" }).waitFor();
+  await reviewButton.click();
   for (const source of [workSource, personalSource]) {
     const repeated = await importOnce(source);
     assert.equal(repeated.imported_count, 0, "repeat import adds no source sessions");
