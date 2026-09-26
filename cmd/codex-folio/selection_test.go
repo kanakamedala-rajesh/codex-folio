@@ -124,6 +124,65 @@ func TestSelectCLIReusesRunningServiceWithoutOpeningStore(t *testing.T) {
 	}
 }
 
+func TestColdSelectUsesRememberedStorageBeforeOpeningStore(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		remembered platform.VaultMode
+		arguments  []string
+		input      string
+		wantMode   platform.VaultMode
+		wantSecret string
+	}{
+		{"passphrase", platform.VaultModePassphrase, nil, "private fixture phrase\n", platform.VaultModePassphrase, "private fixture phrase"},
+		{"wsl", platform.VaultModeWSLDPAPI, nil, "", platform.VaultModeWSLDPAPI, ""},
+		{"explicit", platform.VaultModePassphrase, []string{"--vault-mode", "secret-service"}, "", platform.VaultModeSecretService, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			paths := launchTestPaths(t)
+			secureVault := seedReadyLaunchProfile(t, paths)
+			if err := rememberEverydaySecureStorage(paths, test.remembered); err != nil {
+				t.Fatal(err)
+			}
+			opened := false
+			var stdout, stderr bytes.Buffer
+			arguments := append([]string{"work"}, test.arguments...)
+			code := runSelectWithDependencies(arguments, strings.NewReader(test.input), &stdout, &stderr,
+				func(*string) (platform.Paths, error) { return paths, nil },
+				func(paths platform.Paths, mode platform.VaultMode, secret string) (*store.Store, error) {
+					opened = true
+					if mode != test.wantMode || secret != test.wantSecret {
+						t.Errorf("opened mode=%q secret match=%t", mode, secret == test.wantSecret)
+					}
+					return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+				}, nil)
+			if code != exitSuccess || !opened || !strings.Contains(stdout.String(), "Selected Profile:") || stderr.Len() != 0 {
+				t.Fatalf("cold select = code:%d opened:%t stdout:%q stderr:%q", code, opened, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestColdSelectRejectsInvalidRememberedStorageBeforeOpeningStore(t *testing.T) {
+	paths := launchTestPaths(t)
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SecureStorageFile, []byte(`{"version":1,"mode":"unknown"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened := false
+	var stderr bytes.Buffer
+	code := runSelectWithDependencies([]string{"work"}, strings.NewReader(""), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			opened = true
+			return nil, errors.New("invalid selection must not open state")
+		}, nil)
+	if code != exitFailure || opened || !strings.Contains(stderr.String(), apperrors.VaultUnavailable) {
+		t.Fatalf("invalid selection = code:%d opened:%t stderr:%q", code, opened, stderr.String())
+	}
+}
+
 func TestInteractiveSelectionCancelsWithoutLaunchingOrChangingSelection(t *testing.T) {
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)

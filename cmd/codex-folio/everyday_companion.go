@@ -185,7 +185,7 @@ func startEverydayCompanionWithGuidance(paths platform.Paths, options serviceOpt
 				return platform.ServiceClient{}, serviceOptions{}, startErr
 			}
 		}
-		connection, waitErr := waitForCompanionClient(paths, companionStartupTimeout, statusPath, options.migrationTarget != "")
+		connection, waitErr := waitForCompanionClient(paths, companionStartupTimeout, statusPath, true)
 		_ = os.Remove(statusPath)
 		if waitErr == nil {
 			options.startupStatus = ""

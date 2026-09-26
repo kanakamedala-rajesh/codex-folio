@@ -139,7 +139,10 @@ func TestPlainStartupStartsFullCompanionAndLeavesItAfterChildExit(t *testing.T) 
 		}
 		var err error
 		fixture, err = startEverydayCompanionFixture(startPaths, secureVault)
-		return err
+		if err != nil {
+			return err
+		}
+		return writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 	}
 	t.Cleanup(func() { fixture.Close() })
 
@@ -176,6 +179,79 @@ func TestPlainStartupStartsFullCompanionAndLeavesItAfterChildExit(t *testing.T) 
 	)
 	if code != exitSuccess || startCalls != 1 {
 		t.Fatalf("repeat startup result = code:%d starts:%d stdout:%q stderr:%q", code, startCalls, stdout.String(), stderr.String())
+	}
+}
+
+func TestSpawnedCompanionWaitsForReadyOrFailureAfterDescriptor(t *testing.T) {
+	for _, outcome := range []string{companionStartupReady, apperrors.VaultUnavailable} {
+		t.Run(outcome, func(t *testing.T) {
+			paths := launchTestPaths(t)
+			secureVault := seedReadyLaunchProfile(t, paths)
+			published := make(chan struct{})
+			release := make(chan struct{})
+			var fixture *everydayCompanionFixture
+			starter := func(startPaths platform.Paths, options serviceOptions) error {
+				var err error
+				fixture, err = startEverydayCompanionFixture(startPaths, secureVault)
+				if err != nil {
+					return err
+				}
+				go func() {
+					<-release
+					_ = writeCompanionStartupStatus(options.startupStatus, outcome)
+				}()
+				close(published)
+				return nil
+			}
+			t.Cleanup(func() { fixture.Close() })
+			type result struct {
+				connection platform.ServiceClient
+				err        error
+			}
+			finished := make(chan result, 1)
+			go func() {
+				connection, _, err := startEverydayCompanionWithGuidance(paths, serviceOptions{vaultMode: platform.VaultModePassphrase}, strings.NewReader(""), io.Discard, io.Discard, starter)
+				finished <- result{connection: connection, err: err}
+			}()
+			<-published
+			select {
+			case got := <-finished:
+				t.Fatalf("accepted descriptor before startup outcome: %+v", got)
+			case <-time.After(75 * time.Millisecond):
+			}
+			close(release)
+			got := <-finished
+			if outcome == companionStartupReady {
+				if got.err != nil || got.connection.Origin == "" {
+					t.Fatalf("ready startup = %+v", got)
+				}
+			} else if apperrors.Code(got.err) != outcome {
+				t.Fatalf("failed startup = %+v, want %s", got, outcome)
+			}
+		})
+	}
+}
+
+func TestReusedCompanionChildAcknowledgesReady(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	fixture, err := startEverydayCompanionFixture(paths, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixture.Close()
+	statusPath, err := prepareCompanionStartupStatus(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(statusPath)
+	code := runServiceStartWithDependencies(paths, serviceOptions{startupStatus: statusPath}, io.Discard, io.Discard, nil,
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			return nil, errors.New("reused companion must not open a second store")
+		}, nil)
+	status, err := readCompanionStartupStatus(statusPath)
+	if code != exitSuccess || err != nil || status != companionStartupReady {
+		t.Fatalf("reused child = code:%d status:%q err:%v", code, status, err)
 	}
 }
 
@@ -465,7 +541,7 @@ func TestConcurrentEverydayStartsConvergeOnOneOwner(t *testing.T) {
 	var mu sync.Mutex
 	var fixture *everydayCompanionFixture
 	startCalls := 0
-	starter := func(startPaths platform.Paths, _ serviceOptions) error {
+	starter := func(startPaths platform.Paths, options serviceOptions) error {
 		mu.Lock()
 		defer mu.Unlock()
 		startCalls++
@@ -474,7 +550,10 @@ func TestConcurrentEverydayStartsConvergeOnOneOwner(t *testing.T) {
 		}
 		var startErr error
 		fixture, startErr = startEverydayCompanionFixture(startPaths, secureVault)
-		return startErr
+		if startErr != nil {
+			return startErr
+		}
+		return writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 	}
 	t.Cleanup(func() { fixture.Close() })
 

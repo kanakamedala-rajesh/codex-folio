@@ -83,11 +83,14 @@ func TestServiceStopDefersWithoutChangingForegroundExitAndPlainStartReusesState(
 	}
 	var restarted *everydayCompanionFixture
 	starts := 0
-	code, _, startupDiagnostics := runPlainCompanionTest(paths, "q\n", func(startPaths platform.Paths, _ serviceOptions) error {
+	code, _, startupDiagnostics := runPlainCompanionTest(paths, "q\n", func(startPaths platform.Paths, options serviceOptions) error {
 		starts++
 		var startErr error
 		restarted, startErr = startEverydayCompanionFixture(startPaths, secureVault)
-		return startErr
+		if startErr != nil {
+			return startErr
+		}
+		return writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 	})
 	if code != exitSuccess || starts != 1 || restarted == nil {
 		t.Fatalf("plain restart = code:%d starts:%d stderr:%q", code, starts, startupDiagnostics)

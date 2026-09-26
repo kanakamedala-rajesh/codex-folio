@@ -224,6 +224,11 @@ func withLaunchCommandServiceAndUsage(input io.Reader, stderr io.Writer, paths p
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	defer func() { _ = owner.Close() }()
+	resolved, err := resolveServiceSecureStorage(paths, options.serviceOptions)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	options.serviceOptions = resolved
 	childInput := input
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {

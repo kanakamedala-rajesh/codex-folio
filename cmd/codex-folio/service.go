@@ -489,6 +489,9 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
+		if options.startupStatus != "" {
+			_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
+		}
 		return exitSuccess
 	}
 
@@ -509,6 +512,9 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 				}
 				if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+				}
+				if options.startupStatus != "" {
+					_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 				}
 				return exitSuccess
 			}

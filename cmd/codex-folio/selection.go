@@ -194,6 +194,11 @@ func withSelectionServiceAndLaunchAuthenticator(input io.Reader, stderr io.Write
 			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
 		}
 	}()
+	resolved, err := resolveServiceSecureStorage(paths, options.serviceOptions)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	options.serviceOptions = resolved
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {
 		passphrase, err = readServiceVaultPassphrase(input)
