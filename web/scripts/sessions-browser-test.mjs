@@ -197,7 +197,15 @@ export async function testSessions({
   await capture("sessions-medium", 900, 1000);
   await capture("sessions-narrow", 390, 844);
   await reviewButton.focus();
+  const reviewedAgain = page.waitForResponse(
+    (response) =>
+      response.url() === new URL("/api/v1/activity/sources", link).href &&
+      response.request().method() === "GET",
+  );
   await page.keyboard.press("Enter");
+  await reviewedAgain;
+  await reviewButton.waitFor();
+  assert.equal(await reviewButton.isEnabled(), true);
   const supportedSource = reviewedSources.sources.find((source) => source.status === "supported");
   if (supportedSource) {
     const card = page.getByRole("region", { name: supportedSource.label, exact: true });
