@@ -546,7 +546,7 @@ func TestConcurrentEverydayStartsConvergeOnOneOwner(t *testing.T) {
 		defer mu.Unlock()
 		startCalls++
 		if fixture != nil {
-			return nil
+			return writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 		}
 		var startErr error
 		fixture, startErr = startEverydayCompanionFixture(startPaths, secureVault)
