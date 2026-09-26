@@ -298,12 +298,17 @@ export async function testSessions({
       .locator("button[data-session-key]")
       .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-session-key")));
   const firstPageKeys = await pageKeys();
+  await rows().getByRole("checkbox", { name: "Select for assignment" }).first().check();
   const previous = page.getByRole("button", { name: "Previous page", exact: true });
   const next = page.getByRole("button", { name: "Next page", exact: true });
   assert.equal(await previous.isDisabled(), true);
   await next.focus();
   await page.keyboard.press("Enter");
   assert.equal(await rows().count(), 1);
+  assert.equal(
+    await page.getByRole("button", { name: "Save 0 selected assignments" }).isDisabled(),
+    true,
+  );
   const secondPageKeys = await pageKeys();
   assert.equal(new Set([...firstPageKeys, ...secondPageKeys]).size, 26);
   assert.equal(await next.isDisabled(), true);
@@ -448,6 +453,18 @@ export async function testSessions({
   const choices = page
     .getByRole("table", { name: "Metadata timeline" })
     .getByRole("checkbox", { name: "Select for assignment" });
+  await choices.nth(0).check();
+  await select("Profile", work.profile_id);
+  assert.equal(
+    await page.getByRole("button", { name: "Save 0 selected assignments" }).isDisabled(),
+    true,
+  );
+  await select("Profile", "__unassigned__");
+  assert.equal(await choices.nth(0).isChecked(), false);
+  await choices.nth(0).check();
+  await page.getByRole("button", { name: "Reload timeline", exact: true }).click();
+  await page.getByRole("button", { name: "Save 0 selected assignments" }).waitFor();
+  assert.equal(await choices.nth(0).isChecked(), false);
   await choices.nth(0).check();
   await choices.nth(1).check();
   const assignment = page.getByRole("region", { name: "Assign selected sessions" });

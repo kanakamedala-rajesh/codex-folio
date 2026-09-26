@@ -29,6 +29,9 @@ type launchCommandService struct {
 }
 
 func (service *launchCommandService) ActiveManagedLaunchCount(ctx context.Context) (int, error) {
+	if err := service.workflow.Reconcile(ctx, foregroundProcessInspector{}); err != nil {
+		return 0, err
+	}
 	return service.store.ActiveManagedLaunchCount(ctx)
 }
 

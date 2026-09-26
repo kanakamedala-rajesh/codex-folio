@@ -464,7 +464,7 @@ export const analyticsCopy = {
   overallHistory: "Overall history (includes Unassigned History)",
   historicalSummary: "Historical token coverage",
   historicalSummaryDetail:
-    "All retained observed sessions, regardless of the History range filter. Supported local session metadata only; this does not reconstruct past provider quota or credit snapshots. Managed Launches never add duplicate token measures.",
+    "Retained observed sessions within the selected History range. Supported local session metadata only; this does not reconstruct past provider quota or credit snapshots. Managed Launches never add duplicate token measures.",
   historicalCoverage: (measured: number, total: number) =>
     `${measured} of ${total} observed sessions have a supported token value`,
   unassignedContribution: "Unassigned History contribution",
@@ -628,8 +628,8 @@ export const analyticsDataCopy = {
   includePaths: "Include canonical project paths explicitly",
   pathBoundary:
     "Default: Project Aliases and basenames only. Identity Home paths, credentials, raw provider payloads, conversation or tool content, commands, diffs, diagnostics, and vault material are never analytics export fields.",
-  exportScope: (from: string) =>
-    `The current Analytics profile, project, and retained range are used. Start: ${from}. End: all retained history.`,
+  exportScope: (from: string, overall = false) =>
+    `${overall ? "Overall history includes Unassigned sessions." : "The current Analytics profile is used."} The current project and retained range are used. Start: ${from}. End: all retained history.`,
   exportLoading: "Preparing an exact normalized export preview.",
   exportReady: "Export preview ready. Download uses these exact retained records.",
   exportFailed: "Export preview failed. No download was created.",

@@ -145,6 +145,12 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		}
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if command == "install" {
+		options, err = resolveServiceSecureStorage(paths, options)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 	var enrollment nativeServiceEnrollment
 	if command == "status" || command == "install" || command == "uninstall" {
 		enrollment, err = enrollmentFactory(paths, options)
@@ -452,6 +458,11 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		}
 		stderr = &companionStartupDiagnosticWriter{Writer: stderr, path: options.startupStatus}
 	}
+	var err error
+	options, err = resolveServiceSecureStorage(paths, options)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
 	if apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid {
 		// A concurrent discovery can briefly hold the owner lock before it
@@ -575,14 +586,6 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 			})
 		}
 		stateOwner = serviceLifecycle
-		if options.migrationTarget == "" {
-			err = rememberEverydaySecureStorage(paths, options.vaultMode)
-		}
-		if err != nil {
-			_ = stateOwner.Close()
-			_ = owner.Close()
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
 	} else {
 		stateStore, openErr := openStore(paths, options.vaultMode, "")
 		if openErr != nil {
@@ -596,11 +599,6 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		stateOwner = &serviceStateOwner{store: stateStore, background: services.Background, shutdown: services.Shutdown}
-		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
-			_ = stateOwner.Close()
-			_ = owner.Close()
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -681,6 +679,14 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if options.migrationTarget == "" {
+		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+			_ = server.Close()
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
 	}
 	serveErrors := make(chan error, 1)
 	go func() {
@@ -925,7 +931,7 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 
 func serviceTerminalCommandSuffix(paths platform.Paths, mode platform.VaultMode) []string {
 	suffix := []string{"--state-root=" + paths.Root}
-	if mode == platform.VaultModePassphrase {
+	if mode == platform.VaultModePassphrase || mode == platform.VaultModeWSLDPAPI {
 		suffix = append(suffix, "--vault-mode="+string(mode))
 	}
 	return suffix
@@ -1110,32 +1116,40 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interfa
 
 	ctx, stop := signal.NotifyContext(context.Background(), serviceStopSignals()...)
 	defer stop()
-	select {
-	case <-ctx.Done():
-	case <-server.StopReady():
-		drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = server.Drain(drainCtx)
-		cancel()
-		if code := closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink); code != exitSuccess {
-			return code
-		}
-		if options.enrolled && runtime.GOOS == "darwin" {
-			enrollment, err := newNativeServiceEnrollment(platform.Paths{Root: metadata.StateRoot}, options)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+wait:
+	for {
+		select {
+		case <-ticker.C:
+			server.ReconcileDeferredStop(ctx)
+		case <-ctx.Done():
+			break wait
+		case <-server.StopReady():
+			drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = server.Drain(drainCtx)
+			cancel()
+			if code := closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink); code != exitSuccess {
+				return code
+			}
+			if options.enrolled && runtime.GOOS == "darwin" {
+				enrollment, err := newNativeServiceEnrollment(platform.Paths{Root: metadata.StateRoot}, options)
+				if err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+				}
+				if err := enrollment.(*platform.ServiceEnrollment).StopCurrentSession(); err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+				}
+			}
+			return exitSuccess
+		case err := <-serveErrors:
+			_ = stateStore.Close()
+			_ = owner.Close()
 			if err != nil {
 				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 			}
-			if err := enrollment.(*platform.ServiceEnrollment).StopCurrentSession(); err != nil {
-				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-			}
+			return exitSuccess
 		}
-		return exitSuccess
-	case err := <-serveErrors:
-		_ = stateStore.Close()
-		_ = owner.Close()
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
-		}
-		return exitSuccess
 	}
 	return closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink)
 }

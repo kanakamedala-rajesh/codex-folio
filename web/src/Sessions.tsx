@@ -189,6 +189,12 @@ export function Sessions({
   const reportExpired = useEffectEvent((error: unknown) => expired(error));
   const [reload, setReload] = useState(0);
   const [checked, setChecked] = useState<string[]>([]);
+  const selectionContext = JSON.stringify([filters, page, reload]);
+  const [checkedContext, setCheckedContext] = useState(selectionContext);
+  if (checkedContext !== selectionContext) {
+    setCheckedContext(selectionContext);
+    setChecked([]);
+  }
   const [assignmentTarget, setAssignmentTarget] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignmentStatus, setAssignmentStatus] = useState("");

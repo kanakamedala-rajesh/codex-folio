@@ -186,3 +186,38 @@ func TestAssignedLegacySessionExportRetainsOriginalAttribution(t *testing.T) {
 		t.Fatalf("normalized export = %s/%v", encoded, err)
 	}
 }
+
+func TestOverallExportPreservesUnassignedMetricEvidence(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	zero := int64(0)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{
+		{SourceSessionID: "zero", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at, TokensUsed: &zero},
+		{SourceSessionID: "absent", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := activity.NewExportService(stateStore)
+	for _, format := range []string{"json", "csv"} {
+		result, err := service.Export(ctx, activity.ExportRequest{Format: format, Datasets: []string{"activity"}, Scope: usage.ScopeOverallHistory, ProfileID: "*", ProjectID: "*", From: "all", To: "all"})
+		if err != nil || result.Records.Activity == nil || len(*result.Records.Activity) != 2 {
+			t.Fatalf("export = %#v, %v", result, err)
+		}
+		for _, row := range *result.Records.Activity {
+			if row.ProfileID != "" || row.MetricKey != "codex.local.tokens_used" || row.Unit != "tokens" || row.Freshness != "historical" || row.CoverageStartAt != exportTime(at) || row.CoverageEndAt != exportTime(at) {
+				t.Fatalf("metric evidence = %#v", row)
+			}
+			if row.SourceSessionID == "zero" && (row.Availability != "available" || row.TokensUsed == nil || *row.TokensUsed != 0) {
+				t.Fatalf("zero = %#v", row)
+			}
+			if row.SourceSessionID == "absent" && (row.Availability != "absent" || row.TokensUsed != nil) {
+				t.Fatalf("absent = %#v", row)
+			}
+		}
+	}
+}

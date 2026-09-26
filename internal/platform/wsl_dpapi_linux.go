@@ -210,19 +210,13 @@ func (provider *WSLDPAPIKeyProvider) create(ctx context.Context) (vault.KeyMater
 	record := encodeWSLVaultRecord(generation, protected)
 	clear(protected)
 	defer clear(record)
-	file, err := os.OpenFile(provider.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return provider.load(ctx)
-	}
+	// Write and sync privately before publishing. A hard link provides atomic
+	// exclusive creation: a racing creator keeps its complete winning record.
+	file, err := os.CreateTemp(filepath.Dir(provider.path), ".wsl-vault-*.tmp")
 	if err != nil {
 		return vault.KeyMaterial{}, unavailableWSLDPAPI(err)
 	}
-	remove := true
-	defer func() {
-		if remove {
-			_ = os.Remove(provider.path)
-		}
-	}()
+	defer os.Remove(file.Name())
 	if _, err = file.Write(record); err == nil {
 		err = file.Sync()
 	}
@@ -230,7 +224,18 @@ func (provider *WSLDPAPIKeyProvider) create(ctx context.Context) (vault.KeyMater
 	if err != nil {
 		return vault.KeyMaterial{}, unavailableWSLDPAPI(err)
 	}
-	remove = false
+	if err := os.Link(file.Name(), provider.path); errors.Is(err, os.ErrExist) {
+		return provider.load(ctx)
+	} else if err != nil {
+		return vault.KeyMaterial{}, unavailableWSLDPAPI(err)
+	}
+	directory, err := os.Open(filepath.Dir(provider.path))
+	if err != nil {
+		return vault.KeyMaterial{}, unavailableWSLDPAPI(err)
+	}
+	if err := errors.Join(directory.Sync(), directory.Close()); err != nil {
+		return vault.KeyMaterial{}, unavailableWSLDPAPI(err)
+	}
 	return vault.NewKeyMaterial(generation, key)
 }
 

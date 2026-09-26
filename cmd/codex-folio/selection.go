@@ -152,7 +152,7 @@ func runInteractiveSelectionWithOptionsAndAuthenticator(input io.Reader, stdout,
 			return nil
 		}
 	})
-	if code != exitSuccess || !launched {
+	if !launched {
 		return code
 	}
 	return launchCode

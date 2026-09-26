@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,5 +185,56 @@ func TestServiceStopDeferredRequestYieldsToAcceptedLaunch(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("owner did not stop after accepted launch finished")
+	}
+}
+
+func TestStopOrphanChild(t *testing.T) {
+	if os.Getenv("CODEX_FOLIO_STOP_ORPHAN_CHILD") == "1" {
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+}
+
+func TestDeferredStopReconcilesLostForegroundCompletion(t *testing.T) {
+	paths := launchTestPaths(t)
+	vault := seedReadyLaunchProfile(t, paths)
+	fixture, err := startEverydayCompanionFixture(paths, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixture.Close()
+	child := exec.Command(os.Args[0], "-test.run=^TestStopOrphanChild$")
+	child.Env = append(os.Environ(), "CODEX_FOLIO_STOP_ORPHAN_CHILD=1")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	ctx := context.Background()
+	plan, err := fixture.stateOwner.store.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: os.Args[0], WorkingDirectory: paths.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.stateOwner.store.MarkManagedLaunchStarted(ctx, plan.LeaseID, child.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	ownerDone := make(chan int, 1)
+	go func() {
+		ownerDone <- waitForServiceStop(fixture.owner, fixture.stateOwner, fixture.server, serviceOptions{}, &bytes.Buffer{}, &bytes.Buffer{}, false, nil)
+	}()
+	var output, diagnostics bytes.Buffer
+	if code := runServiceStop(paths, serviceOptions{wait: true}, nil, &output, &diagnostics); code != exitSuccess || !strings.Contains(output.String(), "pending") {
+		t.Fatalf("defer = %d %s %s", code, output.String(), diagnostics.String())
+	}
+	if err := child.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	select {
+	case code := <-ownerDone:
+		if code != exitSuccess {
+			t.Fatalf("stop = %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deferred stop never reconciled terminated child")
 	}
 }

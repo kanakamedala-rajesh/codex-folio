@@ -18,9 +18,11 @@ func (reader activityReader) Read(context.Context, ReadRequest) ([]SourceSession
 }
 
 type activityRepository struct {
-	target   ProfileTarget
-	saved    []ObservedSessionRecord
-	timeline []TimelineRecord
+	target     ProfileTarget
+	saved      []ObservedSessionRecord
+	timeline   []TimelineRecord
+	refreshIDs []string
+	cutoff     time.Time
 }
 
 func (repository *activityRepository) ListActivitySources(context.Context) ([]SourceTarget, error) {
@@ -33,11 +35,29 @@ func (repository *activityRepository) ResolveActivityProfile(context.Context, st
 
 func (repository *activityRepository) SaveObservedSessions(_ context.Context, records []ObservedSessionRecord) error {
 	repository.saved = append([]ObservedSessionRecord(nil), records...)
+	for _, record := range records {
+		if record.LastObservedAt.Before(repository.cutoff) {
+			continue
+		}
+		found := false
+		for _, existing := range repository.timeline {
+			if existing.SourceSessionID == record.SourceSessionID {
+				found = true
+			}
+		}
+		if !found {
+			repository.timeline = append(repository.timeline, TimelineRecord{RecordType: RecordTypeObservedSession, Source: record.Source, SourceSessionID: record.SourceSessionID})
+		}
+	}
 	return nil
 }
 
 func (repository *activityRepository) ListActivity(context.Context, Filters) ([]TimelineRecord, error) {
 	return append([]TimelineRecord(nil), repository.timeline...), nil
+}
+
+func (repository *activityRepository) RefreshSessionIDs(context.Context, string) ([]string, error) {
+	return repository.refreshIDs, nil
 }
 
 func (repository *activityRepository) AssignSessions(context.Context, []string, string) error {
@@ -53,8 +73,9 @@ func (projects activityProjects) Resolve(context.Context, string, string) (Proje
 func TestRefreshStoresOnlyNormalizedObservedSessionMetadata(t *testing.T) {
 	started := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	repository := &activityRepository{
-		target:   ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"},
-		timeline: []TimelineRecord{{RecordType: RecordTypeObservedSession, ID: "observed-1"}},
+		refreshIDs: []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc4d"},
+		target:     ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"},
+		timeline:   []TimelineRecord{{RecordType: RecordTypeObservedSession, ID: "observed-1", SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d"}},
 	}
 	service, err := NewService(ServiceOptions{
 		Repository: repository,
@@ -92,7 +113,7 @@ func tokenCount(value int64) *int64 { return &value }
 
 func TestImportRequiresConsentAndLeavesUnknownHistoryUnassigned(t *testing.T) {
 	start := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	repository := &activityRepository{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
+	repository := &activityRepository{refreshIDs: []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc4d"}, target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
 	service, err := NewService(ServiceOptions{Repository: repository, Reader: activityReader{sessions: []SourceSession{{SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d", Source: SourceLocalMetadata, StartedAt: start, LastObservedAt: start}}}, Projects: activityProjects{}})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +132,7 @@ func TestImportRequiresConsentAndLeavesUnknownHistoryUnassigned(t *testing.T) {
 }
 
 func TestRefreshLeavesUnsupportedWorkingDirectoryUnassociated(t *testing.T) {
-	repository := &activityRepository{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
+	repository := &activityRepository{refreshIDs: []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc4d"}, target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
 	service, err := NewService(ServiceOptions{
 		Repository: repository,
 		Reader:     activityReader{sessions: []SourceSession{{SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d", Source: SourceLocalMetadata, StartedAt: time.Now(), LastObservedAt: time.Now(), WorkingDirectory: "/not/a/repository"}}},
@@ -135,7 +156,7 @@ func (projects failingProjects) Resolve(context.Context, string, string) (Projec
 }
 
 func TestRefreshDoesNotHideProjectStoreFailures(t *testing.T) {
-	repository := &activityRepository{target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
+	repository := &activityRepository{refreshIDs: []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc4d"}, target: ProfileTarget{ID: "profile-1", Alias: "Work", IdentityHome: "/private/home"}}
 	service, err := NewService(ServiceOptions{
 		Repository: repository,
 		Reader:     activityReader{sessions: []SourceSession{{SourceSessionID: "018f4f70-6f77-7c3f-9b77-93aa087dfc4d", Source: SourceLocalMetadata, StartedAt: time.Now(), LastObservedAt: time.Now(), WorkingDirectory: "/repository"}}},
@@ -146,5 +167,48 @@ func TestRefreshDoesNotHideProjectStoreFailures(t *testing.T) {
 	}
 	if _, err := service.Refresh(context.Background(), "Work", "0.150.1"); err == nil {
 		t.Fatal("Refresh() error = nil, want project store failure")
+	}
+}
+
+func TestRefreshDoesNotImportUnconsentedHistory(t *testing.T) {
+	start := time.Now().UTC()
+	repository := &activityRepository{target: ProfileTarget{ID: "profile-1"}, refreshIDs: []string{"known"}}
+	service, err := NewService(ServiceOptions{Repository: repository, Reader: activityReader{sessions: []SourceSession{
+		{SourceSessionID: "unknown", Source: SourceLocalMetadata, StartedAt: start, LastObservedAt: start},
+		{SourceSessionID: "known", Source: SourceLocalMetadata, StartedAt: start, LastObservedAt: start},
+	}}, Projects: activityProjects{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Refresh(context.Background(), "Work", "state_5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.saved) != 1 || repository.saved[0].SourceSessionID != "known" {
+		t.Fatalf("saved = %#v", repository.saved)
+	}
+	repository.saved = nil
+	repository.refreshIDs = nil
+	if _, err := service.Refresh(context.Background(), "Work", "state_5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.saved) != 0 {
+		t.Fatal("refresh imported history without consent")
+	}
+}
+
+func TestImportCountsOnlyRetainedSessions(t *testing.T) {
+	start := time.Now().UTC()
+	repository := &activityRepository{cutoff: start.Add(-time.Hour)}
+	service, _ := NewService(ServiceOptions{Repository: repository, Reader: activityReader{sessions: []SourceSession{
+		{SourceSessionID: "expired", Source: SourceLocalMetadata, StartedAt: start.Add(-2 * time.Hour), LastObservedAt: start.Add(-2 * time.Hour)},
+		{SourceSessionID: "retained", Source: SourceLocalMetadata, StartedAt: start, LastObservedAt: start},
+	}}, Projects: activityProjects{}})
+	first, err := service.ImportSource(context.Background(), "home-1", "state_5", true)
+	if err != nil || first.ImportedCount != 1 || first.AlreadyPresentCount != 0 {
+		t.Fatalf("first = %#v, %v", first, err)
+	}
+	second, err := service.ImportSource(context.Background(), "home-1", "state_5", true)
+	if err != nil || second.ImportedCount != 0 || second.AlreadyPresentCount != 1 {
+		t.Fatalf("repeat = %#v, %v", second, err)
 	}
 }

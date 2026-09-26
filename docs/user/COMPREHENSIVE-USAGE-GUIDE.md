@@ -304,7 +304,8 @@ passphrase vault, choose **migrate now**. The next prompt reads the old
 passphrase once from private terminal input; it is not accepted in arguments or
 environment variables and is not persisted. The detached service retains the
 sole state-owner lock throughout the transition. It verifies the source state,
-creates a validated rotating migration backup, re-protects every allowlisted
+creates a validated migration backup, isolates passphrase-generation recovery
+candidates in `passphrase-migration-recovery`, and re-protects every allowlisted
 encrypted SQLite field through Linux Secret Service or the Windows-backed WSL
 provider, reloads that destination, authenticates all retained protected rows,
 and only then commits the non-secret storage selection. The same invocation
@@ -318,6 +319,10 @@ does not require provider login. The old passphrase vault remains protected
 recovery material but is no longer selected after success. This workflow does
 not export credentials or create a portable backup.
 
+The isolated archive is retained for journal-driven migration rollback; normal
+recovery listing and restore exclude it after a successful transition. New
+native-generation backups use the ordinary `recovery` directory.
+
 Choose **continue with passphrase storage** to start the ordinary locked
 passphrase owner without migrating, or **cancel** to leave state unchanged. If
 the old passphrase is wrong or destination protection is unavailable, the
@@ -327,7 +332,7 @@ after interruption, the next plain start either verifies and completes the
 destination or restores the validated passphrase backup before retrying. A
 destination reopen failure also restores that backup. Never delete or edit
 `secure-storage-migration.json`, `codex-folio.vault`, the SQLite database, or
-the `recovery` directory to force progress. If a failed attempt left the locked
+the `recovery` or `passphrase-migration-recovery` directories to force progress. If a failed attempt left the locked
 detached owner running, stop that owner normally before rerunning migration.
 
 Recovery commands are intentionally separate from normal startup:
@@ -1476,3 +1481,21 @@ Use [Support](../../SUPPORT.md) for ordinary problems and
 
 Start with a synthetic reproduction and the stable error code. Add sensitive
 detail only through an approved private support channel.
+
+
+### Exporting Overall history
+
+Select **Overall history** in Analytics, then **Preview analytics export** to
+export the Activity dataset including Unassigned sessions. Individual-profile
+and Combined Identity exports continue to exclude Unassigned history. The
+selected project and history range also apply to the export. CLI equivalent:
+
+```sh
+codex-folio analytics export --format json --datasets activity --scope overall_history --profile '*' --dry-run
+```
+
+Activity JSON and CSV preserve original/current attribution and normalized token
+units, availability, historical freshness, source version, and coverage. Source
+import requires explicit consent; `activity refresh PROFILE` updates previously
+imported or explicitly linked Managed Launch sessions without importing other
+historical sessions. Sessions outside retention are not counted as newly added.

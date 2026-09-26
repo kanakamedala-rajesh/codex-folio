@@ -42,6 +42,11 @@ func (server *Server) issueSession(response http.ResponseWriter, now time.Time, 
 		current.trusted = true
 	}
 	server.mu.Lock()
+	for id, existing := range server.sessions {
+		if !now.Before(existing.expiresAt) {
+			delete(server.sessions, id)
+		}
+	}
 	server.sessions[sha256.Sum256([]byte(sessionID))] = current
 	server.mu.Unlock()
 	http.SetCookie(response, &http.Cookie{Name: SessionCookieName, Value: sessionID, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(server.Origin(), "https://"), SameSite: http.SameSiteStrictMode, MaxAge: maxAge(server.sessionTTL)})

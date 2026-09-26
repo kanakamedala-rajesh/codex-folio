@@ -159,11 +159,11 @@ func (store *Store) SaveObservedSessions(ctx context.Context, records []activity
 			rollback()
 			return coded(apperrors.StoreWriteFailed, activity.ErrActivityUnavailable)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM correlation_evidence WHERE observed_session_id = ?`, observedID); err != nil {
-			rollback()
-			return coded(apperrors.StoreWriteFailed, activity.ErrActivityUnavailable)
-		}
 		if launchID != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM correlation_evidence WHERE observed_session_id = ?`, observedID); err != nil {
+				rollback()
+				return coded(apperrors.StoreWriteFailed, activity.ErrActivityUnavailable)
+			}
 			evidenceID, idErr := newStoreIdentifier("correlation")
 			if idErr != nil {
 				rollback()
@@ -429,3 +429,24 @@ func validObservedSessionRecord(record activity.ObservedSessionRecord) bool {
 }
 
 var _ activity.Repository = (*Store)(nil)
+
+// RefreshSessionIDs excludes unconsented source history while allowing updates
+// to retained observations and explicitly identified Managed Launch sessions.
+func (store *Store) RefreshSessionIDs(ctx context.Context, profileID string) ([]string, error) {
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	rows, err := store.db.QueryContext(contextOrBackground(ctx), `SELECT source_session_id FROM observed_sessions WHERE source = 'local_metadata' AND source_session_id IS NOT NULL UNION SELECT expected_session_id FROM managed_launches WHERE profile_id = ? AND state IN ('running', 'exited') AND expected_session_id IS NOT NULL`, profileID)
+	if err != nil {
+		return nil, coded(apperrors.StoreReadFailed, err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, coded(apperrors.StoreReadFailed, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

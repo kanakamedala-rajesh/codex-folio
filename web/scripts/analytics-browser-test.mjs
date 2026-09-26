@@ -30,9 +30,9 @@ function parseCSV(contents) {
 }
 
 function exportedScalar(record, field) {
-  if (field === "metric_key") return record.metric?.metric_key;
+  if (field === "metric_key") return record.metric?.metric_key ?? record.metric_key;
   if (field === "value_kind") return record.metric?.value_kind;
-  if (field === "unit") return record.metric?.unit;
+  if (field === "unit") return record.metric?.unit ?? record.unit;
   if (field === "metric_scope") return record.metric?.scope;
   if (field === "aggregation") return record.metric?.aggregation;
   if (field.startsWith("correlation_"))
@@ -297,6 +297,41 @@ export async function testAnalytics({
 
   writeFileSync(control, "analytics-activity-seed");
   await waitForControl("analytics-activity-seeded", "analytics-activity-seed-failed");
+
+  await page.getByRole("button", { name: "Tokens", exact: true }).click();
+  await page.getByRole("combobox", { name: "Analytics scope", exact: true }).selectOption("");
+  const overallRecords = (
+    await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
+  ).records;
+  for (const days of [30, 90]) {
+    const loaded = page.waitForResponse(
+      (item) => item.url().includes("/api/v1/activity") && item.request().method() === "GET",
+    );
+    await page
+      .getByRole("combobox", { name: "History range", exact: true })
+      .selectOption(`${days}-days`);
+    await loaded;
+    const retained = overallRecords.filter(
+      (record) =>
+        record.record_type === "observed_session" &&
+        record.source === "local_metadata" &&
+        Date.parse(record.last_observed_at) >= Date.now() - days * 86400000,
+    );
+    const total = retained.reduce((sum, record) => sum + BigInt(record.tokens_used ?? "0"), 0n);
+    const summary = page.getByRole("region", { name: "Historical token coverage" });
+    await summary
+      .getByText(new RegExp(`^${new Intl.NumberFormat().format(total)} tokens`))
+      .waitFor();
+  }
+  await capture("analytics-overall-range-wide", 1440, 1000);
+  await capture("analytics-overall-range-narrow", 390, 844);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByRole("combobox", { name: "Analytics scope", exact: true })
+    .selectOption(selectedBefore.profile_id);
+  // Switch back so every tab below triggers its normal loading path.
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  check("Overall history summary and chart share the selected 30/90-day range");
 
   const tabCases = [
     ["Tokens", "Token observations", /42[\s\S]*Observed during session/],

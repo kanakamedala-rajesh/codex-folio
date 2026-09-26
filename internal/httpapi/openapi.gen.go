@@ -23,7 +23,7 @@ const (
 	HistoryPath               = "/api/v1/analytics/history"
 	HandoffPath               = "/api/v1/handoff"
 	ContractVersion           = "0.0.1-alpha"
-	ContractSourceSHA256      = "de050ca28c176579f09c1a2253a466c4e49f60d2399b81aece34598fb1d11972"
+	ContractSourceSHA256      = "e8218045ec5209cb2ff73e6bb97885bfac4f5253f6fe13f323fc7ee892f566d9"
 	BootstrapPath             = "/api/v1/bootstrap"
 	BrowserTrustPath          = "/api/v1/browser-trust"
 	CollectionSettingsPath    = "/api/v1/collection-settings"
@@ -561,6 +561,12 @@ type ActivityExportRecord struct {
 	ExitStatus                    *int64              `json:"exit_status,omitempty"`
 	Model                         *string             `json:"model,omitempty"`
 	TokensUsed                    *int64              `json:"tokens_used,omitempty"`
+	MetricKey                     *string             `json:"metric_key,omitempty"`
+	Unit                          *string             `json:"unit,omitempty"`
+	Availability                  *string             `json:"availability,omitempty"`
+	Freshness                     *string             `json:"freshness,omitempty"`
+	CoverageStartAt               *string             `json:"coverage_start_at,omitempty"`
+	CoverageEndAt                 *string             `json:"coverage_end_at,omitempty"`
 	Correlation                   ActivityCorrelation `json:"correlation"`
 	CanonicalPath                 *string             `json:"canonical_path,omitempty"`
 }

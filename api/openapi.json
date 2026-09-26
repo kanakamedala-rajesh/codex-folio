@@ -191,7 +191,7 @@
       "properties": {
         "format": {"type": "string", "enum": ["json", "csv"]},
         "datasets": {"type": "array", "items": {"type": "string"}},
-        "scope": {"type": "string", "enum": ["selected_profile", "combined_identity"]},
+        "scope": {"type": "string", "enum": ["selected_profile", "combined_identity", "overall_history"]},
         "profile_id": {"type": "string"}, "project_id": {"type": "string"},
         "from": {"type": "string"}, "to": {"type": "string"}, "include_paths": {"type": "boolean"}
       },
@@ -258,7 +258,8 @@
         "project_alias": {"type": "string"}, "project_basename": {"type": "string"}, "source": {"type": "string"},
         "source_version": {"type": "string"}, "provenance": {"type": "string"}, "started_at": {"type": "string"},
         "last_observed_at": {"type": "string"}, "lifecycle": {"type": "string"}, "exit_status": {"type": "integer"},
-        "model": {"type": "string"}, "tokens_used": {"type": "integer"}, "correlation": {"$ref": "#/$defs/ActivityCorrelation"},
+        "model": {"type": "string"}, "tokens_used": {"type": "integer"},
+        "metric_key": {"type": "string"}, "unit": {"type": "string"}, "availability": {"type": "string"}, "freshness": {"type": "string"}, "coverage_start_at": {"type": "string"}, "coverage_end_at": {"type": "string"}, "correlation": {"$ref": "#/$defs/ActivityCorrelation"},
         "canonical_path": {"type": "string"}
       },
       "required": ["record_type", "id", "profile_id", "profile_alias", "source", "provenance", "started_at", "last_observed_at", "correlation"]

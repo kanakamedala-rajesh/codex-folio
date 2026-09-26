@@ -420,3 +420,29 @@ func assertSelectedAlias(t *testing.T, paths platform.Paths, secureVault vault.V
 func launchPrepareRequest(paths platform.Paths, alias string) launch.PrepareRequest {
 	return launch.PrepareRequest{Alias: alias, Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: paths.Root}
 }
+
+func TestInteractiveSelectionPreservesChildExitWhenOwnerCleanupFails(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	var stderr bytes.Buffer
+	code := runInteractiveSelectionWithDependencies(strings.NewReader("\n"), io.Discard, &stderr,
+		func(*string) (platform.Paths, error) { return paths, nil },
+		func(paths platform.Paths, _ platform.VaultMode, _ string) (*store.Store, error) {
+			return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+		}, func(string) int {
+			// A nonempty directory at the metadata path makes owner cleanup fail.
+			if err := os.Remove(paths.MetadataFile); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(paths.MetadataFile, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(paths.MetadataFile, "obstacle"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return 23
+		}, nil)
+	if code != 23 || stderr.Len() == 0 {
+		t.Fatalf("exit=%d stderr=%q; want child status and cleanup diagnostic", code, stderr.String())
+	}
+}

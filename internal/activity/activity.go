@@ -68,6 +68,7 @@ type SourceSession struct {
 type ReadRequest struct {
 	IdentityHome  string
 	SourceVersion string
+	SessionIDs    []string // nil imports all; non-nil restricts refresh to authorized sessions
 }
 
 type Reader interface {
@@ -139,6 +140,7 @@ type Filters struct {
 type Repository interface {
 	ResolveActivityProfile(context.Context, string) (ProfileTarget, error)
 	ListActivitySources(context.Context) ([]SourceTarget, error)
+	RefreshSessionIDs(context.Context, string) ([]string, error)
 	SaveObservedSessions(context.Context, []ObservedSessionRecord) error
 	ListActivity(context.Context, Filters) ([]TimelineRecord, error)
 	AssignSessions(context.Context, []string, string) error
@@ -199,12 +201,26 @@ func (service *Service) Refresh(ctx context.Context, alias, sourceVersion string
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := service.reader.Read(contextOrBackground(ctx), ReadRequest{IdentityHome: target.IdentityHome, SourceVersion: sourceVersion})
+	ids, err := service.repository.RefreshSessionIDs(contextOrBackground(ctx), target.ID)
 	if err != nil {
 		return nil, err
 	}
+	if len(ids) == 0 {
+		return service.repository.ListActivity(contextOrBackground(ctx), Filters{})
+	}
+	sessions, err := service.reader.Read(contextOrBackground(ctx), ReadRequest{IdentityHome: target.IdentityHome, SourceVersion: sourceVersion, SessionIDs: ids})
+	if err != nil {
+		return nil, err
+	}
+	allowed := map[string]bool{}
+	for _, id := range ids {
+		allowed[id] = true
+	}
 	records := make([]ObservedSessionRecord, 0, len(sessions))
 	for _, session := range sessions {
+		if !allowed[session.SourceSessionID] {
+			continue
+		}
 		if !validSourceSession(session) {
 			return nil, ErrActivityInvalid
 		}
@@ -304,17 +320,30 @@ func (service *Service) ImportSource(ctx context.Context, sourceID, sourceVersio
 				record.ProjectID, record.ProjectAlias, record.ProjectBasename = project.ID, project.Alias, project.Basename
 			}
 		}
-		identity := session.Source + ":" + session.SourceSessionID
-		if seen[identity] {
-			result.AlreadyPresentCount++
-		} else {
-			result.ImportedCount++
-			seen[identity] = true
-		}
 		records = append(records, record)
 	}
 	if err := service.repository.SaveObservedSessions(contextOrBackground(ctx), records); err != nil {
 		return ImportResult{}, err
+	}
+	retained, err := service.repository.ListActivity(contextOrBackground(ctx), Filters{})
+	if err != nil {
+		return ImportResult{}, err
+	}
+	imported := map[string]bool{}
+	for _, record := range records {
+		imported[record.Source+":"+record.SourceSessionID] = true
+	}
+	for _, record := range retained {
+		identity := record.Source + ":" + record.SourceSessionID
+		if record.RecordType != RecordTypeObservedSession || !imported[identity] {
+			continue
+		}
+		if seen[identity] {
+			result.AlreadyPresentCount++
+		} else {
+			result.ImportedCount++
+		}
+		delete(imported, identity)
 	}
 	return result, nil
 }

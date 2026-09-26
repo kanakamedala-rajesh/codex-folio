@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
@@ -44,13 +46,21 @@ func migrateOpenedPassphraseStoreWithVaultFactory(paths platform.Paths, target p
 	if err != nil {
 		return nil, err
 	}
+	if _, err := os.Lstat(passphraseMigrationBackupDirectory(paths)); err == nil {
+		return nil, migrationRequiredError(errors.New("a previous passphrase migration recovery archive already exists"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, migrationRequiredError(err)
+	}
 	record := passphraseMigrationRecord{Target: target, BackupID: backup.ID}
 	if err := writePassphraseMigrationRecord(paths, record); err != nil {
 		return nil, err
 	}
+	if err := archivePassphraseMigrationBackups(paths); err != nil {
+		return nil, err
+	}
 	if err := sourceStore.ReprotectVaultState(context.Background(), destinationVault); err != nil {
-		_ = removePassphraseMigrationRecord(paths)
-		return nil, migrationRequiredError(errors.Join(err, errors.New("the original passphrase-protected database remains active")))
+		_ = closeSource()
+		return nil, rollbackPassphraseMigration(paths, backup.ID, err)
 	}
 	record.DatabaseReady = true
 	if err := writePassphraseMigrationRecord(paths, record); err != nil {
@@ -90,6 +100,13 @@ func resumeInterruptedPassphraseMigrationWithVaultFactory(paths platform.Paths, 
 	if record.DatabaseReady {
 		if destinationStore, openErr := openVerifiedMigratedDestination(paths, target, newDestination); openErr == nil {
 			_ = destinationStore.Close()
+			if _, err := os.Lstat(passphraseMigrationBackupDirectory(paths)); errors.Is(err, os.ErrNotExist) {
+				if err := archivePassphraseMigrationBackups(paths); err != nil {
+					return false, err
+				}
+			} else if err != nil {
+				return false, migrationRequiredError(err)
+			}
 			if err := rememberEverydaySecureStorage(paths, target); err != nil {
 				return false, err
 			}
@@ -145,10 +162,44 @@ func rollbackPassphraseMigration(paths platform.Paths, backupID string, cause er
 }
 
 func restorePassphraseMigrationBackup(paths platform.Paths, backupID string) error {
-	recovery, err := store.NewRecovery(store.RecoveryOptions{DatabasePath: paths.DatabaseFile})
+	directory := passphraseMigrationBackupDirectory(paths)
+	if _, err := os.Lstat(directory); errors.Is(err, os.ErrNotExist) {
+		// Journals from versions before backup isolation use the normal slots.
+		directory = ""
+	} else if err != nil {
+		return err
+	}
+	recovery, err := store.NewRecovery(store.RecoveryOptions{DatabasePath: paths.DatabaseFile, BackupDirectory: directory})
 	if err != nil {
 		return err
 	}
 	_, err = recovery.Restore(context.Background(), backupID)
-	return err
+	if err != nil || directory == "" {
+		return err
+	}
+	// Restore the old candidate set only after its vault generation is active.
+	if err := os.Rename(directory, filepath.Join(filepath.Dir(paths.DatabaseFile), store.RecoveryDirectoryName)); err != nil {
+		return err
+	}
+	return syncMigrationDirectory(filepath.Dir(paths.DatabaseFile))
+}
+
+// Keep every old-generation backup outside the normal recovery candidate set.
+// The migration journal alone authorizes restoring from this rollback archive.
+func passphraseMigrationBackupDirectory(paths platform.Paths) string {
+	return filepath.Join(filepath.Dir(paths.DatabaseFile), "passphrase-migration-recovery")
+}
+
+func archivePassphraseMigrationBackups(paths platform.Paths) error {
+	source := filepath.Join(filepath.Dir(paths.DatabaseFile), store.RecoveryDirectoryName)
+	archive := passphraseMigrationBackupDirectory(paths)
+	if _, err := os.Lstat(archive); err == nil {
+		return migrationRequiredError(errors.New("a previous passphrase migration recovery archive already exists"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return migrationRequiredError(err)
+	}
+	if err := os.Rename(source, archive); err != nil {
+		return migrationRequiredError(err)
+	}
+	return syncMigrationDirectory(filepath.Dir(paths.DatabaseFile))
 }

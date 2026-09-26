@@ -61,6 +61,14 @@ func TestLocalActivityReaderReadsOnlySupportedThreadMetadata(t *testing.T) {
 	if sessions[0].Model != "" || sessions[0].TokensUsed == nil || *sessions[0].TokensUsed != 0 {
 		t.Fatalf("optional metadata = %#v", sessions[0])
 	}
+	filtered, err := NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: home, SourceVersion: "state_5", SessionIDs: []string{first.SourceSessionID}})
+	if err != nil || len(filtered) != 1 || filtered[0].SourceSessionID != first.SourceSessionID {
+		t.Fatalf("restricted refresh = %#v, %v", filtered, err)
+	}
+	filtered, err = NewLocalActivityReader().Read(context.Background(), activity.ReadRequest{IdentityHome: home, SourceVersion: "state_5", SessionIDs: []string{}})
+	if err != nil || len(filtered) != 0 {
+		t.Fatalf("empty authorized set = %#v, %v", filtered, err)
+	}
 	after, err := os.ReadFile(filepath.Join(home, localStateDatabase))
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("source database changed during probe/read: %v", err)

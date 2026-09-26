@@ -157,3 +157,48 @@ func TestWSLDPAPIProviderNativeHelperRoundTrip(t *testing.T) {
 		t.Fatalf("plaintext = %q", plaintext)
 	}
 }
+
+func TestWSLDPAPIAtomicPublicationPreservesWinnerAndIgnoresInterruptedTemporary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "wsl.vault")
+	if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), ".wsl-vault-interrupted.tmp"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	winnerGeneration := strings.Repeat("a", 32)
+	winnerKey := bytes.Repeat([]byte{0x77}, 32)
+	runner := func(_ context.Context, _ string, request []byte) ([]byte, error) {
+		decoded, err := decodeWSLHelperRequest(bytes.NewReader(request))
+		if err != nil {
+			return nil, err
+		}
+		if decoded.operation == wslOperationProtect {
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("final record published before complete protection: %v", err)
+			}
+			// Another creator wins between our initial existence check and publication.
+			if err := os.WriteFile(path, encodeWSLVaultRecord(winnerGeneration, winnerKey), 0o600); err != nil {
+				return nil, err
+			}
+		}
+		return bytes.Clone(decoded.payload), nil
+	}
+	provider, err := NewWSLDPAPIKeyProviderWithOptions(path, WSLDPAPIOptions{AllowCreate: true, HelperPath: "/helper.exe", run: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := provider.LoadOrCreate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	material.Clear()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, protected, err := decodeWSLVaultRecord(data)
+	if err != nil || generation != winnerGeneration || !bytes.Equal(protected, winnerKey) {
+		t.Fatalf("winning record changed: generation:%q err:%v", generation, err)
+	}
+}

@@ -4,7 +4,9 @@ package main
 
 import (
 	"errors"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -44,7 +46,32 @@ func addWindowsCommandPath(directory string) error {
 	}
 	value = appendWindowsPath(value, directory)
 	if valueType == registry.EXPAND_SZ {
-		return key.SetExpandStringValue("Path", value)
+		err = key.SetExpandStringValue("Path", value)
+	} else {
+		err = key.SetStringValue("Path", value)
 	}
-	return key.SetStringValue("Path", value)
+	if err != nil {
+		return err
+	}
+	return broadcastWindowsEnvironmentChange()
+}
+
+func broadcastWindowsEnvironmentChange() error {
+	environment, err := windows.UTF16PtrFromString("Environment")
+	if err != nil {
+		return err
+	}
+	var result uintptr
+	// HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG: bound the wait
+	// for applications that do not respond to environment notifications.
+	sent, _, callErr := windows.NewLazySystemDLL("user32.dll").NewProc("SendMessageTimeoutW").Call(
+		0xffff, 0x001a, 0, uintptr(unsafe.Pointer(environment)), 0x0002, 5000, uintptr(unsafe.Pointer(&result)),
+	)
+	if sent == 0 {
+		if callErr != windows.ERROR_SUCCESS {
+			return callErr
+		}
+		return errors.New("environment change notification timed out; restart the terminal host to refresh PATH")
+	}
+	return nil
 }

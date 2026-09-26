@@ -77,7 +77,18 @@ func (*LocalActivityReader) Read(ctx context.Context, request activity.ReadReque
 	if err := validateThreadSchema(contextOrBackground(ctx), database); err != nil {
 		return nil, err
 	}
-	rows, err := database.QueryContext(contextOrBackground(ctx), `SELECT id, created_at_ms, updated_at_ms, model, cwd, tokens_used FROM threads ORDER BY created_at_ms DESC, id DESC`)
+	query := `SELECT id, created_at_ms, updated_at_ms, model, cwd, tokens_used FROM threads`
+	args := []any{}
+	if request.SessionIDs != nil {
+		if len(request.SessionIDs) == 0 {
+			return []activity.SourceSession{}, nil
+		}
+		query += ` WHERE id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(request.SessionIDs)), ",") + `)`
+		for _, id := range request.SessionIDs {
+			args = append(args, id)
+		}
+	}
+	rows, err := database.QueryContext(contextOrBackground(ctx), query+` ORDER BY created_at_ms DESC, id DESC`, args...)
 	if err != nil {
 		return nil, activity.ErrActivityInvalidSchema
 	}

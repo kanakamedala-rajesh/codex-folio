@@ -310,9 +310,6 @@ func useEverydayCompanion(paths platform.Paths, connection platform.ServiceClien
 		options.migrationTarget = ""
 	}
 	dashboardAddress := nonSecretDashboardAddress(connection.Origin)
-	if _, err := client.Dashboard(context.Background()); err != nil {
-		_, _ = fmt.Fprintln(stderr, "codex-folio: warning: dashboard authorization is temporarily unavailable; foreground launch remains available")
-	}
 	_, _ = fmt.Fprintf(stdout, "dashboard address: %s\n", dashboardAddress)
 	_, _ = fmt.Fprintln(stdout, "browser HTTPS setup: codex-folio service certificate (import the printed public root once; do not bypass certificate warnings)")
 	_, _ = fmt.Fprintf(stdout, "reopen with: %s\n", companionReopenCommand(options))
@@ -361,6 +358,33 @@ func waitForCompanionClient(paths platform.Paths, timeout time.Duration, startup
 type secureStorageSelection struct {
 	Version int    `json:"version"`
 	Mode    string `json:"mode"`
+}
+
+// Explicit service commands reopen the remembered provider without initiating
+// the interactive migration offer reserved for plain startup.
+func resolveServiceSecureStorage(paths platform.Paths, options serviceOptions) (serviceOptions, error) {
+	if options.vaultMode != "" {
+		return options, nil
+	}
+	data, err := os.ReadFile(paths.SecureStorageFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return options, nil
+	}
+	if err != nil {
+		return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, err)
+	}
+	var selection secureStorageSelection
+	if json.Unmarshal(data, &selection) != nil || selection.Version != secureStorageSelectionVersion {
+		return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, errors.New("secure-storage selection is invalid"))
+	}
+	switch selection.Mode {
+	case "native":
+	case string(platform.VaultModePassphrase), string(platform.VaultModeWSLDPAPI):
+		options.vaultMode = platform.VaultMode(selection.Mode)
+	default:
+		return serviceOptions{}, apperrors.New(apperrors.VaultUnavailable, errors.New("secure-storage selection is invalid"))
+	}
+	return options, nil
 }
 
 func resolveEverydaySecureStorage(paths platform.Paths, options serviceOptions) (serviceOptions, error) {
@@ -587,19 +611,31 @@ func nonSecretDashboardAddress(origin string) string {
 }
 
 func companionReopenCommand(options serviceOptions) string {
-	parts := []string{"codex-folio", "service", "start"}
-	if options.stateRoot != nil {
-		parts = append(parts, "--state-root", displayCommandArgument(*options.stateRoot))
+	executable, err := os.Executable()
+	if err != nil {
+		executable = os.Args[0]
 	}
-	if options.vaultMode != "" {
-		parts = append(parts, "--vault-mode", string(options.vaultMode))
-	}
-	return strings.Join(parts, " ")
+	return companionReopenCommandForOS(executable, runtime.GOOS, options)
 }
 
-func displayCommandArgument(value string) string {
-	if value != "" && !strings.ContainsAny(value, " \t\r\n\"'") {
-		return value
+func companionReopenCommandForOS(executable, goos string, options serviceOptions) string {
+	parts := []string{displayCommandArgumentForOS(executable, goos), "service", "start"}
+	if options.stateRoot != nil {
+		parts = append(parts, "--state-root", displayCommandArgumentForOS(*options.stateRoot, goos))
 	}
-	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	if options.vaultMode != "" {
+		parts = append(parts, "--vault-mode", displayCommandArgumentForOS(string(options.vaultMode), goos))
+	}
+	command := strings.Join(parts, " ")
+	if goos == "windows" {
+		return "& " + command
+	}
+	return command
+}
+
+func displayCommandArgumentForOS(value, goos string) string {
+	if goos == "windows" {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

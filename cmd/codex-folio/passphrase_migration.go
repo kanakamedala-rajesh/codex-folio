@@ -85,7 +85,7 @@ func writePassphraseMigrationRecord(paths platform.Paths, record passphraseMigra
 	if err := os.Rename(name, passphraseMigrationPath(paths)); err != nil {
 		return migrationRequiredError(err)
 	}
-	return nil
+	return syncMigrationDirectory(paths.Root)
 }
 
 func removePassphraseMigrationRecord(paths platform.Paths) error {
@@ -100,7 +100,7 @@ func removePassphraseMigrationRecord(paths platform.Paths) error {
 	if err := os.Remove(path); err != nil {
 		return migrationRequiredError(err)
 	}
-	return nil
+	return syncMigrationDirectory(paths.Root)
 }
 
 func migrationRequiredError(cause error) error {

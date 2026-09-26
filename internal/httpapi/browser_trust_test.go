@@ -330,3 +330,26 @@ func TestBrowserTrustRenewsAcrossExpiryAndServiceRestartAndRevokes(t *testing.T)
 		}
 	}
 }
+
+func TestSessionIssuancePrunesExpiredSessions(t *testing.T) {
+	server, err := NewServer(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for i := range 20 {
+		if _, err := server.issueSession(httptest.NewRecorder(), now.Add(time.Duration(i)*server.sessionTTL), nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(server.sessions) != 1 {
+			t.Fatalf("retained %d sessions after expiry", len(server.sessions))
+		}
+	}
+	// Issuing a second session before expiry must preserve other live browsers.
+	if _, err := server.issueSession(httptest.NewRecorder(), now.Add(19*server.sessionTTL), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.sessions) != 2 {
+		t.Fatalf("live sessions = %d", len(server.sessions))
+	}
+}

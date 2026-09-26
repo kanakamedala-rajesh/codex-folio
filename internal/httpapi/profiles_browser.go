@@ -230,7 +230,7 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 	if previous.State != "" {
 		server.profileOperationMu.Unlock()
 		item, err := server.profileByAlias(request, input.Alias)
-		if errors.Is(err, profile.ErrNotFound) && previous.State == "failed" {
+		if errors.Is(err, profile.ErrNotFound) && previous.State != "running" {
 			server.profileOperationMu.Lock()
 			if server.profileOperations[key] != previous {
 				server.profileOperationMu.Unlock()

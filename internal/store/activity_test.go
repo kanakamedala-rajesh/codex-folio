@@ -42,11 +42,14 @@ func TestUnassignedMigrationPreservesLegacyAttributionWithoutDuplicatingSessions
 		}
 	}
 	for _, row := range []struct{ id, profile, session string }{
-		{"old-1", "work", "session-shared"}, {"old-2", "personal", "session-shared"}, {"old-3", "work", "session-unique"},
+		{"old-1", "work", "session-shared"}, {"old-2", "personal", "session-shared"}, {"old-3", "work", "session-unique"}, {"proof-1", "work", "session-proven"}, {"proof-2", "personal", "session-proven"},
 	} {
 		if _, err := database.ExecContext(ctx, `INSERT INTO observed_sessions (observed_session_id, profile_id, source, source_session_id, source_version, started_at, last_observed_at, correlation_state) VALUES (?, ?, 'local_metadata', ?, 'state_5', '2026-09-01T00:00:00Z', '2026-09-01T00:01:00Z', 'uncorrelated')`, row.id, row.profile, row.session); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO managed_launches (managed_launch_id, profile_id, lease_id, state, started_at) VALUES ('launch-proof', 'personal', 'lease-proof', 'abandoned', '2026-09-01T00:00:00Z'); INSERT INTO correlation_evidence (correlation_evidence_id, managed_launch_id, observed_session_id, confidence, evidence_type, observed_at) VALUES ('proof', 'launch-proof', 'proof-2', 'high', 'explicit', '2026-09-01T00:01:00Z')`); err != nil {
+		t.Fatal(err)
 	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -75,10 +78,16 @@ func TestUnassignedMigrationPreservesLegacyAttributionWithoutDuplicatingSessions
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"session-shared::unassigned", "session-unique:work:legacy_profile_observation"}
+	want := []string{"session-proven:personal:managed_launch", "session-shared::unassigned", "session-unique:work:legacy_profile_observation"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("migrated = %v, want %v", got, want)
 	}
+	rows.Close()
+	var evidence int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM correlation_evidence WHERE observed_session_id = 'proof-2' AND managed_launch_id = 'launch-proof'`).Scan(&evidence); err != nil || evidence != 1 {
+		t.Fatalf("evidence = %d, %v", evidence, err)
+	}
+
 }
 
 func TestObservedSessionsAndManagedLaunchesRemainDistinctAcrossRestart(t *testing.T) {
@@ -358,5 +367,64 @@ func TestObservedSessionIgnoresUnstartedCorrelationAndExpiredRows(t *testing.T) 
 	timeline, err := stateStore.ListActivity(context.Background(), activity.Filters{ProfileAlias: "Work"})
 	if err != nil || len(timeline) != 2 || timeline[0].SourceSessionID != "recent" || timeline[0].Correlation.State != activity.CorrelationUncorrelated || timeline[1].RecordType != activity.RecordTypeManagedLaunch {
 		t.Fatalf("timeline = %#v/%v", timeline, err)
+	}
+}
+
+func TestReimportPreservesAbandonedLaunchCorrelationEvidence(t *testing.T) {
+	stateStore, _, _, home := readyLaunchStore(t)
+	defer stateStore.Close()
+	ctx := context.Background()
+	plan, err := stateStore.PrepareLaunch(ctx, launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(home, "codex"), WorkingDirectory: home, ExpectedSessionID: "session-proof"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.MarkManagedLaunchStarted(ctx, plan.LeaseID, 4321); err != nil {
+		t.Fatal(err)
+	}
+	idsBefore, err := stateStore.RefreshSessionIDs(ctx, "profile-1")
+	if err != nil || len(idsBefore) != 1 || idsBefore[0] != "session-proof" {
+		t.Fatalf("managed refresh IDs = %v, %v", idsBefore, err)
+	}
+	otherIDs, err := stateStore.RefreshSessionIDs(ctx, "another-profile")
+	if err != nil || len(otherIDs) != 0 {
+		t.Fatalf("other profile IDs = %v, %v", otherIDs, err)
+	}
+	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	record := activity.ObservedSessionRecord{SourceSessionID: "session-proof", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at}
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{record}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var correlation activity.Correlation
+	for _, r := range before {
+		if r.RecordType == activity.RecordTypeObservedSession {
+			correlation = r.Correlation
+		}
+	}
+	if correlation.ManagedLaunchID == "" {
+		t.Fatal("missing initial proof")
+	}
+	if err := stateStore.MarkManagedLaunchAbandoned(ctx, plan.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	record.LastObservedAt = at.Add(time.Minute)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{record}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range after {
+		if r.RecordType == activity.RecordTypeObservedSession && r.Correlation != correlation {
+			t.Fatalf("correlation = %#v, want %#v", r.Correlation, correlation)
+		}
+	}
+	ids, err := stateStore.RefreshSessionIDs(ctx, "profile-1")
+	if err != nil || len(ids) != 1 || ids[0] != "session-proof" {
+		t.Fatalf("refresh IDs = %v, %v", ids, err)
 	}
 }

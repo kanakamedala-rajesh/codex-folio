@@ -108,7 +108,13 @@ type AvailabilityExportRecord struct {
 
 type ActivityExportRecord struct {
 	TimelineRecord
-	CanonicalPath string `json:"canonical_path,omitempty"`
+	CanonicalPath   string `json:"canonical_path,omitempty"`
+	MetricKey       string `json:"metric_key,omitempty"`
+	Unit            string `json:"unit,omitempty"`
+	Availability    string `json:"availability,omitempty"`
+	Freshness       string `json:"freshness,omitempty"`
+	CoverageStartAt string `json:"coverage_start_at,omitempty"`
+	CoverageEndAt   string `json:"coverage_end_at,omitempty"`
 }
 
 type ExportRecords struct {
@@ -143,7 +149,7 @@ func (service *ExportService) Export(ctx context.Context, request ExportRequest)
 	if err != nil {
 		return ExportResult{}, err
 	}
-	if request.Scope == usage.ScopeCombinedIdentity {
+	if request.Scope == usage.ScopeCombinedIdentity || request.Scope == usage.ScopeOverallHistory {
 		records = deduplicateCombinedExport(records)
 	}
 	result := ExportResult{SchemaVersion: ExportSchemaVersion, Filters: request, Records: records}
@@ -235,14 +241,14 @@ var exportFields = map[string][]string{
 	"usage":        {"observation_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric_key", "value", "value_kind", "unit", "metric_scope", "aggregation", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "window_start", "window_end", "window_timezone", "observed_at", "captured_at", "capture_age_seconds", "assumptions", "uncertainty"},
 	"availability": {"metric_availability_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric_key", "value_kind", "unit", "metric_scope", "aggregation", "state", "reason", "checked_at", "source", "source_version", "provenance", "freshness", "capture_age_seconds", "login_identity", "workspace"},
 	"aggregates":   {"id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric_key", "value", "value_kind", "unit", "metric_scope", "aggregation", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "assumptions", "uncertainty"},
-	"activity":     {"record_type", "id", "source_session_id", "profile_id", "profile_alias", "original_profile_id", "attribution_provenance", "original_attribution_provenance", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"},
+	"activity":     {"record_type", "id", "source_session_id", "profile_id", "profile_alias", "original_profile_id", "attribution_provenance", "original_attribution_provenance", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "metric_key", "unit", "availability", "freshness", "coverage_start_at", "coverage_end_at", "correlation_state", "correlation_managed_launch_id", "correlation_evidence_type", "correlation_confidence"},
 }
 
 var exportJSONFields = map[string][]string{
 	"usage":        {"observation_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "value", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "window_start", "window_end", "window_timezone", "observed_at", "captured_at", "capture_age_seconds", "assumptions", "uncertainty"},
 	"availability": {"metric_availability_id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "state", "reason", "checked_at", "source", "source_version", "provenance", "freshness", "capture_age_seconds", "login_identity", "workspace"},
 	"aggregates":   {"id", "profile_id", "profile_alias", "project_id", "project_alias", "project_basename", "metric", "value", "source", "source_version", "provenance", "freshness", "availability", "login_identity", "workspace", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "assumptions", "uncertainty"},
-	"activity":     {"record_type", "id", "source_session_id", "profile_id", "profile_alias", "original_profile_id", "attribution_provenance", "original_attribution_provenance", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "correlation"},
+	"activity":     {"record_type", "id", "source_session_id", "profile_id", "profile_alias", "original_profile_id", "attribution_provenance", "original_attribution_provenance", "project_id", "project_alias", "project_basename", "source", "source_version", "provenance", "started_at", "last_observed_at", "lifecycle", "exit_status", "model", "tokens_used", "metric_key", "unit", "availability", "freshness", "coverage_start_at", "coverage_end_at", "correlation"},
 }
 
 func validExportRequest(request ExportRequest) bool {
@@ -256,7 +262,7 @@ func validExportRequest(request ExportRequest) bool {
 		}
 		seen[dataset] = true
 	}
-	if request.Scope != usage.ScopeSelectedProfile && request.Scope != usage.ScopeCombinedIdentity || request.Scope == usage.ScopeCombinedIdentity && request.ProfileID != "*" || request.Scope == usage.ScopeSelectedProfile && request.ProfileID == "*" {
+	if request.Scope != usage.ScopeSelectedProfile && request.Scope != usage.ScopeCombinedIdentity && request.Scope != usage.ScopeOverallHistory || (request.Scope == usage.ScopeCombinedIdentity || request.Scope == usage.ScopeOverallHistory) && request.ProfileID != "*" || request.Scope == usage.ScopeSelectedProfile && request.ProfileID == "*" {
 		return false
 	}
 	return (usage.HistoryScope{ProfileID: request.ProfileID, ProjectID: request.ProjectID, From: request.From, To: request.To, Classes: []string{"usage"}}).Validate() == nil

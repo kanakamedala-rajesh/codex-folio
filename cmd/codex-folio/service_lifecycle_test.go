@@ -44,6 +44,9 @@ func TestPassphraseServiceGuidancePreservesVaultModeAndGeneratedUnlockCommand(t 
 	if got := serviceTerminalCommandSuffix(paths, platform.VaultModePassphrase); len(got) != 2 || got[0] != "--state-root="+paths.Root || got[1] != "--vault-mode=passphrase" {
 		t.Fatalf("passphrase terminal suffix = %#v", got)
 	}
+	if got := serviceTerminalCommandSuffix(paths, platform.VaultModeWSLDPAPI); len(got) != 2 || got[1] != "--vault-mode=wsl-dpapi" {
+		t.Fatalf("WSL terminal suffix = %#v", got)
+	}
 	if got := serviceTerminalCommandSuffix(paths, platform.VaultModeSecretService); len(got) != 1 || got[0] != "--state-root="+paths.Root {
 		t.Fatalf("secret-service terminal suffix = %#v", got)
 	}

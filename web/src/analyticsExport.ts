@@ -3,9 +3,9 @@ import type { AnalyticsExportResult } from "./generated/openapi";
 function scalar(record: Record<string, unknown>, field: string) {
   const metric = record.metric as Record<string, unknown> | undefined;
   const correlation = record.correlation as Record<string, unknown> | undefined;
-  if (field === "metric_key") return metric?.metric_key;
+  if (field === "metric_key") return metric?.metric_key ?? record.metric_key;
   if (field === "value_kind") return metric?.value_kind;
-  if (field === "unit") return metric?.unit;
+  if (field === "unit") return metric?.unit ?? record.unit;
   if (field === "metric_scope") return metric?.scope;
   if (field === "aggregation") return metric?.aggregation;
   if (field.startsWith("correlation_")) return correlation?.[field.slice("correlation_".length)];

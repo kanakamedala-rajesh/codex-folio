@@ -158,7 +158,7 @@ func TestPlainStartupStartsFullCompanionAndLeavesItAfterChildExit(t *testing.T) 
 	if code != 37 || startCalls != 1 || !process.started {
 		t.Fatalf("plain startup result = code:%d starts:%d child-started:%t; stdout=%q stderr=%q", code, startCalls, process.started, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "dashboard address: ") || !strings.Contains(stdout.String(), "reopen with: codex-folio service start") || strings.Contains(stdout.String(), "bootstrap=") {
+	if !strings.Contains(stdout.String(), "dashboard address: ") || !strings.Contains(stdout.String(), "reopen with: "+companionReopenCommand(serviceOptions{stateRoot: &paths.Root})) || strings.Contains(stdout.String(), "bootstrap=") {
 		t.Fatalf("plain startup dashboard output = %q", stdout.String())
 	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
@@ -529,7 +529,7 @@ func TestContendedMigrationDoesNotReuseRunningCompanion(t *testing.T) {
 	}
 }
 
-func TestDashboardAuthorizationFailureWarnsWithoutBlockingReadyCompanion(t *testing.T) {
+func TestOrdinaryStartupDoesNotRequestDiscardedDashboardAuthorization(t *testing.T) {
 	paths := launchTestPaths(t)
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
 	if err != nil {
@@ -551,10 +551,26 @@ func TestDashboardAuthorizationFailureWarnsWithoutBlockingReadyCompanion(t *test
 
 	var stdout, stderr bytes.Buffer
 	code := ensureEverydayCompanion(paths, serviceOptions{}, strings.NewReader(""), &stdout, &stderr, nil)
-	if code != exitSuccess || !strings.Contains(stderr.String(), "dashboard authorization is temporarily unavailable") {
+	if code != exitSuccess || stderr.Len() != 0 {
 		t.Fatalf("degraded dashboard result = code:%d stdout:%q stderr:%q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), server.Origin()+"/") || strings.Contains(stdout.String(), "bootstrap=") {
 		t.Fatalf("non-secret dashboard output = %q", stdout.String())
+	}
+}
+
+func TestCompanionReopenCommandPreservesExecutableAndLiteralArguments(t *testing.T) {
+	root := `/state/$name;$(touch bad)/it's here`
+	executable := `/build/bin/codex folio`
+	options := serviceOptions{stateRoot: &root, vaultMode: platform.VaultModeWSLDPAPI}
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		got := companionReopenCommandForOS(executable, goos, options)
+		want := `'/build/bin/codex folio' service start --state-root '/state/$name;$(touch bad)/it'"'"'s here' --vault-mode 'wsl-dpapi'`
+		if goos == "windows" {
+			want = `& '/build/bin/codex folio' service start --state-root '/state/$name;$(touch bad)/it''s here' --vault-mode 'wsl-dpapi'`
+		}
+		if got != want {
+			t.Errorf("%s command=%q, want %q", goos, got, want)
+		}
 	}
 }

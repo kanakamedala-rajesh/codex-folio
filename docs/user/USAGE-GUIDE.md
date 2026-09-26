@@ -35,6 +35,9 @@ then explicitly consent to **Import source** for the source you choose. Refusing
 or leaving consent unchecked imports nothing. Unknown ownership appears as
 **Unassigned History** in the overall timeline; it is not a selectable profile
 and does not contribute to individual-profile or Combined Identity View totals.
+To export it, choose **Overall history** in Analytics, then **Preview analytics
+export** for the Activity dataset. The selected history range also controls the
+Overall history token summary.
 Import reads source metadata without changing Codex files.
 To correct ownership, open an observed session and choose **Correct ownership**,
 or select several observed sessions and use **Assign selected sessions**.
@@ -296,7 +299,9 @@ initializes an empty database or replaces the old vault key. Rerunning the plain
 command either completes the verified destination or restores the validated
 passphrase backup before offering migration again. `CF_VAULT_MIGRATION_REQUIRED`
 means this recoverable transition still needs attention; do not delete the
-database, passphrase vault, migration journal or recovery directory. This is a
+database, passphrase vault, migration journal, `recovery` directory or
+`passphrase-migration-recovery` archive. Old-vault backups are isolated from
+normal restore after migration. This is a
 same-installation protection change, not portable credential backup.
 
 This automatic on-demand lifetime does not install OS-login startup or grant

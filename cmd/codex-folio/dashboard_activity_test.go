@@ -89,8 +89,15 @@ func seedDashboardActivity(t *testing.T, state *store.Store, projects *activity.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, alias := range []string{"Work", "Personal"} {
-		if _, err := service.Refresh(ctx, alias); err != nil {
+	sources, err := service.ReviewSources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if source.Label != "Work" && source.Label != "Personal" {
+			continue
+		}
+		if _, err := service.ImportSource(ctx, source.SourceID, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -98,6 +105,7 @@ func seedDashboardActivity(t *testing.T, state *store.Store, projects *activity.
 }
 
 func TestDashboardActivityFixturePreservesIndependentMetadata(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	seedReferencedReadyProfile(t, paths, secureVault)

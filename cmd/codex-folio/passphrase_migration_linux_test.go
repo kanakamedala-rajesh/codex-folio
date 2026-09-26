@@ -98,6 +98,20 @@ func TestPlainStartupMigratesPassphraseStateAndImmediatelyLaunches(t *testing.T)
 		t.Fatalf("old passphrase vault accepted after completed migration: %v", err)
 	}
 	fixture.Close()
+	recovery, err := store.NewRecovery(store.RecoveryOptions{DatabasePath: paths.DatabaseFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := recovery.ListCandidates(context.Background())
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("old-vault backups remain normal candidates: %#v, %v", candidates, err)
+	}
+	if _, err := recovery.Restore(context.Background(), "backup-1"); apperrors.Code(err) != apperrors.StoreRecoveryCandidateNotFound {
+		t.Fatalf("old-vault backup was restorable: %v", err)
+	}
+	if _, err := os.Stat(passphraseMigrationBackupDirectory(paths)); err != nil {
+		t.Fatalf("migration rollback archive missing: %v", err)
+	}
 	var rejected bytes.Buffer
 	if code := runServiceStartWithDependencies(paths, serviceOptions{vaultMode: platform.VaultModePassphrase}, io.Discard, &rejected, nil, openServiceStoreWithVaultMode, nil); code != exitFailure || !strings.Contains(rejected.String(), apperrors.VaultMigrationRequired) {
 		t.Fatalf("service activated old vault after migration: code:%d stderr:%q", code, rejected.String())
@@ -226,6 +240,9 @@ func TestInterruptedPassphraseMigrationRestoresOrCompletesFromJournal(t *testing
 				_ = sourceStore.Close()
 				t.Fatal(err)
 			}
+			if err := archivePassphraseMigrationBackups(paths); err != nil {
+				t.Fatal(err)
+			}
 			destinationKey := bytes.Repeat([]byte{0x53}, 32)
 			factory := func(platform.Paths, platform.VaultMode, bool) (vault.Vault, error) {
 				return vault.NewInMemoryVault(destinationKey, "resume-native-generation")
@@ -293,6 +310,9 @@ func TestPassphraseServiceReconcilesInterruptedMigrationBeforeUnlock(t *testing.
 	backup, err := source.CreateVaultMigrationBackup(context.Background())
 	if err != nil {
 		_ = source.Close()
+		t.Fatal(err)
+	}
+	if err := archivePassphraseMigrationBackups(paths); err != nil {
 		t.Fatal(err)
 	}
 	destination, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x79}, 32), "interrupted-native-generation")

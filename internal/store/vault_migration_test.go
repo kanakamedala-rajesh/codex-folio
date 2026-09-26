@@ -91,6 +91,9 @@ func TestReprotectVaultStatePreservesEveryRetainedProtectedClass(t *testing.T) {
 	if err := stateStore.ReprotectVaultState(ctx, destination); err != nil {
 		t.Fatalf("ReprotectVaultState(): %v", err)
 	}
+	if _, err := source.Encrypt(ctx, []byte("must be locked"), nil); !errors.Is(err, vault.ErrLocked) {
+		t.Fatalf("source vault not cleared after migration: %v", err)
+	}
 	if err := stateStore.VerifyProtectedState(ctx); err != nil {
 		t.Fatalf("destination verification before reopen: %v", err)
 	}

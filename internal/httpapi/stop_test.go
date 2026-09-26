@@ -131,3 +131,29 @@ func TestCompanionConcurrentStopRequestsCommitOnce(t *testing.T) {
 		t.Fatal("idle stop did not commit")
 	}
 }
+
+func TestDeferredStopObservesLaunchCompletionWithoutFinalRequest(t *testing.T) {
+	for _, action := range []string{"status", "poll"} {
+		t.Run(action, func(t *testing.T) {
+			launches := &stopLaunchFixture{count: 1}
+			server, err := NewServer(Options{Launches: launches})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result := stopRequest(t, server, "defer"); result.State != "pending" {
+				t.Fatal(result)
+			}
+			launches.count = 0
+			if action == "poll" {
+				server.ReconcileDeferredStop(context.Background())
+			} else {
+				stopRequest(t, server, action)
+			}
+			select {
+			case <-server.StopReady():
+			default:
+				t.Fatal("completed launch did not release deferred stop")
+			}
+		})
+	}
+}

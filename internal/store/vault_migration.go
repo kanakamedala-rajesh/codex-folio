@@ -89,6 +89,9 @@ func (store *Store) ReprotectVaultState(ctx context.Context, destination Vault) 
 		rollback()
 		return coded(apperrors.StoreMigrationFailed, errors.Join(ErrMigration, err))
 	}
+	if lockable, ok := source.(interface{ Lock() }); ok && source != destination {
+		lockable.Lock()
+	}
 	store.vault = destination
 	return nil
 }

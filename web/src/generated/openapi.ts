@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "de050ca28c176579f09c1a2253a466c4e49f60d2399b81aece34598fb1d11972" as const;
+  "e8218045ec5209cb2ff73e6bb97885bfac4f5253f6fe13f323fc7ee892f566d9" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -474,6 +474,12 @@ export interface ActivityExportRecord {
   exit_status?: number;
   model?: string;
   tokens_used?: number;
+  metric_key?: string;
+  unit?: string;
+  availability?: string;
+  freshness?: string;
+  coverage_start_at?: string;
+  coverage_end_at?: string;
   correlation: ActivityCorrelation;
   canonical_path?: string;
 }

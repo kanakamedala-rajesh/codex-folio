@@ -418,3 +418,28 @@ func TestAuthorizedProfileLifecycleRequiresServerConfirmationAndReturnsSafeRecor
 		}
 	}
 }
+
+func TestBrowserProfileReusesRemovedAliasAfterTerminalOperation(t *testing.T) {
+	for _, state := range []string{"ready", "waiting", "failed", "running"} {
+		t.Run(state, func(t *testing.T) {
+			authentication := &browserProfileAuthenticationStub{status: profile.StatusPending}
+			registry, err := profile.NewRegistry(&registryRepository{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &Server{profileAuthentication: authentication, profiles: registry}
+			server.setProfileOperation("New", profileOperation{State: state})
+			request := httptest.NewRequest(http.MethodPost, testProfilesPath, strings.NewReader(`{"action":"add","alias":"New","display_name":"New","identity_home_mode":"managed","auth_method":"browser"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.browserProfileAuthentication(response, request)
+			if state == "running" {
+				if response.Code != http.StatusConflict || authentication.request.Action != "" {
+					t.Fatalf("running operation duplicated: %d", response.Code)
+				}
+			} else if response.Code != http.StatusOK || authentication.request.Action != "add" {
+				t.Fatalf("alias reuse = %d/%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}

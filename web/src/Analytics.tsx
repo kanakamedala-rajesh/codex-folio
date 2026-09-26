@@ -1,3 +1,4 @@
+import { summarizeHistory } from "./historicalSummary";
 import { quotaWindowLabel } from "./quotaWindow";
 import { useEffect, useEffectEvent, useMemo, useState, type RefObject } from "react";
 import type {
@@ -54,7 +55,6 @@ interface AnalyticsProps {
   readProjects: ProjectReader;
   editProject: ProjectEditor;
   readActivity: ActivityReader;
-  readOverallHistory: () => Promise<AnalyticsResponse>;
   expired: (error: unknown) => void;
 }
 
@@ -1003,7 +1003,6 @@ export function Analytics({
   readProjects,
   editProject,
   readActivity,
-  readOverallHistory,
 }: AnalyticsProps) {
   const [tab, setTab] = useState<AnalyticsTab>("capacity");
   const [dataView, setDataView] = useState<AnalyticsDataView | null>(null);
@@ -1015,7 +1014,6 @@ export function Analytics({
   const [projectId, setProjectId] = useState("");
   const [projects, setProjects] = useState<ProjectIdentity[]>([]);
   const [activity, setActivity] = useState<ActivityRecord[]>(data.activity);
-  const [overallHistory, setOverallHistory] = useState<AnalyticsResponse | null>(null);
   const [aggregates, setAggregates] = useState<HistoryAggregate[]>([]);
   const [status, setStatus] = useState<string>(c.loading);
   const [activityStatus, setActivityStatus] = useState(c.activityRetained(data.activity.length));
@@ -1029,25 +1027,6 @@ export function Analytics({
   const handleExpired = useEffectEvent(expired);
   const loadProjects = useEffectEvent(readProjects);
   const loadActivity = useEffectEvent(readActivity);
-  const loadOverallHistory = useEffectEvent(readOverallHistory);
-
-  useEffect(() => {
-    if (tab !== "tokens" || profileId || projectId) return;
-    let cancelled = false;
-    void loadOverallHistory()
-      .then((result) => {
-        if (!cancelled) setOverallHistory(result);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setOverallHistory(null);
-          handleExpired(error);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, profileId, projectId, dataRevision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1361,7 +1340,11 @@ export function Analytics({
             <TokenView
               records={visibleActivity}
               projects={projects}
-              summary={!profileId && !projectId ? overallHistory : null}
+              summary={
+                !profileId && !projectId
+                  ? { ...data, historical_metrics: summarizeHistory(visibleActivity) }
+                  : null
+              }
             />
           ) : tab === "projects" ? (
             <ProjectView

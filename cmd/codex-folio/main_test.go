@@ -606,3 +606,13 @@ func testServiceTempDir(t *testing.T) string {
 	})
 	return directory
 }
+
+func TestHelpAdvertisesPlainPickerOptions(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--help"}, &stdout, &stderr, buildinfo.Metadata{}); code != exitSuccess {
+		t.Fatalf("help exit=%d stderr=%q", code, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("codex-folio [--state-root PATH] [--vault-mode MODE]")) {
+		t.Fatalf("help omits plain picker options: %s", stdout.String())
+	}
+}

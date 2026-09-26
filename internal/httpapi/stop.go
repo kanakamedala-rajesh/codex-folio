@@ -24,6 +24,14 @@ type CommandStopResponse struct {
 // StopReady closes only after the owner has accepted a safe shutdown.
 func (server *Server) StopReady() <-chan struct{} { return server.stopReady }
 
+// ReconcileDeferredStop observes completed processes even when the foreground
+// launcher could not deliver its final state update.
+func (server *Server) ReconcileDeferredStop(ctx context.Context) {
+	server.stopMu.Lock()
+	defer server.stopMu.Unlock()
+	server.completeDeferredStop(ctx)
+}
+
 func (server *Server) completeDeferredStop(ctx context.Context) {
 	if !server.stopRequested || server.stopCommitted {
 		return
@@ -116,7 +124,7 @@ func (server *Server) commandStop(response http.ResponseWriter, request *http.Re
 		return
 	}
 	result.ActiveLaunches = count
-	if input.Action == "defer" || input.Action == "request" && count == 0 {
+	if input.Action == "defer" || input.Action == "request" && count == 0 || server.stopRequested {
 		server.stopRequested = true
 		if count == 0 {
 			server.commitStop()

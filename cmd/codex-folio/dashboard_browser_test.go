@@ -778,7 +778,19 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				if string(mode) == "analytics-activity-seed" && seeded && !activitySeeded {
 					_, seedErr := state.SetAnalyticsRetention(context.Background(), "90")
 					if seedErr == nil {
-						_, seedErr = activities.Refresh(context.Background(), "Personal")
+						var sources []activity.SourceReview
+						sources, seedErr = activities.ReviewSources(context.Background())
+						if seedErr == nil {
+							for _, source := range sources {
+								if source.Label != "Work" && source.Label != "Personal" {
+									continue
+								}
+								_, seedErr = activities.ImportSource(context.Background(), source.SourceID, true)
+								if seedErr != nil {
+									break
+								}
+							}
+						}
 					}
 					if seedErr != nil {
 						analyticsSeedErrors <- seedErr

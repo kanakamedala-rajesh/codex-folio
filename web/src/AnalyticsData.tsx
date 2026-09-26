@@ -81,7 +81,7 @@ function Controls({ children }: { children: ReactNode }) {
 
 function ExportView(props: AnalyticsDataProps) {
   const [format, setFormat] = useState<"json" | "csv">("json");
-  const [selected, setSelected] = useState<string[]>(["usage"]);
+  const [selected, setSelected] = useState<string[]>([props.profileId ? "usage" : "activity"]);
   const [includePaths, setIncludePaths] = useState(false);
   const [preview, setPreview] = useState<AnalyticsExportResult | null>(null);
   const [status, setStatus] = useState("");
@@ -111,8 +111,8 @@ function ExportView(props: AnalyticsDataProps) {
         export: {
           format,
           datasets: selected,
-          scope: "selected_profile",
-          profile_id: props.profileId,
+          scope: props.profileId ? "selected_profile" : "overall_history",
+          profile_id: props.profileId || "*",
           project_id: props.projectId || "*",
           from: props.from,
           to: "all",
@@ -165,7 +165,7 @@ function ExportView(props: AnalyticsDataProps) {
       <fieldset className="mb-6 border-y border-rule py-5">
         <legend className="font-semibold">{c.datasets}</legend>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-3">
-          {datasets.map((dataset) => (
+          {(props.profileId ? datasets : (["activity"] as const)).map((dataset) => (
             <label key={dataset} className="flex min-h-11 items-center gap-3">
               <input
                 type={format === "csv" ? "radio" : "checkbox"}
@@ -190,7 +190,9 @@ function ExportView(props: AnalyticsDataProps) {
         {c.includePaths}
       </label>
       <p className="mb-5 max-w-[75ch] text-muted">{c.pathBoundary}</p>
-      <p className="mb-5 max-w-[75ch] text-muted">{c.exportScope(displayBoundary(props.from))}</p>
+      <p className="mb-5 max-w-[75ch] text-muted">
+        {c.exportScope(displayBoundary(props.from), !props.profileId)}
+      </p>
       <p role="status" aria-live="polite" className="mb-5 min-h-6 max-w-[75ch]">
         {status}
       </p>
