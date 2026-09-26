@@ -803,6 +803,13 @@ export const profileCopy = {
   back: "Back to Profiles",
   updated: "Identity Profile metadata updated.",
   readyMessage: "Identity Profile is ready.",
+  historyOfferTitle: "Import existing history?",
+  historyOfferDetail:
+    "Your profile is ready. Review discovered Codex homes and choose each source you want to import. You can continue to launch without importing history.",
+  historyRefreshFailed:
+    "History imported, but dashboard data could not refresh. Open Sessions to try again.",
+  continueLaunch: "Continue to launch",
+  notNow: "Not now",
   pendingMessage: "Pending Profile saved for resume.",
   failed: "Profile action failed.",
   invalid: "Check the profile details and try again.",

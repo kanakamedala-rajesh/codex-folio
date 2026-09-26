@@ -388,6 +388,11 @@ profile becomes Ready. It shows safe waiting, running, or failure status without
 the login output. The command keeps this installation's state-root context.
 An interrupted or failed command leaves the profile Pending; reopen it to
 resume with the same alias and home. Checking status does not start login again.
+Once Ready, onboarding offers the existing source review and a separate consent
+choice for each supported history source. Declining, an absent source, or an
+import failure leaves the authenticated profile Ready; continue to ordinary
+launch and retry source review later in Sessions. Successful import refreshes
+history views, with uncertain ownership shown as Unassigned History.
 
 ### Register a Referenced Identity Home
 
@@ -761,7 +766,13 @@ exists. The managed choice creates a separate home and never copies credentials.
 Cancellation or failed authentication leaves the profile Pending; rerun the
 plain command and choose its Resume entry. Only a validated Ready profile
 appears in the launch picker. After setup, the picker offers a foreground
-launch. Registration alone does not consent to history import.
+launch. Before the picker, the CLI lists discovered history sources and asks
+`[y/N]` for each supported source. Enter or `n` declines without importing;
+an approved import reports new and already present sessions. Absent or failed
+history import leaves a Ready profile launchable; retry in dashboard Sessions.
+Registration alone does not consent to history import. A new Managed home does
+not copy another home's history; a Referenced home uses the actual existing
+home. Repeated imports preserve existing sessions and ownership corrections.
 
 On the first native start the detached service is the only process allowed to
 open the vault, create protected key material, and open SQLite. A private

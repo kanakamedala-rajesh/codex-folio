@@ -118,10 +118,14 @@ type CommandActivityRequest struct {
 	Alias        string `json:"alias,omitempty"`
 	ProfileAlias string `json:"profile_alias,omitempty"`
 	ProjectID    string `json:"project_id,omitempty"`
+	SourceID     string `json:"source_id,omitempty"`
+	Consent      bool   `json:"consent,omitempty"`
 }
 
 type CommandActivityResponse struct {
 	Records []activity.TimelineRecord `json:"records"`
+	Sources []activity.SourceReview   `json:"sources,omitempty"`
+	Import  *activity.ImportResult    `json:"import,omitempty"`
 }
 
 func (client *CommandClient) Activity(ctx context.Context, input CommandActivityRequest) (CommandActivityResponse, error) {
@@ -188,19 +192,33 @@ func (server *Server) commandActivity(response http.ResponseWriter, request *htt
 		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
 		return
 	}
-	var records []activity.TimelineRecord
+	result := CommandActivityResponse{}
 	switch input.Action {
 	case "refresh":
-		if strings.TrimSpace(input.Alias) == "" || input.ProfileAlias != "" || input.ProjectID != "" {
+		if strings.TrimSpace(input.Alias) == "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID != "" || input.Consent {
 			err = activity.ErrActivityInvalid
 		} else {
-			records, err = server.activities.Refresh(request.Context(), input.Alias)
+			result.Records, err = server.activities.Refresh(request.Context(), input.Alias)
 		}
 	case "list":
-		if input.Alias != "" {
+		if input.Alias != "" || input.SourceID != "" || input.Consent {
 			err = activity.ErrActivityInvalid
 		} else {
-			records, err = server.activities.List(request.Context(), activity.Filters{ProfileAlias: input.ProfileAlias, ProjectID: input.ProjectID})
+			result.Records, err = server.activities.List(request.Context(), activity.Filters{ProfileAlias: input.ProfileAlias, ProjectID: input.ProjectID})
+		}
+	case "review_sources":
+		if input.Alias != "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID != "" || input.Consent {
+			err = activity.ErrActivityInvalid
+		} else {
+			result.Sources, err = server.activities.ReviewSources(request.Context())
+		}
+	case "import_source":
+		if input.Alias != "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID == "" || !input.Consent {
+			err = activity.ErrActivityInvalid
+		} else {
+			var imported activity.ImportResult
+			imported, err = server.activities.ImportSource(request.Context(), input.SourceID, true)
+			result.Import = &imported
 		}
 	default:
 		err = activity.ErrActivityInvalid
@@ -209,7 +227,7 @@ func (server *Server) commandActivity(response http.ResponseWriter, request *htt
 		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
 		return
 	}
-	writeJSON(response, http.StatusOK, CommandActivityResponse{Records: records})
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (server *Server) getActivity(response http.ResponseWriter, request *http.Request) {

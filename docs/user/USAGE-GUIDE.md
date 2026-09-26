@@ -18,12 +18,18 @@ only; the choice is remembered and can be changed in Dashboard Settings. It does
 not enroll OS-login startup. When no profile is ready, choose `r` to register an existing
 Codex home in place or `m` to create an isolated Managed Identity Home. Give it
 an alias and display name, complete Codex's sign-in if needed, then choose the
-ready profile in the picker to launch. A referenced home remains shared with
-direct Codex; registration does not import history. Pending setup can be resumed
+ready profile in the picker to launch. After authentication, the CLI lists
+detected history sources and asks separately before importing each supported
+source. Press Enter or `n` to decline and continue to the picker. A referenced
+home remains shared with direct Codex; registration alone does not import
+history. Missing or failed history import does not change a Ready profile or
+block launch. Pending setup can be resumed
 by running the plain command again. The longer manual workflow below is useful
 for checking multiple accounts and usage evidence.
 
-To bring supported existing sessions into overall history, open **Sessions**,
+Dashboard profile setup also offers source review and optional import after the
+terminal step completes. To bring supported existing sessions into overall
+history later, open **Sessions**,
 choose **Review sources**, inspect each source's support state and session count,
 then explicitly consent to **Import source** for the source you choose. Refusing
 or leaving consent unchecked imports nothing. Unknown ownership appears as

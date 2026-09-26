@@ -1579,6 +1579,14 @@ export function App() {
                 completeSetup={async () => {
                   await load(true);
                 }}
+                reviewSources={() => api.getActivitySources()}
+                importSource={(sourceId) =>
+                  api.importActivitySource(
+                    { source_id: sourceId, consent: true },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
+                expired={failure}
                 packs={packs}
                 quarantined={quarantined}
                 busy={busy}

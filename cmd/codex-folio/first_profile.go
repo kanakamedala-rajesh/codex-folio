@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"venkatasudha.com/codex-folio/internal/activity"
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
@@ -171,6 +172,7 @@ func guideFirstProfile(paths platform.Paths, input io.Reader, stdout, stderr io.
 				return false, writeServiceError(stderr, apperrors.New(apperrors.ProfileAuthenticationFailed, profile.ErrAuthenticationFailed))
 			}
 			writeReauthenticationResult(stdout, *result.Reauthentication)
+			offerOnboardingHistory(client, input, stdout, stderr)
 			_, _ = io.WriteString(stdout, "Profile ready. Choose it in the picker to launch Codex.\n")
 			return true, exitSuccess
 		}
@@ -178,8 +180,44 @@ func guideFirstProfile(paths platform.Paths, input io.Reader, stdout, stderr io.
 			return false, writeServiceError(stderr, apperrors.New(apperrors.ProfileSetupInvalid, profile.ErrProfileStateInvalid))
 		}
 		writeProfileResult(stdout, *result.Setup)
+		offerOnboardingHistory(client, input, stdout, stderr)
 		_, _ = io.WriteString(stdout, "Profile ready. Choose it in the picker to launch Codex.\n")
 		return true, exitSuccess
+	}
+}
+
+// History import is optional and never changes the readiness of an authenticated
+// profile. Every source needs its own affirmative answer after source review.
+func offerOnboardingHistory(client *httpapi.CommandClient, input io.Reader, stdout, stderr io.Writer) {
+	review, err := client.Activity(context.Background(), httpapi.CommandActivityRequest{Action: "review_sources"})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "codex-folio: history source review unavailable (%s); continue to launch and retry in dashboard Sessions\n", apperrors.Code(err))
+		return
+	}
+	if len(review.Sources) == 0 {
+		_, _ = io.WriteString(stdout, "No local history sources found. You can review sources later in dashboard Sessions.\n")
+		return
+	}
+	_, _ = io.WriteString(stdout, "Available local history sources (profile registration did not consent to import):\n")
+	for _, source := range review.Sources {
+		_, _ = fmt.Fprintf(stdout, "- %s: %s (%d sessions)\n", source.Label, source.Status, source.SessionCount)
+		if source.Status != activity.SourceStatusSupported {
+			continue
+		}
+		_, _ = fmt.Fprintf(stdout, "Import supported history from %s as Unassigned History? [y/N]: ", source.Label)
+		choice, ok := readFirstProfileChoice(input)
+		if !ok || !strings.EqualFold(choice, "y") {
+			_, _ = io.WriteString(stdout, "History import declined; continuing to launch.\n")
+			continue
+		}
+		result, err := client.Activity(context.Background(), httpapi.CommandActivityRequest{Action: "import_source", SourceID: source.SourceID, Consent: true})
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "codex-folio: history import failed (%s); continue to launch and retry in dashboard Sessions\n", apperrors.Code(err))
+			continue
+		}
+		if result.Import != nil {
+			_, _ = fmt.Fprintf(stdout, "Imported %d sessions into history; %d already present. Unknown ownership remains Unassigned History.\n", result.Import.ImportedCount, result.Import.AlreadyPresentCount)
+		}
 	}
 }
 

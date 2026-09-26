@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 
 	codexadapter "venkatasudha.com/codex-folio/internal/adapters/codex"
 	"venkatasudha.com/codex-folio/internal/buildinfo"
@@ -49,6 +52,11 @@ func startFirstProfileService(t *testing.T, paths platform.Paths, secureVault va
 
 func startFirstProfileServiceWithCodex(t *testing.T, paths platform.Paths, secureVault vault.Vault, auth profile.Authenticator, executable string) *everydayCompanionFixture {
 	t.Helper()
+	// Source review must never inspect the developer's real Codex home.
+	isolatedHome := testServiceTempDir(t)
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("USERPROFILE", isolatedHome)
+	t.Setenv("CODEX_HOME", filepath.Join(paths.Root, "empty-codex-home"))
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +159,75 @@ func TestPlainStartupAdoptsAuthenticatedReferencedHomeWithoutLogin(t *testing.T)
 	code, output, diagnostic, process := runFirstProfileJourney(t, paths, "r\nexisting\nExisting account\n"+home+"\n\n1\n", auth)
 	if code != 17 || !process.started || auth.authenticateCalls != 0 || auth.checkCalls == 0 || !strings.Contains(output, "Identity Home: referenced") || !strings.Contains(output, "Registration does not consent to history import") || diagnostic != "" {
 		t.Fatalf("journey = %d/%q/%q; started=%t auth=%d check=%d", code, output, diagnostic, process.started, auth.authenticateCalls, auth.checkCalls)
+	}
+}
+
+func TestPlainStartupOffersReferencedHistoryWithSeparateConsent(t *testing.T) {
+	for _, test := range []struct {
+		name, answer string
+		wantRecords  int
+	}{
+		{name: "decline", answer: "n", wantRecords: 0},
+		{name: "import", answer: "y", wantRecords: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			paths := launchTestPaths(t)
+			isolatedHome := testServiceTempDir(t)
+			t.Setenv("HOME", isolatedHome)
+			t.Setenv("USERPROFILE", isolatedHome)
+			secureVault, err := vault.NewInMemoryVault(bytes.Repeat([]byte{0x75}, 32), "first-profile-history")
+			if err != nil {
+				t.Fatal(err)
+			}
+			auth := &firstProfileAuthenticator{}
+			fixture := startFirstProfileService(t, paths, secureVault, auth)
+			t.Cleanup(fixture.Close)
+			home := filepath.Join(testServiceTempDir(t), "existing-codex-home")
+			if err := os.MkdirAll(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			createFirstProfileHistoryFixture(t, home)
+			code, output, diagnostic, process := runFirstProfileJourney(t, paths, "r\nexisting\nExisting account\n"+home+"\n\n"+test.answer+"\n1\n", auth)
+			if code != 17 || !process.started || diagnostic != "" || !strings.Contains(output, "Available local history sources") || !strings.Contains(output, "Import supported history") {
+				t.Fatalf("journey = %d/%q/%q; started=%t", code, output, diagnostic, process.started)
+			}
+			client := httpapi.NewCommandClient(fixture.server.Origin(), "first-profile-command", nil)
+			history, err := client.Activity(context.Background(), httpapi.CommandActivityRequest{Action: "list"})
+			observed := 0
+			for _, record := range history.Records {
+				if record.RecordType != "observed_session" {
+					continue
+				}
+				observed++
+				if record.ProfileID != "" || record.ProfileAlias != "Unassigned History" {
+					t.Fatalf("import attribution = %#v", record)
+				}
+			}
+			if err != nil || observed != test.wantRecords {
+				t.Fatalf("history = %#v, %v; want %d", history, err, test.wantRecords)
+			}
+		})
+	}
+}
+
+func createFirstProfileHistoryFixture(t *testing.T, home string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("../../internal/adapters/codex/testdata/local-state/v5/threads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(string(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE threads SET cwd = ?`, testServiceTempDir(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

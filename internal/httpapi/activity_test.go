@@ -67,6 +67,17 @@ func TestActivityAPIsExposeSafeConsistentTimeline(t *testing.T) {
 	if err != nil || len(commandResult.Records) != 1 {
 		t.Fatalf("command Activity() = %#v, %v", commandResult, err)
 	}
+	review, err := command.Activity(context.Background(), CommandActivityRequest{Action: "review_sources"})
+	if err != nil || len(review.Sources) != 1 || review.Sources[0].SourceID != "home-1" {
+		t.Fatalf("command source review = %#v, %v", review, err)
+	}
+	if _, err := command.Activity(context.Background(), CommandActivityRequest{Action: "import_source", SourceID: "home-1"}); err == nil {
+		t.Fatal("command import accepted without separate consent")
+	}
+	imported, err := command.Activity(context.Background(), CommandActivityRequest{Action: "import_source", SourceID: "home-1", Consent: true})
+	if err != nil || imported.Import == nil || imported.Import.ImportedCount != 1 {
+		t.Fatalf("command source import = %#v, %v", imported, err)
+	}
 
 	client := testClient(t)
 	origin := server.Origin()

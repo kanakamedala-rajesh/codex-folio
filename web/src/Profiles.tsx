@@ -4,6 +4,8 @@ import {
   type ConfigurationPackRequest,
   type ConfigurationPackResponse,
   type ConfigurationPackSummary,
+  type ActivitySourceImportResponse,
+  type ActivitySourcesResponse,
   type ProfileAuthenticationRequest,
   type ProfileAuthenticationResponse,
   type ProfileEditRequest,
@@ -13,11 +15,15 @@ import {
 } from "./generated/openapi";
 import { profileCopy as c, profileErrorCopy, stateCopy } from "./copy";
 import { ConfigurationPacks } from "./ConfigurationPacks";
+import { HistorySourceReview } from "./HistorySourceReview";
 
 type Props = {
   profiles: ProfileSummary[];
   refreshProfiles: () => Promise<ProfileSummary[]>;
   completeSetup: () => Promise<void>;
+  reviewSources: () => Promise<ActivitySourcesResponse>;
+  importSource: (sourceId: string) => Promise<ActivitySourceImportResponse>;
+  expired: (error: unknown) => void;
   packs: ConfigurationPackSummary[];
   quarantined: ProfileLifecycleRecord[];
   busy: boolean;
@@ -93,6 +99,9 @@ export function Profiles({
   profiles,
   refreshProfiles,
   completeSetup,
+  reviewSources,
+  importSource,
+  expired,
   packs,
   quarantined,
   busy,
@@ -115,6 +124,7 @@ export function Profiles({
   const [form, setForm] = useState<Form>(emptyForm);
   const [result, setResult] = useState<ProfileAuthenticationResponse | null>(null);
   const [localMessage, setLocalMessage] = useState("");
+  const [historyOfferAlias, setHistoryOfferAlias] = useState("");
   const pollProfiles = useEffectEvent(async () => {
     const inventory = await refreshProfiles();
     if (!result?.terminal_command) return;
@@ -122,6 +132,7 @@ export function Profiles({
     if (item?.setup_operation === "ready" && item.status === "ready") {
       setResult(null);
       setLocalMessage(c.readyMessage);
+      setHistoryOfferAlias(item.alias);
       close();
       await completeSetup();
     } else if (item?.setup_operation === "failed") {
@@ -131,6 +142,7 @@ export function Profiles({
     }
   });
   const setupProfile = profiles.find((item) => item.alias === result?.profile.alias);
+  const historyOfferProfile = profiles.find((item) => item.alias === historyOfferAlias);
   const current =
     profiles.find((item) => item.alias === selectedAlias) ??
     profiles.find((item) => item.selected) ??
@@ -263,6 +275,10 @@ export function Profiles({
       );
       if (closeAfterPrepare || response.outcome === "ready" || response.outcome === "pending")
         close();
+      if (response.outcome === "ready" && action !== "reauthenticate") {
+        setHistoryOfferAlias(response.profile.alias);
+        await completeSetup();
+      }
     } catch (error) {
       setLocalMessage(profileFailure(error));
     }
@@ -604,6 +620,33 @@ export function Profiles({
       <p role="status" className="mb-4 min-h-[1.5em] max-w-[75ch] text-muted">
         {localMessage || message}
       </p>
+      {historyOfferProfile && (
+        <section className="mb-7 border-y border-rule py-5" aria-label={c.historyOfferTitle}>
+          <h2 className="mb-3 text-[1.4rem] font-bold">{c.historyOfferTitle}</h2>
+          <p className="mb-4 max-w-[75ch] text-muted">{c.historyOfferDetail}</p>
+          <HistorySourceReview
+            automaticReview
+            reviewSources={reviewSources}
+            importSource={importSource}
+            expired={expired}
+            onImported={() =>
+              void completeSetup().catch(() => setLocalMessage(c.historyRefreshFailed))
+            }
+          />
+          <div className="flex flex-wrap gap-3">
+            <button
+              className={primaryClass}
+              disabled={busy || !launchable(historyOfferProfile)}
+              onClick={() => launch(historyOfferProfile)}
+            >
+              {c.continueLaunch}
+            </button>
+            <button className={buttonClass} onClick={() => setHistoryOfferAlias("")}>
+              {c.notNow}
+            </button>
+          </div>
+        </section>
+      )}
       <button className={primaryClass} disabled={busy} onClick={() => open("setup")}>
         {c.add}
       </button>
