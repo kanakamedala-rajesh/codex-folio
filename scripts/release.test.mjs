@@ -94,6 +94,13 @@ test("development dry run creates all deterministic tier-one archives and metada
       ]) {
         assert.equal(entries.includes(member), true, `${member} missing from ${archive.archive}`);
       }
+      if (archive.target === "linux-amd64") {
+        assert.equal(entries.includes(`${stem}/codex-folio-wsl-vault.exe`), true);
+        assert.match(
+          readArchiveMember(archivePath, archive.format, `${stem}/install.sh`),
+          /codex-folio-wsl-vault\.exe/,
+        );
+      }
 
       const buildInfo = readArchiveMember(archivePath, archive.format, `${stem}/BUILD-INFO.json`);
       const parsedBuildInfo = JSON.parse(buildInfo);

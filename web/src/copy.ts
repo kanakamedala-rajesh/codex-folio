@@ -53,6 +53,18 @@ export const copy = {
   relaunchCommand: "codex-folio service start",
   authorizationDetail:
     "Existing foreground Codex work is unchanged. Persistent service installation is not required.",
+  browserTrustTitle: "Trusted browser",
+  browserTrustPrompt:
+    "Trust this browser to reopen the dashboard using the local address printed by ordinary startup after ordinary restarts. Only choose this on a browser you control.",
+  browserTrustGrant: "Trust this browser",
+  browserTrustActive:
+    "This browser can renew its dashboard session after ordinary service and browser restarts.",
+  browserTrustInactive:
+    "This browser needs a fresh one-time terminal link after this session ends.",
+  browserTrustForget: "Forget this browser",
+  browserTrustRevokeAll: "Revoke all browsers",
+  browserTrustGranted: "This browser is trusted. You can revoke it in Settings.",
+  browserTrustFailed: "Browser trust could not be changed. Try again.",
   primary: "Primary window",
   secondary: "Secondary window",
   remaining: "remaining",
@@ -101,9 +113,19 @@ export const copy = {
   enrollmentGuidance: "Review or change enrollment in your local terminal:",
   collectionSchedule: "Periodic collection schedule",
   collectionScheduleEnabled:
-    "Enabled by explicit native service enrollment for this service session.",
+    "Periodic collection is enabled while the companion runs. OS-login enrollment remains separate.",
   collectionScheduleDisabled:
-    "On demand · Saved intervals do not enroll or start a persistent service.",
+    "Periodic collection is declined. Launches and on-demand refresh remain available.",
+  collectionConsentUndecided:
+    "Periodic collection has not been chosen. On-demand use remains available.",
+  collectionConsentScope:
+    "Optional periodic reads use supported usage metadata and store bounded local snapshots. Conversation text and credentials are excluded. This choice does not enroll OS login.",
+  collectionConsentEnable: "Enable periodic collection",
+  collectionConsentDecline: "Decline periodic collection",
+  collectionConsentSaving: "Saving background collection choice.",
+  collectionConsentAccepted: "Periodic collection enabled.",
+  collectionConsentDeclined: "Periodic collection declined; on-demand refresh remains available.",
+  collectionConsentFailed: "Background collection choice was not changed.",
   collectionScheduleFloor: (minutes: number) =>
     `Provider-safe minimum · ${number.format(minutes)} minutes · Supported App Server read with no published polling cadence`,
   collectionActiveMinutes: "Managed Launch interval · minutes",
@@ -248,6 +270,7 @@ export const stateCopy: Record<string, string> = {
   available: "Available",
   unsupported: "Unsupported",
   temporarily_unavailable: "Temporarily unavailable",
+  no_activity: "No activity in this source",
   stale: "Stale",
   partial: "Partial",
   contradictory: "Contradictory",
@@ -260,6 +283,8 @@ export const stateCopy: Record<string, string> = {
   field_missing: "Field missing",
   capability_unsupported: "Unsupported capability",
   collection_failed: "Collection failed",
+  history_attribution_unknown: "History needs profile assignment",
+  historical_measurement_absent: "Historical measurement absent",
   local_metadata: "Local metadata",
 };
 export const provenanceCopy: Record<string, string> = {
@@ -436,6 +461,17 @@ export const analyticsCopy = {
   tokensTitle: "Token observations",
   tokensSubtitle:
     "Observed-session token metadata only. Values keep their record, project, source and provenance.",
+  overallHistory: "Overall history (includes Unassigned History)",
+  historicalSummary: "Historical token coverage",
+  historicalSummaryDetail:
+    "Retained observed sessions within the selected History range. Supported local session metadata only; this does not reconstruct past provider quota or credit snapshots. Managed Launches never add duplicate token measures.",
+  historicalCoverage: (measured: number, total: number) =>
+    `${measured} of ${total} observed sessions have a supported token value`,
+  unassignedContribution: "Unassigned History contribution",
+  historicalPeriod: "Covered session times",
+  noHistoricalSummary:
+    "Historical token values are absent or unsupported; this does not mean zero activity.",
+  historicalSource: "Local session metadata",
   projectsTitle: "Projects",
   projectsSubtitle:
     "App-local Project Aliases and basenames. Canonical repository paths stay private.",
@@ -445,7 +481,8 @@ export const analyticsCopy = {
   activityTitle: "Activity",
   activitySubtitle:
     "Managed Launches and Observed Sessions remain distinct. Correlation never implies causation.",
-  noTokens: "Token metrics are unsupported for the records matching these filters.",
+  noTokens:
+    "No supported token values are available for these records. Missing history does not mean zero usage.",
   noProjects: "No Project Identity matches these filters.",
   noModels: "Model metadata is unsupported for the records matching these filters.",
   noActivity: "No Managed Launch or Observed Session matches these filters.",
@@ -460,6 +497,7 @@ export const analyticsCopy = {
   chartTableNote: "Bars summarize the same rows as the following accessible table.",
   record: "Record",
   tokens: "Tokens",
+  historicalFreshness: "Historical source observation",
   model: "Model",
   records: "Records",
   lastObserved: "Last observed",
@@ -590,8 +628,8 @@ export const analyticsDataCopy = {
   includePaths: "Include canonical project paths explicitly",
   pathBoundary:
     "Default: Project Aliases and basenames only. Identity Home paths, credentials, raw provider payloads, conversation or tool content, commands, diffs, diagnostics, and vault material are never analytics export fields.",
-  exportScope: (from: string) =>
-    `The current Analytics profile, project, and retained range are used. Start: ${from}. End: all retained history.`,
+  exportScope: (from: string, overall = false) =>
+    `${overall ? "Overall history includes Unassigned sessions." : "The current Analytics profile is used."} The current project and retained range are used. Start: ${from}. End: all retained history.`,
   exportLoading: "Preparing an exact normalized export preview.",
   exportReady: "Export preview ready. Download uses these exact retained records.",
   exportFailed: "Export preview failed. No download was created.",
@@ -757,11 +795,21 @@ export const profileCopy = {
   optionalPack: "Optional · Set in Profiles",
   setupSaved: "Setup is saved. Resume here after signing in.",
   reauthSaved: "The established Identity Home stays unchanged.",
-  terminalRequired: "Continue device-code authentication in your terminal:",
-  checkTerminal: "I finished in the terminal — check again",
+  terminalRequired: "Run this command in your terminal. This page will update when Codex finishes:",
+  terminalWaiting: "Waiting for terminal setup to start…",
+  terminalRunning: "Codex setup is running in the terminal…",
+  copyCommand: "Copy command",
+  copyFailed: "Could not copy automatically. Select and copy the command above.",
   back: "Back to Profiles",
   updated: "Identity Profile metadata updated.",
   readyMessage: "Identity Profile is ready.",
+  historyOfferTitle: "Import existing history?",
+  historyOfferDetail:
+    "Your profile is ready. Review discovered Codex homes and choose each source you want to import. You can continue to launch without importing history.",
+  historyRefreshFailed:
+    "History imported, but dashboard data could not refresh. Open Sessions to try again.",
+  continueLaunch: "Continue to launch",
+  notNow: "Not now",
   pendingMessage: "Pending Profile saved for resume.",
   failed: "Profile action failed.",
   invalid: "Check the profile details and try again.",
@@ -894,8 +942,59 @@ export const launchCopy = {
 
 export const sessionsCopy = {
   locallyDerived: "Locally derived",
+  historicalMetrics: "Historical metrics",
+  noHistoricalMetrics:
+    "No supported historical token value is available for this session. Missing history does not mean zero usage.",
+  historicalFreshness: "Historical source observation",
   title: "Sessions",
-  subtitle: "Managed Launches and Observed Sessions retain separate boundaries.",
+  subtitle:
+    "Overall history includes Unassigned History. Managed Launches and Observed Sessions retain separate boundaries.",
+  unassigned: "Unassigned History",
+  assignment: "Correct ownership",
+  assignmentDetail:
+    "This changes the profile used for history totals. Original source and ownership attribution remain recorded separately.",
+  bulkAssignment: "Assign selected sessions",
+  bulkDetail:
+    "Select observed sessions on this page, then assign them to a profile or return them to Unassigned History. Up to 100 sessions at once.",
+  assignmentTarget: "Assign to",
+  selectForAssignment: "Select for assignment",
+  saveAssignment: "Save assignment",
+  saveSelected: "Save {count} selected assignments",
+  assignmentSaved: "Ownership updated for {count} sessions. History is reloading.",
+  assignmentFailed: "Ownership could not be updated. No partial change was saved.",
+  sourceReviewTitle: "Review local history sources",
+  sourceReviewDetail:
+    "Review supported local sources before choosing an import. Registration and background collection do not grant import consent. Import reads source metadata without changing source files; unknown ownership stays Unassigned History.",
+  reviewSources: "Review sources",
+  reviewingSources: "Reviewing sources…",
+  sourceReviewFailed: "Sources could not be reviewed. Check service availability and try again.",
+  noSources:
+    "No local history sources were found. Register or locate a supported Codex home, then review again.",
+  sourceCount: "{count} candidate sessions",
+  sourceState: {
+    supported: "Supported",
+    missing: "Missing",
+    unavailable: "Unavailable",
+    unsupported: "Unsupported",
+    schema_invalid: "Unsupported schema",
+  },
+  sourceAction: {
+    missing:
+      "This source is unavailable. Check that its Codex home still exists, then review again.",
+    unavailable:
+      "This source could not be read. Check access to its Codex home, then review again.",
+    unsupported:
+      "This source format is unsupported. Update CodexFolio or choose a supported local source.",
+    schema_invalid:
+      "This source has an unsupported schema. Update CodexFolio or choose a supported local source.",
+  },
+  unsupportedSource: "This source cannot be imported. Choose a supported local source.",
+  importConsent: "I choose to import this source's supported session metadata.",
+  importSource: "Import source",
+  importing: "Importing source…",
+  importResult:
+    "Import complete. {count} new sessions were added; {existing} existing sessions were skipped. The timeline is reloading.",
+  importFailed: "Import failed. No success is assumed. Review the source and try again.",
   metadata: "Metadata only. No prompts, responses, commands or diffs.",
   filterNote: "Timeline filters do not change Selected Profile or a running Launch Profile.",
   profile: "Profile",
@@ -940,6 +1039,15 @@ export const sessionsCopy = {
   source: "Source",
   version: "Source version",
   provenance: "Provenance",
+  attribution: "Ownership attribution",
+  originalProfile: "Original profile link",
+  originalAttribution: "Original attribution",
+  attributionState: {
+    managed_launch: "Explicit Managed Launch session match",
+    legacy_profile_observation: "Existing profile link; ownership evidence unchanged",
+    unassigned: "Unknown ownership",
+    user_assigned: "User assigned; original attribution retained",
+  },
   correlation: "Correlation",
   confidence: "Correlation confidence",
   evidenceType: "Correlation evidence",

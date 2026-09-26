@@ -88,6 +88,12 @@ func TestResolvePathsUsesPlatformAppLocalDefaults(t *testing.T) {
 			if paths.VaultFile != filepath.Join(paths.Root, "codex-folio.vault") {
 				t.Fatalf("VaultFile = %q, want codex-folio.vault below state root", paths.VaultFile)
 			}
+			if paths.WSLVaultFile != filepath.Join(paths.Root, "codex-folio-wsl-dpapi.vault") {
+				t.Fatalf("WSLVaultFile = %q, want distinct WSL DPAPI vault below state root", paths.WSLVaultFile)
+			}
+			if paths.SecureStorageFile != filepath.Join(paths.Root, "secure-storage.json") {
+				t.Fatalf("SecureStorageFile = %q, want secure-storage.json below state root", paths.SecureStorageFile)
+			}
 			if paths.ManagedHomes != filepath.Join(paths.Root, managedHomesName) {
 				t.Fatalf("ManagedHomes = %q, want managed-homes below state root", paths.ManagedHomes)
 			}

@@ -28,7 +28,7 @@ func (service *activityCommandService) Refresh(ctx context.Context, alias string
 	if err == nil {
 		_, err = service.store.RetainAnalytics(ctx)
 		if err == nil {
-			records, err = service.workflow.List(ctx, activity.Filters{ProfileAlias: alias})
+			records, err = service.workflow.List(ctx, activity.Filters{})
 		}
 	}
 	if errors.Is(err, activity.ErrActivityInvalid) {
@@ -42,4 +42,30 @@ func (service *activityCommandService) Refresh(ctx context.Context, alias string
 
 func (service *activityCommandService) List(ctx context.Context, filters activity.Filters) ([]activity.TimelineRecord, error) {
 	return service.workflow.List(ctx, filters)
+}
+
+func (service *activityCommandService) Assign(ctx context.Context, assignment activity.Assignment) error {
+	err := service.workflow.Assign(ctx, assignment)
+	if errors.Is(err, activity.ErrActivityInvalid) {
+		return apperrors.New(apperrors.ActivityRequestInvalid, err)
+	}
+	return err
+}
+
+func (service *activityCommandService) ReviewSources(ctx context.Context) ([]activity.SourceReview, error) {
+	return service.workflow.ReviewSources(ctx)
+}
+
+func (service *activityCommandService) ImportSource(ctx context.Context, sourceID string, consent bool) (activity.ImportResult, error) {
+	result, err := service.workflow.ImportSource(ctx, sourceID, codexadapter.LocalActivitySourceVersion, consent)
+	if err == nil {
+		_, err = service.store.RetainAnalytics(ctx)
+	}
+	if errors.Is(err, activity.ErrActivityInvalid) {
+		return activity.ImportResult{}, apperrors.New(apperrors.ActivityRequestInvalid, err)
+	}
+	if errors.Is(err, activity.ErrActivityUnavailable) || errors.Is(err, activity.ErrActivityUnsupportedSource) || errors.Is(err, activity.ErrActivityInvalidSchema) {
+		return activity.ImportResult{}, apperrors.New(apperrors.ActivitySourceUnavailable, err)
+	}
+	return result, err
 }

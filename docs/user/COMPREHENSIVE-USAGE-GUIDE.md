@@ -86,8 +86,8 @@ sessions. Registering a repository adds a Project Identity, not a session.
 Usage refresh and activity refresh collect different evidence.
 
 A fresh root does not reset remote quotas, change the account's plan or workspace,
-copy default-home history, or enroll a native service. Foreground startup has no
-periodic scheduler; refresh manually unless you explicitly test enrollment.
+copy default-home history, or enroll a native service. Periodic collection stays
+off until the separate setup prompt or Dashboard Settings records acceptance.
 
 ## Build and identify the binary
 
@@ -124,13 +124,14 @@ or acquire the state owner directly when it is stopped. A different active root
 is an ownership conflict, not a way to start a parallel isolated service. Do not
 copy an active database, delete lock files, or edit runtime files.
 
-Before switching roots, exit active foreground Codex sessions and stop an
-on-demand owner with Ctrl-C in its service terminal. If the old owner is enrolled,
-run `service uninstall --state-root /absolute/path/to/old-state` to remove that
-enrollment, then inspect status and ensure its owner has stopped before starting
-the new root. Uninstall is not a reset and retains data. If a foreground owner is
-still running, stop it in its original terminal. Do not issue a blanket kill of
-Codex processes.
+Before switching roots, exit active foreground Codex sessions and run
+`service stop --state-root /absolute/path/to/old-state` for the old owner. If a
+Managed Launch is still active, accept deferred stop or finish that session
+first. Check `service status --json` for the old root before starting the new
+one. Stopping retains OS-login enrollment; use `service uninstall` separately
+only if you intend to remove or move that enrollment. A manually invoked
+foreground `service start` can also be stopped with Ctrl-C in its service
+terminal. Do not issue a blanket kill of Codex processes.
 
 Inspect or start the foreground owner:
 
@@ -166,13 +167,29 @@ Repeated install/uninstall is safe and reports whether enrollment changed. When
 the native mechanism is unavailable, status says so and on-demand `service
 start` remains available.
 
+`service stop` requests orderly companion shutdown through the authenticated
+local command channel. An idle owner exits immediately. With pending or running
+Managed Launches, the command offers to wait until they finish; declining leaves
+the owner running. `service stop --wait` accepts deferred shutdown without a
+prompt; `service stop --cancel` clears that request. A newly accepted Managed
+Launch also cancels a pending stop. `--json` reports `state` and
+`active_launches` without prompting. Pending leases and uncertain state do not
+prove that shutdown is safe. Codex processes and recorded foreground exit facts
+are untouched. An intentional stop keeps OS-login enrollment for the next
+intended login or start; `service uninstall` is the separate removal action.
+
 ### Periodic usage collection
 
-Periodic collection runs only inside a service session started by an explicit
-native enrollment. Merely opening the dashboard, running a CLI command, or
-starting the foreground service does not enroll or enable the scheduler.
-Passphrase-backed sessions do not start it until the vault is successfully
-unlocked, and stop it again when the service session closes.
+Plain interactive startup offers background collection once while the choice is
+unanswered. The prompt explains that supported usage metadata is read and
+bounded local snapshots are stored; conversation text and credentials are not
+collected. Yes enables periodic collection while the companion is running. No
+remembers refusal and retains foreground launch and on-demand refresh. A
+non-interactive startup makes no choice. Dashboard Settings can later enable or
+decline collection. Automatic companion startup, profile creation, browser
+trust, PATH setup and OS-login enrollment do not grant this consent. Passphrase
+services do not collect while locked; the scheduler becomes available only after
+CLI unlock and stops when that service session closes.
 
 The defaults are five minutes while a Managed Launch is running and 30 minutes
 while idle. Read or update the persisted values through **Settings → Periodic
@@ -202,25 +219,44 @@ replay every missed interval.
 
 The scheduler reuses the existing collector, SQLite writer, retention workflow,
 owner lock, and native launch identity. It does not create a second daemon or
-writer. An idle enrolled service wakes at one-minute resolution, performs no
+writer. An idle companion wakes at one-minute resolution, performs no
 provider call before a profile is due, and writes schedule state only when the
-next attempt changes or a collection completes. The repository verification
+next attempt changes or a collection completes. Without accepted consent, each
+tick stops before reading profile targets or contacting a provider. The repository verification
 suite exercises active, idle, reset, retry, restart, coalescing, lock, API, CLI,
 and browser persistence paths; native runtime resource qualification remains
 part of the platform evidence recorded for release qualification.
 
-Supported vault modes are platform Secret Service and passphrase mode:
+Supported Linux vault modes are Secret Service, the Windows-backed WSL2 bridge,
+and passphrase mode:
 
 ```sh
 ./build/bin/codex-folio service start --vault-mode secret-service
+./build/bin/codex-folio service start --vault-mode wsl-dpapi
 ./build/bin/codex-folio service start --vault-mode passphrase
 ```
 
-Bare commands on Linux select Secret Service. WSL and headless Linux users must
-explicitly select `--vault-mode passphrase`; the application deliberately does
-not infer it after `CF_VAULT_UNAVAILABLE`. The passphrase vault starts locked
-again after a new service session. CodexFolio does not silently fall back to
-plaintext storage.
+Plain startup selects and initializes the supported protection for the current
+user: Windows DPAPI, macOS Keychain, Linux Secret Service, or Windows-user
+DPAPI through the bundled WSL2 helper. A small versioned
+configuration record remembers only the selected mechanism, never key material.
+Qualified repeat starts therefore reach selection without an application
+passphrase. If Linux Secret Service is locked or unavailable, plain startup
+offers an inline choice to retry, select the explicit passphrase alternative,
+or cancel without changing state. The passphrase vault starts locked again
+after every new service session. CodexFolio never silently falls back to
+plaintext storage or an app-local unprotected key.
+
+On fresh WSL2 state, plain startup selects `wsl-dpapi`. Build and Linux release
+artifacts place the size-bounded one-shot `codex-folio-wsl-vault.exe` helper
+beside the Linux executable, so users do not assemble a helper command or rely
+on `/mnt/c` or the default Windows PATH. Custom layouts may set
+`CODEX_FOLIO_WSL_VAULT_HELPER` to an absolute Linux path; that value identifies
+the executable and carries no secret. Requests and responses use bounded binary
+stdin/stdout, and the helper receives no secret argument or secret environment
+variable. The app-local WSL vault file contains only DPAPI-protected envelope-key
+material. Protection belongs to the interoperating Windows user and is not a
+separate Linux-user isolation boundary.
 
 Passphrase-backed `service start` acquires the single state owner and publishes
 the dashboard without opening the vault or database. Unlock the running service
@@ -240,9 +276,64 @@ passphrase mode to locked state. Never put a passphrase in shell history, source
 control, an issue, or a shared log.
 
 Keep the unlocked passphrase-backed service running while testing. Other
-commands then route through that state owner. If no service is running, append
-`--vault-mode passphrase` to each vault-dependent command and enter the same
-passphrase through that command's existing input path.
+commands then route through that state owner. Plain startup is the everyday
+exception to separate service, unlock, selection and launch commands:
+`codex-folio --vault-mode passphrase` starts or reuses the full on-demand owner,
+reads one explicit passphrase when it is locked, and supplies that value only
+through the authenticated `UnlockVault` command. It never places the passphrase
+in arguments, environment variables or persistent plaintext.
+
+The owner remains available after the foreground Codex child exits. Plain
+startup does not enroll it at OS login or grant periodic collection consent;
+the interactive setup prompt offers that independent choice. It prints the current non-secret loopback
+dashboard address and a repeatable `service start` command that obtains fresh
+browser authorization without automatically opening a browser.
+
+### Migrate an existing passphrase installation
+
+On Linux or WSL, stop the current passphrase service owner and run the plain
+command without an explicit vault mode:
+
+```sh
+./build/bin/codex-folio
+./build/bin/codex-folio --state-root /absolute/existing/state
+```
+
+When CodexFolio detects a non-empty SQLite database with the existing `CFPV`
+passphrase vault, choose **migrate now**. The next prompt reads the old
+passphrase once from private terminal input; it is not accepted in arguments or
+environment variables and is not persisted. The detached service retains the
+sole state-owner lock throughout the transition. It verifies the source state,
+creates a validated migration backup, isolates passphrase-generation recovery
+candidates in `passphrase-migration-recovery`, and re-protects every allowlisted
+encrypted SQLite field through Linux Secret Service or the Windows-backed WSL
+provider, reloads that destination, authenticates all retained protected rows,
+and only then commits the non-secret storage selection. The same invocation
+continues to the picker and foreground launch.
+
+The transition preserves Identity Profiles, Selected Profile, Identity Home
+references, project paths, checkpoints, usage/history scopes and other retained
+state. Identity Home directories and Codex-owned authentication files remain in
+place and are neither copied nor rewritten; changing CodexFolio key protection
+does not require provider login. The old passphrase vault remains protected
+recovery material but is no longer selected after success. This workflow does
+not export credentials or create a portable backup.
+
+The isolated archive is retained for journal-driven migration rollback; normal
+recovery listing and restore exclude it after a successful transition. New
+native-generation backups use the ordinary `recovery` directory.
+
+Choose **continue with passphrase storage** to start the ordinary locked
+passphrase owner without migrating, or **cancel** to leave state unchanged. If
+the old passphrase is wrong or destination protection is unavailable, the
+database stays on the old generation. The migration journal distinguishes an
+uncommitted transition from a database that already reached the destination:
+after interruption, the next plain start either verifies and completes the
+destination or restores the validated passphrase backup before retrying. A
+destination reopen failure also restores that backup. Never delete or edit
+`secure-storage-migration.json`, `codex-folio.vault`, the SQLite database, or
+the `recovery` or `passphrase-migration-recovery` directories to force progress. If a failed attempt left the locked
+detached owner running, stop that owner normally before rerunning migration.
 
 Recovery commands are intentionally separate from normal startup:
 
@@ -293,6 +384,20 @@ Setup stages are persisted. If discovery, home preparation, authentication, or
 validation is interrupted, the profile stays Pending and is neither selectable
 nor launchable. Run the same add flow or open the Pending entry in Profiles to
 resume and revalidate it.
+
+In the dashboard, **Continue in Codex** prepares the profile and immediately
+shows a command for the chosen browser or device-code method. Copy and run it
+in a terminal; Codex owns the login stream. The dashboard observes the terminal
+operation through the local service and refreshes the inventory when the
+profile becomes Ready. It shows safe waiting, running, or failure status without
+the login output. The command keeps this installation's state-root context.
+An interrupted or failed command leaves the profile Pending; reopen it to
+resume with the same alias and home. Checking status does not start login again.
+Once Ready, onboarding offers the existing source review and a separate consent
+choice for each supported history source. Declining, an absent source, or an
+import failure leaves the authenticated profile Ready; continue to ordinary
+launch and retry source review later in Sessions. Successful import refreshes
+history views, with uncertain ownership shown as Unassigned History.
 
 ### Register a Referenced Identity Home
 
@@ -393,21 +498,72 @@ Start the service and copy its printed URL into a local browser:
 ./build/bin/codex-folio service start
 ```
 
-The service binds loopback only. The URL contains a single-use bootstrap token
+The service binds loopback only and serves the dashboard over HTTPS. The URL contains a single-use bootstrap token
 that is exchanged for a short-lived browser session and then removed from the
 address bar. Browser mutations require the authenticated session, same-origin
 Host/Origin checks, and CSRF protection. Production assets are embedded and do
 not load scripts, styles, or fonts from a CDN.
 
-While a passphrase service is locked, the authenticated dashboard exposes only
-browser-safe service, vault, and database state plus fixed CLI guidance. It does
-not receive paths, vault metadata, recovery contents, provider errors, or the
-command credential, and it does not invoke state-owning workflows. If database
-open or migration requires recovery, stop the foreground owner and run the
-displayed existing `service recovery` commands before starting again.
+### Trust the local HTTPS certificate once
 
-Do not publish, message, log, or bookmark bootstrap URLs. If authorization is
-expired or already used, run `service start` again to receive a new link.
+After the service is ready and the vault is unlocked, run `codex-folio service
+certificate` (add `--state-root PATH` if you use one). It prints the path to
+`dashboard-root-ca.pem` and its SHA-256 fingerprint. The file contains only a
+public, installation-specific root certificate; the HTTPS server key remains
+encrypted in the vault, and the root signing key is discarded after setup.
+Check the fingerprint shown by the command before importing that certificate
+into the browser or operating-system trust store used for the dashboard. The
+browser will otherwise block the HTTPS page. Do not use a browser's unsafe
+certificate-warning bypass: that would also allow a different local service
+to impersonate the dashboard while CodexFolio is stopped.
+
+- **Windows:** Import the printed certificate into the current user's Trusted
+  Root Certification Authorities store using Windows certificate management.
+  On WSL2, import it in Windows, where the browser runs; the PEM file is under
+  the WSL distribution's state root and may be copied to a temporary Windows
+  location for import. [Microsoft documents the trusted-root store](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-root-certification-authorities-certificate-store).
+- **macOS:** Add the certificate to Keychain Access and explicitly enable trust
+  for website TLS. [Apple documents certificate import](https://support.apple.com/en-nz/guide/keychain-access/kyca2431/mac)
+  and [trust settings](https://support.apple.com/en-ie/guide/keychain-access/kychn001/mac).
+- **Linux:** Import the certificate into the chosen browser's trusted
+  authorities. System trust stores and sandboxed browsers can differ; confirm
+  the browser accepts the certificate without a warning. [Ubuntu documents
+  system trust-store behavior and its browser limitation](https://ubuntu.com/server/docs/how-to/security/install-a-root-ca-certificate-in-the-trust-store/).
+  Firefox also [documents its own CA import options](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+
+The certificate is specific to this installation. A state reset or certificate
+replacement requires importing the new root; remove the old root from the
+browser or OS trust store. `service certificate --json` provides the same
+public path and fingerprint for scripts. CodexFolio never changes browser or
+system certificate trust automatically. For passphrase installations, the CLI
+unlocks the vault before a browser can use the stable HTTPS dashboard. While
+locked, the service uses a temporary certificate only for its pinned CLI
+unlock connection; the browser must wait for the unlocked address.
+
+After opening the one-time link, choose **Trust this browser** only on a browser
+you control. This explicit choice allows the current local dashboard address
+printed by ordinary startup to reopen without another bootstrap link. Trusted
+browsers renew short-lived sessions automatically, including after ordinary
+service, browser, or machine restarts. A new browser or private window still
+needs a fresh one-time link. Trust stays local and does not expose vault or
+command credentials to the browser.
+
+In **Settings → Trusted browser**, choose **Forget this browser** to remove
+this browser's trust, or **Revoke all browsers** to invalidate every trusted
+browser. Either action ends the current dashboard session; use `service start`
+for a new one-time link. Clearing browser state also prevents renewal from that
+browser. An installation authorization reset invalidates existing trust. These
+controls do not change a running foreground Codex session.
+
+While a passphrase service is locked, only the pinned CLI transport is
+available for status and unlock; the browser dashboard opens after successful
+CLI unlock. If database open or migration requires recovery, stop the
+foreground owner and run the existing `service recovery` commands before
+starting again.
+
+Do not publish, message, log, or bookmark bootstrap URLs. After each service restart, use the current non-secret address printed by
+ordinary startup for a browser you explicitly trusted. If authorization is expired or already used, run `service start` again
+to receive a new link.
 
 Implemented dashboard flows include:
 
@@ -498,6 +654,39 @@ instants in your OS display zone; custom from/through dates are inclusive.
 All dates are shown by default. Longer results have keyboard-accessible pages.
 Filters survive details and navigation within the authorized page.
 
+Choose **Review sources** to inspect detected local history sources. The review
+shows each source's support state and candidate session count. A supported
+source requires a separate consent checkbox before **Import source** becomes
+available. Leaving consent unchecked or leaving the page imports nothing;
+profile registration and background collection consent do not authorize this
+action. Import reads supported metadata without changing source files. The
+result reports newly added sessions; repeating an import skips previously
+retained source sessions. Missing sources can be reviewed again after their
+Codex home is restored. Unsupported formats or schemas require a compatible
+CodexFolio reader or another supported source; they are not silently imported.
+
+Unknown historical ownership is labeled **Unassigned History** throughout the
+overall timeline, details and profile filter. This filter is only a history
+view; Unassigned History is not a selectable Identity Profile and does not
+contribute to any individual-profile total or the profile-based Combined
+Identity View. An imported session is not attributed to the current sign-in
+solely because its source came from that Identity Home. Managed Launch and
+Observed Session records remain distinct. Observed details show whether
+ownership came from an explicit Managed Launch session match, a preexisting
+profile link, or remains unknown.
+
+To correct history, open an Observed Session and use **Correct ownership** for
+one session. For a bulk correction, select observed sessions on the current
+timeline page, choose a ready profile or **Unassigned History** under **Assign
+selected sessions**, then save. Each request accepts at most 100 sessions;
+invalid IDs or a profile that is not ready reject the whole request. Assignment
+changes the profile used by history filters, analytics activity and token totals,
+and normalized activity export. It does not edit Codex source files or the
+original profile link, its attribution, or correlation. Details label the effective
+ownership **User assigned** separately from source evidence. A correction or
+return to Unassigned survives repeated import. Combined Identity View remains
+the aggregate of profiles only.
+
 **Reload timeline** reads retained service metadata; it does not run collection.
 Use the existing `activity refresh PROFILE` CLI workflow to collect supported
 local metadata. A failed reload keeps the previous records and their original
@@ -511,6 +700,13 @@ an Observed Session owns its source start/last-observed timestamps, model and
 token count when available. Last observed is neither a process exit nor a live
 heartbeat. Tokens are locally derived metadata; absent model/tokens remain
 unavailable, while a recorded zero remains zero.
+Supported imported `state_5` thread metadata provides a token count when the
+source records one. Session details identify the source, version, historical
+freshness and recorded coverage interval. The interval bounds the retained
+thread record; it is not measured active time. Missing, unsupported,
+schema-incompatible or unreadable sources produce no invented token values.
+Importing a session cannot reconstruct earlier provider quota or credit
+snapshots, and unsupported or unknown source fields are discarded.
 
 Only existing explicit source-session evidence establishes related records.
 Uncorrelated, ambiguous and contradictory states remain visible without an
@@ -519,7 +715,89 @@ commands, transcripts, prompts/responses, tool output, raw diffs or canonical
 project paths enter these views. **Back to Sessions** restores the originating
 row's focus and filters.
 
-## Foreground launch
+## Profile picker and foreground launch
+
+Run the plain command from the working directory where Codex should start:
+
+```sh
+./build/bin/codex-folio
+./build/bin/codex-folio --state-root /absolute/path --vault-mode passphrase
+```
+
+On an interactive direct-binary start, CodexFolio offers optional command
+availability setup when its directory is absent from `PATH`. Answer `y` to add
+that directory to the current user's bash `.bashrc` and active login file
+(`.bash_profile`, `.bash_login`, or `.profile`), zsh `.zshrc`, or Windows user
+`Path`; the prompt names the directory before changing anything. A new
+terminal is required for the plain `codex-folio` command. Refusal leaves the
+environment unchanged and the direct binary remains usable. Repeating setup
+does not add a duplicate. If the shell is unsupported, the file cannot safely
+be changed, or another `codex-folio` command is already on `PATH`, follow the
+printed manual guidance and resolve the existing command deliberately. On
+Windows, sign out and back in if a new terminal still inherits an old `Path`.
+This setup does not install OS-login enrollment or enable collection.
+
+The picker lists only eligible Identity Profiles and marks Selected Profile
+with `*`. Press Enter to launch that highlighted profile, enter a displayed
+number to make an explicit selection and launch it, or enter `q` to cancel. If
+there is no eligible Selected Profile, Enter fails rather than substituting a
+different identity; choose an eligible number deliberately or complete profile
+setup. Selection affects future launches only and never changes a running
+Launch Profile.
+
+Before presenting the picker, plain startup starts or reuses the existing full
+service composition. Concurrent invocations converge through the same owner
+lock and descriptor protocol rather than opening competing SQLite writers. The
+picker and foreground child share one buffered terminal input stream, so
+input after the selection line remains available to Codex. Standard output,
+standard error, native signal forwarding, working directory and child exit
+status retain the explicit launch behavior. A passphrase invocation prompts
+once when the owner is locked, and the companion remains available after child
+exit. Dashboard authorization or analytics refresh failures may emit a concise
+warning without blocking an otherwise safe launch; identity selection,
+configuration, vault readiness and sole state ownership still fail closed.
+
+When no profile is ready, the same plain command offers `r` to register an
+existing Codex home as Referenced, `m` to create a separate Managed home, or a
+number to resume a Pending profile or reauthenticate an unavailable profile.
+It asks for an alias and display name, then invokes the installed Codex login
+flow and validates readiness through the persistent service. Automatic setup
+checks an existing referenced home's valid sign-in before opening another
+login; `b` and `d` explicitly request Codex browser or device login. The
+referenced choice explains that direct Codex and CodexFolio share the home and
+that removal only deregisters it. The existing path can be entered explicitly;
+Enter uses the current `CODEX_HOME` or the default `~/.codex` when that directory
+exists. The managed choice creates a separate home and never copies credentials.
+Cancellation or failed authentication leaves the profile Pending; rerun the
+plain command and choose its Resume entry. Only a validated Ready profile
+appears in the launch picker. After setup, the picker offers a foreground
+launch. Before the picker, the CLI lists discovered history sources and asks
+`[y/N]` for each supported source. Enter or `n` declines without importing;
+an approved import reports new and already present sessions. Absent or failed
+history import leaves a Ready profile launchable; retry in dashboard Sessions.
+Registration alone does not consent to history import. A new Managed home does
+not copy another home's history; a Referenced home uses the actual existing
+home. Repeated imports preserve existing sessions and ownership corrections.
+
+On the first native start the detached service is the only process allowed to
+open the vault, create protected key material, and open SQLite. A private
+one-shot startup handshake returns only a readiness marker or stable redacted
+error code to the foreground flow, so locked or unavailable Keychain, DPAPI, or
+Secret Service prerequisites can be explained inline without exposing secrets.
+The selection is remembered only after the service becomes ready. Refusing or
+cancelling setup leaves it unset and is recoverable by rerunning the command.
+If a non-empty database and an existing Linux passphrase vault predate this
+selection record, plain startup offers the guided migration above before native
+initialization. It does not create an empty replacement database or commit the
+destination choice before protected-state reopen succeeds.
+
+Ordinary startup never opens a browser or enrolls OS-login startup. It offers
+periodic collection consent explicitly when unanswered. Its printed dashboard address contains no
+bootstrap credential; run the printed `service start` reopening command when a
+fresh one-time browser authorization URL is required.
+
+For automation, an explicit alias, a Project ID, or Codex arguments, use the
+advanced launch form:
 
 ```sh
 ./build/bin/codex-folio launch work --
@@ -643,6 +921,15 @@ evidence. Models report only supported locally observed metadata—not provider
 capability or task suitability. Activity keeps Managed Launch and Observed
 Session rows separate and carries source, provenance, lifecycle, and correlation
 state. An absent dimension is shown as unsupported or unavailable, never zero.
+The **Overall history** token view includes Unassigned History and identifies
+its contribution separately. Profile-scoped totals exclude Unassigned History;
+Combined Identity View remains the aggregate of profiles, not a substitute for
+overall history. Token coverage counts distinguish measured zero from sessions
+without a supported value. Local historical tokens remain distinct from
+provider-reported capacity and from Managed Launch lifecycle counts.
+Refreshing provider usage does not assign source-home threads to the refreshed
+profile. A supported empty source is shown as **No activity**; a missing or
+unreadable source remains unavailable until the source can be read again.
 
 Projects uses the encrypted app-local identity mapping but sends only Project
 Aliases and basenames to the browser. Choose **Edit Project Alias** to change the
@@ -1026,11 +1313,11 @@ when the change was only a test. For Cancel, verify the prior value remains.
 | Overview | Select each scope; Refresh; Open details; move history selector; dismiss guidance; Open Alerts; inspect alternatives | Correct account/source/window/time, explicit missing data, corresponding history values; do not treat Unsupported as zero or a second limit |
 | Profiles | Add/resume; expand details; edit/save/reopen; edit/cancel; Select; reauthenticate intentionally | Ready/Pending states reflect setup, local metadata persists, cancellation preserves values, future selection is explicit |
 | Shared Configuration Packs | Create a small nonsecret draft; inspect exact documents/digests; approve; assign; preview projection; test conflict review | Approval/version/assignment are distinct; preview identifies changes and preserves local conflicts. Apply only to a disposable managed test profile |
-| Sessions | Reload; profile/project/date/type filters; empty result; next/previous pages; open both record types; return and inspect filter retention | Records match filters and inclusive display dates; Managed Launch and Observed Session remain distinct; detail is metadata-only |
+| Sessions | Review sources; inspect supported/missing/unsupported states; leave consent unchecked, then consent to import a supported source; repeat import; reload; Unassigned History/profile/project/date/type filters; empty result; pages; open both record types; return and inspect filter retention | Refusal imports nothing; result and timeline show imported metadata without duplicate source sessions; unknown ownership stays Unassigned and out of profile totals; records match filters and inclusive dates; record types stay distinct; detail is metadata-only |
 | Analytics | Open Capacity, Tokens, Projects, Models, Activity, Compare; change filters; compare each chart with its table | Correct scope and units, explicit missing metadata, no summed incompatible quotas; include a single-month chart check |
 | Analytics management | Project alias save/cancel; JSON/CSV export preview/cancel/download; retention save/reopen; purge preview/cancel | Alias persists only on save; actual file matches chosen format/fields; paths excluded unless requested; no deletion from preview/cancel |
 | Alerts | Active/History; keyboard tabs; thresholds invalid/valid/save/reopen; acknowledge an actual active alert | Invalid thresholds cannot save, history remains truthful, acknowledgement does not conceal a still-active condition. No active alert means acknowledgement is not yet tested |
-| Settings | Light/Dark/System and reload; collection intervals invalid/valid/save; notification privacy; diagnostics preview/cancel/download | Changes persist independently; invalid values are rejected; downloaded JSON is an actual file, not just success feedback |
+| Settings | Light/Dark/System and reload; accept/decline periodic collection by keyboard, save bounded intervals, notification privacy; diagnostics preview/cancel/download | Collection choice survives reload independently of OS-login enrollment; invalid values are rejected; downloaded JSON is an actual file, not just success feedback |
 | Settings data | Configuration export and import preview/cancel; checkpoint inventory/refresh, retention and export preview/cancel | Correct counts and exclusions; Cancel does not apply; each checkpoint identifies its state/revision. Import apply and plaintext export are separate choices |
 | Updates/telemetry | Manual update check; inspect separate automatic preference; expand telemetry prerequisites/schema | Manual check does not enable automatic checks; unconfigured production endpoints/telemetry remain explicitly unavailable |
 
@@ -1115,12 +1402,31 @@ Run `service status --json`. Check whether another owner is running, whether the
 state path is writable, and whether the selected vault mode is available. Do not
 delete lock or database files to force startup; use the reported recovery path.
 
-On WSL/headless Linux, `CF_VAULT_UNAVAILABLE` from a bare command normally means
-the default Linux Secret Service is absent. Start with
-`service start --vault-mode passphrase`, then keep that foreground owner running.
-This selects the encrypted passphrase vault rather than plaintext. In another
-local terminal, run `vault unlock`; a failed attempt leaves the same owner
-locked and ready for another attempt.
+On WSL2, `CF_VAULT_UNAVAILABLE` from a fresh bare command means Windows
+interoperability or `codex-folio-wsl-vault.exe` is missing or inaccessible.
+Restore the same Windows-user context, reinstall the helper beside
+`codex-folio`, or configure its absolute Linux path with
+`CODEX_FOLIO_WSL_VAULT_HELPER`, then retry. Plain startup offers retry,
+passphrase storage, or cancellation in that same flow. On non-WSL headless
+Linux, the corresponding error normally means Secret Service is unavailable.
+You may also pass
+`--vault-mode passphrase` explicitly. This selects the encrypted passphrase
+vault rather than plaintext and records that choice only after readiness. Plain
+startup performs the one private unlock in the same flow; explicit foreground
+service operation still uses `vault unlock` from another local terminal. A
+failed or cancelled setup can be retried safely. Missing or wrong-context
+protected material is never replaced and no plaintext downgrade occurs.
+
+`CF_VAULT_MIGRATION_REQUIRED` means existing passphrase-protected state needs
+the guided transition, a migration was cancelled, or recovery could not yet
+prove a safe old or completed state. Stop any running passphrase owner and rerun
+the plain command. Choose migration and provide the old passphrase privately,
+or choose continued passphrase operation. Do not delete the database, vault,
+migration journal or recovery candidates. Wrong passphrases and destination
+failures leave the old protected state usable; interruption is resolved from
+the journal and validated backup. If automatic restore itself fails, use the
+reported `service recovery verify`, `list`, and explicit `restore` workflow
+rather than resetting state.
 
 ### Native service enrollment is unavailable
 
@@ -1175,3 +1481,21 @@ Use [Support](../../SUPPORT.md) for ordinary problems and
 
 Start with a synthetic reproduction and the stable error code. Add sensitive
 detail only through an approved private support channel.
+
+
+### Exporting Overall history
+
+Select **Overall history** in Analytics, then **Preview analytics export** to
+export the Activity dataset including Unassigned sessions. Individual-profile
+and Combined Identity exports continue to exclude Unassigned history. The
+selected project and history range also apply to the export. CLI equivalent:
+
+```sh
+codex-folio analytics export --format json --datasets activity --scope overall_history --profile '*' --dry-run
+```
+
+Activity JSON and CSV preserve original/current attribution and normalized token
+units, availability, historical freshness, source version, and coverage. Source
+import requires explicit consent; `activity refresh PROFILE` updates previously
+imported or explicitly linked Managed Launch sessions without importing other
+historical sessions. Sessions outside retention are not counted as newly added.

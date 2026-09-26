@@ -1,6 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { UsageRefreshError, type ActivityRecord, type ActivityResponse } from "./generated/openapi";
+import {
+  UsageRefreshError,
+  type ActivityRecord,
+  type ActivityResponse,
+  type ActivitySourceImportResponse,
+  type ActivitySourcesResponse,
+  type ProfileSummary,
+} from "./generated/openapi";
 import { sessionsCopy as c, sessionStateCopy, provenanceCopy } from "./copy";
+import { HistorySourceReview } from "./HistorySourceReview";
 
 export type SessionFilters = {
   profile: string;
@@ -14,6 +22,10 @@ type Props = {
   filters: SessionFilters;
   setFilters: (value: SessionFilters) => void;
   read: () => Promise<ActivityResponse>;
+  reviewSources: () => Promise<ActivitySourcesResponse>;
+  importSource: (sourceId: string) => Promise<ActivitySourceImportResponse>;
+  assign: (sessionIds: string[], profileId: string) => Promise<unknown>;
+  profiles: ProfileSummary[];
   expired: (error: unknown) => void;
   heading: RefObject<HTMLHeadingElement | null>;
 };
@@ -30,6 +42,8 @@ const instant = (value: string) =>
   value && Number.isFinite(Date.parse(value)) ? date.format(new Date(value)) : c.unavailable;
 const key = (record: ActivityRecord) => `${record.record_type}:${record.id}`;
 const managed = (record: ActivityRecord) => record.record_type === "managed_launch";
+const ownership = (record: ActivityRecord) =>
+  record.profile_id ? record.profile_alias : c.unassigned;
 const projectName = (record: ActivityRecord) =>
   record.project_alias || record.project_basename || c.unavailable;
 const provenance = (record: ActivityRecord) =>
@@ -42,7 +56,7 @@ const hasRelationship = (record: ActivityRecord) =>
 function Facts({ record }: { record: ActivityRecord }) {
   const pairs = [
     [c.type, label(record.record_type)],
-    [managed(record) ? c.launchProfile : c.profile, record.profile_alias],
+    [managed(record) ? c.launchProfile : c.profile, ownership(record)],
     [c.project, projectName(record)],
     [c.basename, record.project_basename || c.unavailable],
     [managed(record) ? c.launchRecorded : c.observedStarted, instant(record.started_at)],
@@ -70,6 +84,7 @@ function Facts({ record }: { record: ActivityRecord }) {
 }
 
 function Evidence({ record }: { record: ActivityRecord }) {
+  const historical = record.historical_metrics ?? [];
   const pairs = [
     [
       c.availability,
@@ -81,20 +96,32 @@ function Evidence({ record }: { record: ActivityRecord }) {
     [c.source, label(record.source)],
     [c.version, record.source_version || c.unavailable],
     [c.provenance, provenance(record)],
-    [c.correlation, label(record.correlation_state)],
-    [c.confidence, label(record.correlation_confidence)],
-    [c.evidenceType, label(record.correlation_evidence_type)],
-    ...(!managed(record)
+    ...(!managed(record) && record.original_profile_id
+      ? [[c.originalProfile, record.original_profile_id]]
+      : []),
+    ...(!managed(record) && record.attribution_provenance === "user_assigned"
       ? [
-          [c.model, record.model || c.unavailable],
           [
-            c.tokens,
-            record.tokens_used === ""
-              ? c.unavailable
-              : `${number.format(BigInt(record.tokens_used))} · ${c.locallyDerived}`,
+            c.originalAttribution,
+            c.attributionState[
+              record.original_attribution_provenance as keyof typeof c.attributionState
+            ] ?? c.unavailable,
           ],
         ]
       : []),
+    ...(!managed(record)
+      ? [
+          [
+            c.attribution,
+            c.attributionState[record.attribution_provenance as keyof typeof c.attributionState] ??
+              c.unavailable,
+          ],
+        ]
+      : []),
+    [c.correlation, label(record.correlation_state)],
+    [c.confidence, label(record.correlation_confidence)],
+    [c.evidenceType, label(record.correlation_evidence_type)],
+    ...(!managed(record) ? [[c.model, record.model || c.unavailable]] : []),
     [c.id, record.id],
     ...(!managed(record) ? [[c.sourceId, record.source_session_id || c.unavailable]] : []),
   ];
@@ -108,12 +135,49 @@ function Evidence({ record }: { record: ActivityRecord }) {
           </div>
         ))}
       </dl>
+      {!managed(record) && (
+        <section aria-label={c.historicalMetrics} className="mt-5">
+          <h3 className="mb-2 font-semibold">{c.historicalMetrics}</h3>
+          {historical.length ? (
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              {historical.map((metric) => (
+                <div key={metric.metric_key} className="contents">
+                  <dt className="text-muted">
+                    {metric.metric_key === "codex.local.tokens_used" ? c.tokens : metric.metric_key}
+                  </dt>
+                  <dd className="mb-3 wrap-anywhere">
+                    {metric.value === undefined
+                      ? c.unavailable
+                      : `${number.format(BigInt(metric.value))} ${metric.unit}`}{" "}
+                    · {metric.availability} · {metric.source}
+                    {metric.source_version ? ` ${metric.source_version}` : ""} ·{" "}
+                    {provenance(record)}
+                    {` · ${c.historicalFreshness} · ${instant(metric.coverage_start_at)} – ${instant(metric.coverage_end_at)}`}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-muted">{c.noHistoricalMetrics}</p>
+          )}
+        </section>
+      )}
       {managed(record) && <p className="text-muted">{c.noMetrics}</p>}
     </>
   );
 }
 
-export function Sessions({ filters, setFilters, read, expired, heading }: Props) {
+export function Sessions({
+  filters,
+  setFilters,
+  read,
+  reviewSources,
+  importSource,
+  assign,
+  profiles: availableProfiles,
+  expired,
+  heading,
+}: Props) {
   const [records, setRecords] = useState<ActivityRecord[]>([]);
   const [loadedAt, setLoadedAt] = useState(0);
   const [busy, setBusy] = useState(true);
@@ -124,6 +188,35 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const fetchRecords = useEffectEvent(() => read());
   const reportExpired = useEffectEvent((error: unknown) => expired(error));
   const [reload, setReload] = useState(0);
+  const [checked, setChecked] = useState<string[]>([]);
+  const selectionContext = JSON.stringify([filters, page, reload]);
+  const [checkedContext, setCheckedContext] = useState(selectionContext);
+  if (checkedContext !== selectionContext) {
+    setCheckedContext(selectionContext);
+    setChecked([]);
+  }
+  const [assignmentTarget, setAssignmentTarget] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [assignmentStatus, setAssignmentStatus] = useState("");
+  async function saveAssignment(ids: string[]) {
+    if (!ids.length || assigning) return;
+    setAssigning(true);
+    setAssignmentStatus("");
+    try {
+      await assign(ids, assignmentTarget);
+      setChecked([]);
+      setAssignmentStatus(c.assignmentSaved.replace("{count}", number.format(ids.length)));
+      setBusy(true);
+      setFailed(false);
+      setReload((value) => value + 1);
+    } catch (error) {
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) expired(error);
+      else setAssignmentStatus(c.assignmentFailed);
+    } finally {
+      setAssigning(false);
+    }
+  }
+  const targetOptions = availableProfiles.filter((profile) => profile.status === "ready");
   useEffect(() => {
     let cancelled = false;
     void fetchRecords()
@@ -168,7 +261,10 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const filtered = records.filter(
     (record) =>
       !invalidDates &&
-      (!filters.profile || record.profile_id === filters.profile) &&
+      (!filters.profile ||
+        (filters.profile === "__unassigned__"
+          ? !record.profile_id
+          : record.profile_id === filters.profile)) &&
       (!filters.project || record.project_id === filters.project) &&
       (!filters.type || record.record_type === filters.type) &&
       Date.parse(record.started_at) >= lower &&
@@ -179,7 +275,11 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
   const visible = filtered.slice(currentPage * 25, (currentPage + 1) * 25);
   const selected = records.find((record) => key(record) === selectedKey);
   const profiles = [
-    ...new Map(records.map((record) => [record.profile_id, record.profile_alias])).entries(),
+    ...new Map(
+      records
+        .filter((record) => record.profile_id)
+        .map((record) => [record.profile_id, record.profile_alias]),
+    ).entries(),
   ];
   const projects = [
     ...new Map(
@@ -201,6 +301,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
       )
     : [];
   function open(record: ActivityRecord) {
+    setAssignmentTarget(record.profile_id ?? "");
     setSelectedKey(key(record));
     requestAnimationFrame(() => heading.current?.focus());
   }
@@ -223,7 +324,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
           tabIndex={-1}
           className="mb-4 max-w-[30ch] text-[clamp(1.8rem,3.3vw,2.75rem)] font-bold leading-[1.16] tracking-[-0.025em]"
         >
-          {selected ? `${label(selected.record_type)} · ${selected.profile_alias}` : c.title}
+          {selected ? `${label(selected.record_type)} · ${ownership(selected)}` : c.title}
         </h1>
         <p className="text-muted">{selected ? c.metadata : c.subtitle}</p>
       </header>
@@ -247,6 +348,39 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
               <Evidence record={selected} />
             </section>
           </div>
+          {!managed(selected) && (
+            <section className="mt-6 border-t border-rule py-6" aria-label={c.assignment}>
+              <h2 className="mb-3 text-[1.4rem] font-bold">{c.assignment}</h2>
+              <p className="mb-3 text-muted">{c.assignmentDetail}</p>
+              <label className="grid max-w-md gap-2">
+                {c.assignmentTarget}
+                <select
+                  className={input}
+                  value={assignmentTarget}
+                  onChange={(event) => setAssignmentTarget(event.target.value)}
+                >
+                  <option value="">{c.unassigned}</option>
+                  {targetOptions.map((profile) => (
+                    <option key={profile.profile_id} value={profile.profile_id}>
+                      {profile.display_name || profile.alias}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className={`${button} mt-3`}
+                disabled={assigning}
+                onClick={() => void saveAssignment([selected.id])}
+              >
+                {c.saveAssignment}
+              </button>
+              {assignmentStatus && (
+                <p role="status" className="mt-3">
+                  {assignmentStatus}
+                </p>
+              )}
+            </section>
+          )}
           <section className="mt-6 border-t border-rule py-6">
             <h2 className="mb-4 text-[1.4rem] font-bold">{c.related}</h2>
             <p className="mb-4 text-muted">{c.correlationNote}</p>
@@ -254,7 +388,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
               related.map((record) => (
                 <section key={key(record)} className="border-b border-rule py-4">
                   <h3 className="mb-4 font-bold">
-                    {label(record.record_type)} · {record.profile_alias}
+                    {label(record.record_type)} · {ownership(record)}
                   </h3>
                   <Facts record={record} />
                   <Evidence record={record} />
@@ -267,6 +401,16 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
         </>
       ) : null}
       <div hidden={Boolean(selected)}>
+        <HistorySourceReview
+          reviewSources={reviewSources}
+          importSource={importSource}
+          expired={expired}
+          onImported={() => {
+            setBusy(true);
+            setFailed(false);
+            setReload((value) => value + 1);
+          }}
+        />
         <div className="mb-4 flex flex-wrap items-end gap-3 [&_label]:grid [&_label]:min-w-0 [&_label]:gap-2 max-sm:[&_label]:w-full">
           <label>
             {c.profile}
@@ -276,6 +420,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
               onChange={(e) => change("profile", e.target.value)}
             >
               <option value="">{c.allProfiles}</option>
+              <option value="__unassigned__">{c.unassigned}</option>
               {profiles.map(([id, alias]) => (
                 <option value={id} key={id}>
                   {alias}
@@ -380,6 +525,37 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
         <p className="mb-4 text-sm text-muted">
           {c.timeline} · {c.zone}: {zone}
         </p>
+        <section className="mb-4 rounded border border-rule p-4" aria-label={c.bulkAssignment}>
+          <h2 className="mb-2 text-[1.2rem] font-bold">{c.bulkAssignment}</h2>
+          <p className="mb-3 text-sm text-muted">{c.bulkDetail}</p>
+          <label className="grid max-w-md gap-2">
+            {c.assignmentTarget}
+            <select
+              className={input}
+              value={assignmentTarget}
+              onChange={(event) => setAssignmentTarget(event.target.value)}
+            >
+              <option value="">{c.unassigned}</option>
+              {targetOptions.map((profile) => (
+                <option key={profile.profile_id} value={profile.profile_id}>
+                  {profile.display_name || profile.alias}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className={`${button} mt-3`}
+            disabled={!checked.length || assigning}
+            onClick={() => void saveAssignment(checked)}
+          >
+            {c.saveSelected.replace("{count}", number.format(checked.length))}
+          </button>
+          {assignmentStatus && (
+            <p role="status" className="mt-3">
+              {assignmentStatus}
+            </p>
+          )}
+        </section>
         <table className="hidden w-full table-fixed border-collapse lg:table">
           <caption className="sr-only">{c.timeline}</caption>
           <thead>
@@ -401,7 +577,7 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
                     {provenance(record)} · {label(record.source)}
                   </small>
                 </td>
-                <td className={cell}>{record.profile_alias}</td>
+                <td className={cell}>{ownership(record)}</td>
                 <td className={cell}>{projectName(record)}</td>
                 <td className={cell}>
                   {managed(record) ? label(record.lifecycle) : c.lastSeen}
@@ -411,6 +587,24 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
                   </small>
                 </td>
                 <td className={cell}>
+                  {!managed(record) && (
+                    <label className="mb-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked.includes(record.id)}
+                        onChange={(event) =>
+                          setChecked((current) =>
+                            event.target.checked
+                              ? current.length < 100
+                                ? [...current, record.id]
+                                : current
+                              : current.filter((id) => id !== record.id),
+                          )
+                        }
+                      />
+                      {c.selectForAssignment}
+                    </label>
+                  )}
                   <button
                     className={button}
                     data-session-key={key(record)}
@@ -427,13 +621,31 @@ export function Sessions({ filters, setFilters, read, expired, heading }: Props)
           {visible.map((record) => (
             <details className="border-b border-rule py-3" key={key(record)}>
               <summary className="min-h-11 cursor-pointer py-3 font-semibold wrap-anywhere">
-                {instant(record.started_at)} · {label(record.record_type)} · {record.profile_alias}
+                {instant(record.started_at)} · {label(record.record_type)} · {ownership(record)}
               </summary>
               <Facts record={record} />
               <p className="mb-4 text-sm text-muted">
                 {provenance(record)} · {label(record.source)} · {label(record.correlation_state)} ·{" "}
                 {c.confidence}: {label(record.correlation_confidence)}
               </p>
+              {!managed(record) && (
+                <label className="mb-3 flex min-h-11 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={checked.includes(record.id)}
+                    onChange={(event) =>
+                      setChecked((current) =>
+                        event.target.checked
+                          ? current.length < 100
+                            ? [...current, record.id]
+                            : current
+                          : current.filter((id) => id !== record.id),
+                      )
+                    }
+                  />
+                  {c.selectForAssignment}
+                </label>
+              )}
               <button
                 className={button}
                 data-session-key={key(record)}

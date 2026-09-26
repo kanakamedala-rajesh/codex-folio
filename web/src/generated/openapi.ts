@@ -3,13 +3,25 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "3cd0e91ca3b78bb80cf09bf41f8b83d46b77addd6c6e4422b4d521a27a72e439" as const;
+  "e8218045ec5209cb2ff73e6bb97885bfac4f5253f6fe13f323fc7ee892f566d9" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
 export const UpdatesPath = "/api/v1/updates" as const;
 export const TelemetryPath = "/api/v1/telemetry" as const;
 export const PortableConfigurationPath = "/api/v1/configuration" as const;
+export const BrowserTrustPath = "/api/v1/browser-trust" as const;
+export const BootstrapPath = "/api/v1/bootstrap" as const;
+
+export interface BrowserTrustRequest {
+  action: string;
+}
+
+export interface BrowserTrustResponse {
+  trusted: boolean;
+  csrf_token?: string;
+  credential?: string;
+}
 
 export interface AlertRecord {
   alert_id: string;
@@ -445,6 +457,9 @@ export interface ActivityExportRecord {
   record_type: string;
   id: string;
   source_session_id?: string;
+  original_profile_id?: string;
+  attribution_provenance?: string;
+  original_attribution_provenance?: string;
   profile_id: string;
   profile_alias: string;
   project_id?: string;
@@ -459,6 +474,12 @@ export interface ActivityExportRecord {
   exit_status?: number;
   model?: string;
   tokens_used?: number;
+  metric_key?: string;
+  unit?: string;
+  availability?: string;
+  freshness?: string;
+  coverage_start_at?: string;
+  coverage_end_at?: string;
   correlation: ActivityCorrelation;
   canonical_path?: string;
 }
@@ -677,6 +698,64 @@ export interface ConfigurationPackResponse {
   promotion_preview?: ConfigurationPromotionPreview;
 }
 
+export interface ActivitySource {
+  source_id: string;
+  label: string;
+  status: string;
+  session_count: number;
+}
+
+export interface ActivitySourcesResponse {
+  sources: ActivitySource[];
+}
+
+export interface ActivitySourceImportRequest {
+  source_id: string;
+  consent: boolean;
+}
+
+export interface ActivityAssignmentRequest {
+  session_ids: string[];
+  profile_id: string;
+}
+
+export interface ActivityAssignmentResponse {
+  assigned_count: number;
+}
+
+export interface HistoricalMetric {
+  metric_key: string;
+  value?: string;
+  unit: string;
+  source: string;
+  source_version: string;
+  availability: string;
+  freshness: string;
+  session_count: number;
+  measured_session_count: number;
+  unassigned_session_count: number;
+  unassigned_value?: string;
+  coverage_start_at: string;
+  coverage_end_at: string;
+}
+
+export interface HistoricalSessionMetric {
+  metric_key: string;
+  value?: string;
+  unit: string;
+  source: string;
+  source_version: string;
+  availability: string;
+  freshness: string;
+  coverage_start_at: string;
+  coverage_end_at: string;
+}
+
+export interface ActivitySourceImportResponse {
+  imported_count: number;
+  already_present_count: number;
+}
+
 export interface ActivityRecord {
   record_type: string;
   id: string;
@@ -689,6 +768,9 @@ export interface ActivityRecord {
   source: string;
   source_version: string;
   provenance: string;
+  attribution_provenance?: string;
+  original_attribution_provenance?: string;
+  original_profile_id?: string;
   started_at: string;
   last_observed_at: string;
   lifecycle: string;
@@ -697,6 +779,7 @@ export interface ActivityRecord {
   exit_status: string;
   model: string;
   tokens_used: string;
+  historical_metrics: HistoricalSessionMetric[];
   correlation_state: string;
   correlation_managed_launch_id: string;
   correlation_evidence_type: string;
@@ -717,6 +800,7 @@ export interface AnalyticsResponse {
   aggregates: UsageAggregate[];
   ambiguities: UsageMetricAmbiguity[];
   activity: ActivityRecord[];
+  historical_metrics: HistoricalMetric[];
   recent: UsageSnapshotResponse[];
 }
 
@@ -748,6 +832,7 @@ export interface MetadataResponse {
 export interface CollectionSettingsRequest {
   active_interval_seconds: number;
   idle_interval_seconds: number;
+  consent?: string;
 }
 
 export interface CollectionSettingsResponse {
@@ -755,6 +840,7 @@ export interface CollectionSettingsResponse {
   idle_interval_seconds: number;
   provider_minimum_seconds: number;
   scheduler_enabled: boolean;
+  consent: string;
   provider_floor_basis: string;
 }
 
@@ -778,6 +864,8 @@ export interface ProfileSummary {
   selected: boolean;
   configuration_pack: string;
   last_successful_refresh: string;
+  setup_operation: string;
+  setup_error_code: string;
 }
 
 export interface ProfilesResponse {
@@ -1090,6 +1178,24 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ActivityResponse } } };
     };
   };
+  "/api/v1/activity/sources": {
+    get: {
+      operationId: "getActivitySources";
+      responses: { 200: { content: { "application/json": ActivitySourcesResponse } } };
+    };
+    post: {
+      operationId: "importActivitySource";
+      requestBody: ActivitySourceImportRequest;
+      responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
+    };
+  };
+  "/api/v1/activity/assignments": {
+    post: {
+      operationId: "assignActivity";
+      requestBody: ActivityAssignmentRequest;
+      responses: { 200: { content: { "application/json": ActivityAssignmentResponse } } };
+    };
+  };
   "/api/v1/bootstrap": {
     post: {
       operationId: "exchangeBootstrap";
@@ -1101,6 +1207,17 @@ export interface ApiPaths {
           };
         };
       };
+    };
+  };
+  "/api/v1/browser-trust": {
+    get: {
+      operationId: "getBrowserTrust";
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+    post: {
+      operationId: "manageBrowserTrust";
+      requestBody: BrowserTrustRequest;
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
     };
   };
   "/api/v1/meta": {
@@ -1247,7 +1364,21 @@ export interface CodexFolioApiClient {
     projectId?: string,
     init?: RequestInit,
   ): Promise<ActivityResponse>;
+  getActivitySources(init?: RequestInit): Promise<ActivitySourcesResponse>;
+  importActivitySource(
+    request: ActivitySourceImportRequest,
+    init?: RequestInit,
+  ): Promise<ActivitySourceImportResponse>;
+  assignActivity(
+    request: ActivityAssignmentRequest,
+    init?: RequestInit,
+  ): Promise<ActivityAssignmentResponse>;
   exchangeBootstrap(request: BootstrapRequest, init?: RequestInit): Promise<BootstrapResponse>;
+  getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
+  manageBrowserTrust(
+    request: BrowserTrustRequest,
+    init?: RequestInit,
+  ): Promise<BrowserTrustResponse>;
   getMetadata(init?: RequestInit): Promise<MetadataResponse>;
   getCollectionSettings(init?: RequestInit): Promise<CollectionSettingsResponse>;
   setCollectionSettings(
@@ -1541,6 +1672,55 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as ActivityResponse;
     },
+    async getActivitySources(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/sources", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourcesResponse;
+    },
+    async importActivitySource(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/sources", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourceImportResponse;
+    },
+    async assignActivity(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "/api/v1/activity/assignments", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivityAssignmentResponse;
+    },
     async exchangeBootstrap(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -1556,6 +1736,38 @@ export function createCodexFolioApiClient(
         throw new Error("POST /api/v1/bootstrap failed with HTTP " + response.status);
       }
       return (await response.json()) as BootstrapResponse;
+    },
+    async getBrowserTrust(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
+    },
+    async manageBrowserTrust(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as UsageErrorResponse;
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
     },
     async getMetadata(init = {}) {
       const headers = new Headers(init.headers);

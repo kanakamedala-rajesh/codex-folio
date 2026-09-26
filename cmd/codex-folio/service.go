@@ -2,9 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"venkatasudha.com/codex-folio/internal/activity"
@@ -38,11 +44,20 @@ import (
 )
 
 type serviceOptions struct {
-	stateRoot *string
-	json      bool
-	enrolled  bool
-	candidate string
-	vaultMode platform.VaultMode
+	stateRoot  *string
+	json       bool
+	enrolled   bool
+	wait       bool
+	cancelStop bool
+	candidate  string
+	vaultMode  platform.VaultMode
+	// migrationTarget is an internal plain-start handoff. The detached service
+	// remains the sole SQLite/vault writer and commits this target only after
+	// destination reopen verification.
+	migrationTarget platform.VaultMode
+	// startupStatus is an internal, non-secret handshake file used only by a
+	// detached plain-command start. It is never persisted as service config.
+	startupStatus string
 }
 
 type servicePathResolver func(*string) (platform.Paths, error)
@@ -94,7 +109,7 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		}
 		serviceArgs = args[2:]
 	}
-	if command != "status" && command != "start" && command != "install" && command != "uninstall" && command != "recovery" {
+	if command != "status" && command != "start" && command != "stop" && command != "install" && command != "uninstall" && command != "recovery" && command != "certificate" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "unknown service command", diagnosticSink)
 	}
 	options, err := parseServiceOptions(serviceArgs)
@@ -113,6 +128,12 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 	if options.enrolled && command != "start" {
 		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--enrolled is only valid for service start", diagnosticSink)
 	}
+	if (options.wait || options.cancelStop) && command != "stop" || options.wait && options.cancelStop {
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--wait and --cancel are only valid separately for service stop", diagnosticSink)
+	}
+	if options.migrationTarget != "" && command != "start" {
+		return writeServiceUsageDiagnostic(stderr, apperrors.CLIUsage, "--migrate-to is only valid for service start", diagnosticSink)
+	}
 
 	paths, err := resolvePaths(options.stateRoot)
 	if err != nil {
@@ -123,6 +144,12 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 			}
 		}
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	if command == "install" {
+		options, err = resolveServiceSecureStorage(paths, options)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
 	}
 	var enrollment nativeServiceEnrollment
 	if command == "status" || command == "install" || command == "uninstall" {
@@ -137,6 +164,10 @@ func runServiceWithEnrollment(args []string, input io.Reader, stdout, stderr io.
 		return runServiceStatusWithEnrollment(paths, options, stdout, stderr, diagnosticSink, enrollment)
 	case "start":
 		return runServiceStartWithInputWithDiagnostics(paths, options, input, stdout, stderr, diagnosticSink)
+	case "stop":
+		return runServiceStop(paths, options, input, stdout, stderr)
+	case "certificate":
+		return runServiceCertificate(paths, options.json, stdout, stderr)
 	case "install":
 		return runServiceEnrollmentChange(enrollment.Install, options, stdout, stderr, diagnosticSink)
 	case "uninstall":
@@ -192,6 +223,16 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 				return serviceOptions{}, errors.New("--enrolled may be supplied only once")
 			}
 			options.enrolled = true
+		case arg == "--wait":
+			if options.wait {
+				return serviceOptions{}, errors.New("duplicate --wait")
+			}
+			options.wait = true
+		case arg == "--cancel":
+			if options.cancelStop {
+				return serviceOptions{}, errors.New("duplicate --cancel")
+			}
+			options.cancelStop = true
 		case arg == "--state-root":
 			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
 				return serviceOptions{}, errors.New("--state-root requires a value")
@@ -228,11 +269,47 @@ func parseServiceOptions(args []string) (serviceOptions, error) {
 			if err := setServiceVaultMode(&options, strings.TrimPrefix(arg, "--vault-mode=")); err != nil {
 				return serviceOptions{}, err
 			}
+		case arg == "--migrate-to":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, errors.New("--migrate-to requires a value")
+			}
+			index++
+			if err := setServiceMigrationTarget(&options, args[index]); err != nil {
+				return serviceOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--migrate-to="):
+			if err := setServiceMigrationTarget(&options, strings.TrimPrefix(arg, "--migrate-to=")); err != nil {
+				return serviceOptions{}, err
+			}
+		case arg == "--startup-status":
+			if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+				return serviceOptions{}, errors.New("--startup-status requires a value")
+			}
+			index++
+			if options.startupStatus != "" {
+				return serviceOptions{}, errors.New("only one startup status path may be supplied")
+			}
+			options.startupStatus = args[index]
 		default:
 			return serviceOptions{}, errors.New("unexpected service argument")
 		}
 	}
+	if options.migrationTarget != "" && options.vaultMode != platform.VaultModePassphrase {
+		return serviceOptions{}, errors.New("--migrate-to requires --vault-mode passphrase")
+	}
 	return options, nil
+}
+
+func setServiceMigrationTarget(options *serviceOptions, value string) error {
+	if options.migrationTarget != "" {
+		return errors.New("only one migration target may be supplied")
+	}
+	mode := platform.VaultMode(strings.TrimSpace(value))
+	if mode != platform.VaultModeSecretService && mode != platform.VaultModeWSLDPAPI {
+		return errors.New("migration target must be secret-service or wsl-dpapi")
+	}
+	options.migrationTarget = mode
+	return nil
 }
 
 func setServiceVaultMode(options *serviceOptions, value string) error {
@@ -240,8 +317,8 @@ func setServiceVaultMode(options *serviceOptions, value string) error {
 		return errors.New("only one vault-mode selection may be supplied")
 	}
 	mode := platform.VaultMode(strings.TrimSpace(value))
-	if mode != platform.VaultModeSecretService && mode != platform.VaultModePassphrase {
-		return errors.New("vault mode must be secret-service or passphrase")
+	if mode != platform.VaultModeSecretService && mode != platform.VaultModePassphrase && mode != platform.VaultModeWSLDPAPI {
+		return errors.New("vault mode must be secret-service, wsl-dpapi, or passphrase")
 	}
 	options.vaultMode = mode
 	return nil
@@ -308,11 +385,18 @@ func runServiceStatusWithEnrollment(paths platform.Paths, options serviceOptions
 	}
 	health := httpapi.ServiceHealth{ServiceState: "stopped", VaultState: "unavailable", DatabaseState: httpapi.DatabaseStateNotChecked}
 	if status.Running {
+		if options.migrationTarget != "" {
+			return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+		}
 		connection, discoverErr := platform.DiscoverServiceClient(paths, platform.OwnerOptions{})
 		if discoverErr != nil {
 			return writeServiceErrorWithDiagnostics(stderr, discoverErr, diagnosticSink)
 		}
-		health, err = httpapi.NewCommandClient(connection.Origin, connection.Token, nil).ServiceHealth(context.Background())
+		client, clientErr := newServiceCommandClient(connection)
+		if clientErr != nil {
+			return writeServiceErrorWithDiagnostics(stderr, clientErr, diagnosticSink)
+		}
+		health, err = client.ServiceHealth(context.Background())
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
@@ -356,11 +440,46 @@ func runServiceStartWithInput(paths platform.Paths, options serviceOptions, inpu
 }
 
 func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options serviceOptions, _ io.Reader, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink) int {
+	return runServiceStartWithDependencies(paths, options, stdout, stderr, diagnosticSink, openServiceStoreWithVaultMode, waitForServiceStopWithDiagnostics)
+}
+
+type serviceStopWaiter func(*platform.Owner, interface{ Close() error }, *httpapi.Server, serviceOptions, io.Writer, io.Writer, bool, <-chan error, diagnostics.Sink) int
+type serviceVaultMigrationRunner func(platform.Paths, platform.VaultMode, *store.Store) (*store.Store, error)
+type serviceVaultMigrationResumer func(platform.Paths, platform.VaultMode) (bool, error)
+
+func runServiceStartWithDependencies(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, openStore profileStoreOpener, waitForStop serviceStopWaiter) int {
+	return runServiceStartWithDependenciesAndMigration(paths, options, stdout, stderr, diagnosticSink, openStore, waitForStop, resumeInterruptedPassphraseMigration, migrateOpenedPassphraseStore)
+}
+
+func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options serviceOptions, stdout, stderr io.Writer, diagnosticSink diagnostics.Sink, openStore profileStoreOpener, waitForStop serviceStopWaiter, resume serviceVaultMigrationResumer, migrate serviceVaultMigrationRunner) int {
+	if options.startupStatus != "" {
+		if err := validateCompanionStartupStatusPath(paths, options.startupStatus); err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.PlatformServiceUnavailable, err), diagnosticSink)
+		}
+		stderr = &companionStartupDiagnosticWriter{Writer: stderr, path: options.startupStatus}
+	}
+	var err error
+	options, err = resolveServiceSecureStorage(paths, options)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
+	if apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid {
+		// A concurrent discovery can briefly hold the owner lock before it
+		// releases it. Wait for a descriptor or for that lock to clear.
+		deadline := time.Now().Add(companionStartupTimeout)
+		for apperrors.Code(err) == apperrors.PlatformServiceMetadataInvalid && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			status, err = platform.Discover(paths, platform.OwnerOptions{})
+		}
+	}
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if status.Running {
+		if options.migrationTarget != "" {
+			return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+		}
 		if options.enrolled {
 			if !waitForServiceOwnerRelease(paths) {
 				return exitSuccess
@@ -370,14 +489,21 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
+		if options.startupStatus != "" {
+			_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
+		}
 		return exitSuccess
 	}
 
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
-	if err != nil {
-		if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
+	if apperrors.Code(err) == apperrors.PlatformServiceAlreadyRunning {
+		deadline := time.Now().Add(companionStartupTimeout)
+		for {
 			status, statusErr := platform.Discover(paths, platform.OwnerOptions{})
 			if statusErr == nil && status.Running {
+				if options.migrationTarget != "" {
+					return writeServiceErrorWithDiagnostics(stderr, migrationRequiredError(errors.New("stop the running passphrase companion before migrating secure storage")), diagnosticSink)
+				}
 				if options.enrolled {
 					if !waitForServiceOwnerRelease(paths) {
 						return exitSuccess
@@ -387,9 +513,25 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 				if err := writeReusedDashboard(paths, options, status, stdout, stderr); err != nil {
 					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 				}
+				if options.startupStatus != "" {
+					_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
+				}
 				return exitSuccess
 			}
+			if statusErr != nil && apperrors.Code(statusErr) != apperrors.PlatformServiceMetadataInvalid {
+				return writeServiceErrorWithDiagnostics(stderr, statusErr, diagnosticSink)
+			}
+			if !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+			owner, err = platform.Acquire(paths, platform.OwnerOptions{})
+			if apperrors.Code(err) != apperrors.PlatformServiceAlreadyRunning {
+				break
+			}
 		}
+	}
+	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	commandToken, err := newCommandToken()
@@ -397,18 +539,61 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	record, interrupted, recordErr := readPassphraseMigrationRecord(paths)
+	if recordErr != nil {
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, recordErr, diagnosticSink)
+	}
+	if interrupted || options.migrationTarget != "" {
+		target := options.migrationTarget
+		if target == "" {
+			target = record.Target
+		}
+		completed, resumeErr := resume(paths, target)
+		if resumeErr != nil {
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, resumeErr, diagnosticSink)
+		}
+		if completed {
+			options.vaultMode = target
+			options.migrationTarget = ""
+		} else if interrupted {
+			options.vaultMode = platform.VaultModePassphrase
+		}
+	}
+	if options.vaultMode == platform.VaultModePassphrase {
+		if _, err := resolveEverydaySecureStorage(paths, options); err != nil {
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
+	var dashboardIdentity store.DashboardTLSIdentity
 	compose := func(stateStore *store.Store) (httpapi.OperationalServices, error) {
 		attachServiceDiagnosticStore(diagnosticSink, stateStore)
+		identity, identityErr := stateStore.LoadOrCreateDashboardTLSIdentity(context.Background())
+		if identityErr != nil {
+			return httpapi.OperationalServices{}, identityErr
+		}
+		if identityErr = writeDashboardRootCertificate(paths.Root, identity.RootCertificatePEM); identityErr != nil {
+			return httpapi.OperationalServices{}, identityErr
+		}
+		dashboardIdentity = identity
 		return composeServiceOperationalServices(paths, stateStore, options.enrolled)
 	}
 	var services httpapi.OperationalServices
 	var stateOwner interface{ Close() error }
 	var serviceLifecycle *lockedServiceLifecycle
 	if options.vaultMode == platform.VaultModePassphrase {
-		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openServiceStoreWithVaultMode, compose)
+		serviceLifecycle = newLockedServiceLifecycle(paths, options.vaultMode, openStore, compose)
+		if options.migrationTarget != "" {
+			target := options.migrationTarget
+			serviceLifecycle.SetMigrator(func(sourceStore *store.Store) (*store.Store, error) {
+				return migrate(paths, target, sourceStore)
+			})
+		}
 		stateOwner = serviceLifecycle
 	} else {
-		stateStore, openErr := openServiceStoreWithVaultMode(paths, options.vaultMode, "")
+		stateStore, openErr := openStore(paths, options.vaultMode, "")
 		if openErr != nil {
 			_ = owner.Close()
 			return writeServiceErrorWithDiagnostics(stderr, openErr, diagnosticSink)
@@ -434,8 +619,22 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	serverOptions := serviceServerOptions(diagnosticSink, commandToken, services)
+	initialCertificate := dashboardIdentity.Certificate
+	if serviceLifecycle != nil {
+		initialCertificate, err = store.NewEphemeralDashboardTLSCertificate()
+		if err != nil {
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
+	serverOptions.TLSCertificate = &initialCertificate
 	serverOptions.TerminalCommandBase = []string{executable}
-	serverOptions.TerminalCommandSuffix = serviceTerminalCommandSuffix(paths, options.vaultMode)
+	terminalMode := options.vaultMode
+	if options.migrationTarget != "" {
+		terminalMode = options.migrationTarget
+	}
+	serverOptions.TerminalCommandSuffix = serviceTerminalCommandSuffix(paths, terminalMode)
 	if enrollment, enrollmentErr := newNativeServiceEnrollment(paths, options); enrollmentErr == nil {
 		serverOptions.ServiceEnrollment = func() (state, mechanism string, available bool) {
 			status, statusErr := enrollment.Status()
@@ -445,8 +644,10 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 			return status.State, status.Mechanism, status.Available
 		}
 	}
-	serverOptions.ServiceLifecycle = serviceLifecycle
-	serverOptions.StartLocked = serviceLifecycle != nil
+	if serviceLifecycle != nil {
+		serverOptions.ServiceLifecycle = serviceLifecycle
+		serverOptions.StartLocked = true
+	}
 	server, err := httpapi.NewServer(serverOptions)
 	if err != nil {
 		_ = stateOwner.Close()
@@ -454,26 +655,110 @@ func runServiceStartWithInputWithDiagnostics(paths platform.Paths, options servi
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	if serviceLifecycle != nil {
-		serviceLifecycle.SetActivator(server.Activate)
+		serviceLifecycle.SetActivator(func(unlocked httpapi.OperationalServices) error {
+			if len(dashboardIdentity.Certificate.Certificate) == 0 {
+				return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("dashboard HTTPS identity is unavailable"))
+			}
+			if err := server.SetTLSCertificate(dashboardIdentity.Certificate); err != nil {
+				return err
+			}
+			if err := owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, dashboardIdentity.Certificate)); err != nil {
+				_ = server.SetTLSCertificate(initialCertificate)
+				return err
+			}
+			if err := server.Activate(unlocked); err != nil {
+				_ = server.SetTLSCertificate(initialCertificate)
+				_ = owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, initialCertificate))
+				return err
+			}
+			return nil
+		})
 	}
-	listener, err := server.Listen()
+	listener, err := server.ListenPort(dashboardPort(paths.Root))
 	if err != nil {
 		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: commandToken}); err != nil {
+	if err := owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, initialCertificate)); err != nil {
 		_ = server.Close()
 		_ = stateOwner.Close()
 		_ = owner.Close()
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	if options.migrationTarget == "" {
+		if err := rememberEverydaySecureStorage(paths, options.vaultMode); err != nil {
+			_ = server.Close()
+			_ = stateOwner.Close()
+			_ = owner.Close()
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
+	if options.startupStatus != "" {
+		_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
+	}
 
-	return waitForServiceStopWithDiagnostics(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+	return waitForStop(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+func dashboardPort(root string) int {
+	root = filepath.Clean(root)
+	if runtime.GOOS == "windows" {
+		root = strings.ToLower(root)
+	}
+	digest := sha256.Sum256([]byte(root))
+	return 20000 + int(binary.BigEndian.Uint16(digest[:2]))%40000
+}
+
+func dashboardServiceClient(origin, token string, certificate tls.Certificate) platform.ServiceClient {
+	fingerprint := sha256.Sum256(certificate.Certificate[0])
+	return platform.ServiceClient{Origin: origin, Token: token, CertificateSHA256: hex.EncodeToString(fingerprint[:])}
+}
+
+func writeDashboardRootCertificate(root string, certificate []byte) error {
+	path := filepath.Join(root, dashboardRootCertificateFile)
+	info, err := os.Lstat(path)
+	if err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+		return errors.New("dashboard root certificate path is not a regular file")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if bytes.Equal(existing, certificate) {
+			return nil
+		}
+	}
+	file, err := os.CreateTemp(root, ".dashboard-root-ca-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(certificate); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if info != nil {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return os.Rename(file.Name(), path)
 }
 
 var waitForServiceOwnerRelease = waitForServiceOwnerReleaseSignal
@@ -525,6 +810,7 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	if err != nil {
 		return httpapi.OperationalServices{}, err
 	}
+	consentGate := &sync.RWMutex{}
 	notificationAdapter, err := platform.NewNotificationAdapter(platform.NotificationOptions{})
 	if err != nil {
 		return httpapi.OperationalServices{}, err
@@ -569,10 +855,11 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 		return httpapi.OperationalServices{}, err
 	}
 	services := httpapi.OperationalServices{
-		Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle,
+		BrowserTrust: stateStore,
+		Selection:    selector, Profiles: registry, ProfileLifecycle: lifecycle,
 		ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks,
 		Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities,
-		CollectionSettings: &collectionSettingsCommandService{store: stateStore, enabled: deliveryEnabled},
+		CollectionSettings: &collectionSettingsCommandService{store: stateStore, gate: consentGate},
 		History:            usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore),
 		Checkpoints:          checkpoints,
 		CheckpointHistory:    browserCheckpointHistory{resolver: codexadapter.NewResolver(codexadapter.ResolverOptions{}), reader: codexadapter.NewHistoryReader()},
@@ -590,14 +877,16 @@ func composeServiceOperationalServices(paths platform.Paths, stateStore *store.S
 	}
 	services.Updates = updateService
 	services.Shutdown = telemetryServiceCloser{service: telemetryService}
-	if deliveryEnabled {
-		scheduler, err := usage.NewScheduler(stateStore, usageCommands, usageClock{}, randomScheduleJitter)
-		if err != nil {
-			_ = telemetryService.Close(context.Background())
-			return httpapi.OperationalServices{}, err
-		}
-		services.Background = &serviceCloserGroup{closers: []serviceCloser{startUpdateScheduler(updateService), startCollectionScheduler(scheduler)}}
+	scheduler, err := usage.NewScheduler(collectionConsentStore{ScheduleStore: stateStore, consentReader: stateStore}, collectionConsentRefresher{reader: stateStore, refresher: usageCommands, gate: consentGate}, usageClock{}, randomScheduleJitter)
+	if err != nil {
+		_ = telemetryService.Close(context.Background())
+		return httpapi.OperationalServices{}, err
 	}
+	background := []serviceCloser{startCollectionScheduler(scheduler)}
+	if deliveryEnabled {
+		background = append(background, startUpdateScheduler(updateService))
+	}
+	services.Background = &serviceCloserGroup{closers: background}
 	return services, nil
 }
 
@@ -630,7 +919,8 @@ func (owner *serviceStateOwner) Close() error {
 
 func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, services httpapi.OperationalServices) httpapi.Options {
 	return httpapi.Options{
-		Diagnostics: diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
+		BrowserTrust: services.BrowserTrust,
+		Diagnostics:  diagnosticSink, Selection: services.Selection, Profiles: services.Profiles,
 		ProfileLifecycle: services.ProfileLifecycle, ProfileAuthentication: services.ProfileAuthentication,
 		ConfigurationPacks: services.ConfigurationPacks, Launches: services.Launches, Usage: services.Usage,
 		CollectionSettings: services.CollectionSettings,
@@ -647,7 +937,7 @@ func serviceServerOptions(diagnosticSink diagnostics.Sink, commandToken string, 
 
 func serviceTerminalCommandSuffix(paths platform.Paths, mode platform.VaultMode) []string {
 	suffix := []string{"--state-root=" + paths.Root}
-	if mode == platform.VaultModePassphrase {
+	if mode == platform.VaultModePassphrase || mode == platform.VaultModeWSLDPAPI {
 		suffix = append(suffix, "--vault-mode="+string(mode))
 	}
 	return suffix
@@ -832,15 +1122,40 @@ func waitForServiceStopWithDiagnostics(owner *platform.Owner, stateStore interfa
 
 	ctx, stop := signal.NotifyContext(context.Background(), serviceStopSignals()...)
 	defer stop()
-	select {
-	case <-ctx.Done():
-	case err := <-serveErrors:
-		_ = stateStore.Close()
-		_ = owner.Close()
-		if err != nil {
-			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+wait:
+	for {
+		select {
+		case <-ticker.C:
+			server.ReconcileDeferredStop(ctx)
+		case <-ctx.Done():
+			break wait
+		case <-server.StopReady():
+			drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = server.Drain(drainCtx)
+			cancel()
+			if code := closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink); code != exitSuccess {
+				return code
+			}
+			if options.enrolled && runtime.GOOS == "darwin" {
+				enrollment, err := newNativeServiceEnrollment(platform.Paths{Root: metadata.StateRoot}, options)
+				if err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+				}
+				if err := enrollment.(*platform.ServiceEnrollment).StopCurrentSession(); err != nil {
+					return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+				}
+			}
+			return exitSuccess
+		case err := <-serveErrors:
+			_ = stateStore.Close()
+			_ = owner.Close()
+			if err != nil {
+				return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+			}
+			return exitSuccess
 		}
-		return exitSuccess
 	}
 	return closeServiceAfterStop(server, stateStore, owner, stderr, diagnosticSink)
 }
@@ -1250,6 +1565,8 @@ func serviceRemediation(code string) string {
 		return "the local SQLite restore failed; active state was preserved or rolled back"
 	case apperrors.VaultUnavailable:
 		return "the local encryption vault is unavailable; sensitive state is blocked"
+	case apperrors.VaultMigrationRequired:
+		return "existing passphrase-protected state requires guided secure-storage migration; no replacement key was created"
 	case apperrors.VaultLocked:
 		return "the local encryption vault is locked; unlock it before using sensitive state"
 	case apperrors.VaultKeyInvalid:
@@ -1271,6 +1588,8 @@ func writeServiceUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Usage:")
 	fmt.Fprintln(stderr, "  codex-folio service status [--state-root PATH] [--vault-mode MODE] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service start [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service stop [--state-root PATH] [--wait|--cancel] [--json]")
+	fmt.Fprintln(stderr, "  codex-folio service certificate [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service install [--state-root PATH] [--vault-mode secret-service|passphrase] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service uninstall [--state-root PATH] [--json]")
 	fmt.Fprintln(stderr, "  codex-folio service recovery {verify|list|restore} [--state-root PATH] [--candidate ID] [--json]")
@@ -1332,7 +1651,10 @@ func writeReusedDashboard(paths platform.Paths, options serviceOptions, status p
 	if err != nil {
 		return err
 	}
-	client := httpapi.NewCommandClient(connection.Origin, connection.Token, nil)
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		return err
+	}
 	link, err := client.Dashboard(context.Background())
 	if err != nil {
 		return err

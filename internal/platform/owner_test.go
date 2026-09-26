@@ -250,6 +250,33 @@ func TestServiceClientDescriptorIsPrivateAndSeparateFromOwnerMetadata(t *testing
 	}
 }
 
+func TestServiceClientHTTPSRequiresExactCertificateFingerprint(t *testing.T) {
+	paths := testPaths(t)
+	owner, err := Acquire(paths, OwnerOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	defer func() { _ = owner.Close() }()
+	valid := ServiceClient{Origin: "https://127.0.0.1:4567", Token: "command", CertificateSHA256: strings.Repeat("a", 64)}
+	if err := owner.PublishClient(valid); err != nil {
+		t.Fatalf("PublishClient(HTTPS) error = %v", err)
+	}
+	got, err := DiscoverServiceClient(paths, OwnerOptions{})
+	if err != nil || got != valid {
+		t.Fatalf("DiscoverServiceClient() = %#v, %v; want %#v", got, err, valid)
+	}
+	for _, invalid := range []ServiceClient{
+		{Origin: valid.Origin, Token: valid.Token},
+		{Origin: valid.Origin, Token: valid.Token, CertificateSHA256: strings.Repeat("g", 64)},
+		{Origin: "http://127.0.0.1:4567", Token: valid.Token, CertificateSHA256: valid.CertificateSHA256},
+		{Origin: "https://example.com:4567", Token: valid.Token, CertificateSHA256: valid.CertificateSHA256},
+	} {
+		if err := owner.PublishClient(invalid); err == nil {
+			t.Fatalf("PublishClient(%#v) accepted invalid descriptor", invalid)
+		}
+	}
+}
+
 func TestAcquireRejectsSecondWriterAndDiscoverReportsHealthyOwner(t *testing.T) {
 	paths := testPaths(t)
 	first, err := Acquire(paths, OwnerOptions{ProcessID: func() int { return 1001 }})

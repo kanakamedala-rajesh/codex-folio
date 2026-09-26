@@ -40,6 +40,41 @@ func TestUsageEligibilityRequiresAnExistingHome(t *testing.T) {
 	}
 }
 
+func TestUsageSnapshotPersistsNoActivityWithoutObservation(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stateStore.Close() }()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	target, err := stateStore.ResolveUsageProfile(context.Background(), "Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+	snapshot.Status = usage.AvailabilityPartial
+	snapshot.TriggerReason = usage.TriggerExplicitRefresh
+	snapshot.Availability[2].State = usage.AvailabilityNoActivity
+	snapshot.Availability[2].Reason = usage.ReasonNoActivity
+	if _, err := stateStore.SaveUsageSnapshot(context.Background(), target, snapshot); err != nil {
+		t.Fatalf("SaveUsageSnapshot() error = %v: %v", err, errors.Unwrap(err))
+	}
+	loaded, err := stateStore.LatestUsageSnapshot(context.Background(), target)
+	if err != nil {
+		t.Fatalf("LatestUsageSnapshot() error = %v", err)
+	}
+	for _, availability := range loaded.Availability {
+		if availability.MetricKey == "codex.local.tokens_used" {
+			if availability.State != usage.AvailabilityNoActivity || availability.Reason != usage.ReasonNoActivity || len(loaded.Observations) != 0 {
+				t.Fatalf("loaded empty history = %#v", loaded)
+			}
+			return
+		}
+	}
+	t.Fatal("local token availability missing")
+}
+
 func TestUsageSnapshotPersistsAtomicallyWithoutChangingSelection(t *testing.T) {
 	stateStore, err := openProfileTestStore(t)
 	if err != nil {

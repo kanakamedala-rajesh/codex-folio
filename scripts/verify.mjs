@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -122,6 +123,7 @@ try {
       },
     );
   }
+  let browserEnvironment;
   gate("pinned browser installation", () => {
     if (!process.env.CODEX_FOLIO_CHROMIUM) {
       run("node", [
@@ -130,6 +132,29 @@ try {
         "chromium",
         ...(process.env.CI ? ["--with-deps"] : []),
       ]);
+    }
+    if (process.env.CODEX_FOLIO_CHROMIUM) {
+      browserEnvironment = {
+        CODEX_FOLIO_CHROMIUM: process.env.CODEX_FOLIO_CHROMIUM,
+      };
+    } else {
+      // Browser fixtures replace HOME; retain the cache for Playwright's default
+      // headless executable rather than selecting the full Chromium binary.
+      let browserDirectory = dirname(
+        createRequire(join(webDirectory, "package.json"))(
+          "playwright",
+        ).chromium.executablePath(),
+      );
+      while (!/^chromium-\d+$/.test(basename(browserDirectory))) {
+        const parent = dirname(browserDirectory);
+        if (parent === browserDirectory) {
+          throw new Error("cannot locate Playwright's Chromium installation");
+        }
+        browserDirectory = parent;
+      }
+      browserEnvironment = {
+        PLAYWRIGHT_BROWSERS_PATH: dirname(browserDirectory),
+      };
     }
   });
   if (native) {
@@ -145,7 +170,11 @@ try {
           "-v",
           "-timeout=5m",
         ],
-        { CODEX_FOLIO_BROWSER_TEST: "1", CODEX_FOLIO_BROWSER_SUITE: "smoke" },
+        {
+          CODEX_FOLIO_BROWSER_TEST: "1",
+          CODEX_FOLIO_BROWSER_SUITE: "smoke",
+          ...browserEnvironment,
+        },
       );
     });
   }
@@ -162,7 +191,11 @@ try {
           "-v",
           "-timeout=5m",
         ],
-        { CODEX_FOLIO_BROWSER_TEST: "1", CODEX_FOLIO_BROWSER_SUITE: "deep" },
+        {
+          CODEX_FOLIO_BROWSER_TEST: "1",
+          CODEX_FOLIO_BROWSER_SUITE: "deep",
+          ...browserEnvironment,
+        },
       );
     });
     gate("isolated repeated startup benchmark", () => {
@@ -177,7 +210,10 @@ try {
           "-v",
           "-timeout=5m",
         ],
-        { CODEX_FOLIO_BROWSER_TEST: "1" },
+        {
+          CODEX_FOLIO_BROWSER_TEST: "1",
+          ...browserEnvironment,
+        },
       );
     });
   }

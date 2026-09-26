@@ -6,7 +6,7 @@ implementation violates the selected ticket or an existing governing
 contract in full or blocker-confirmation mode. Never expands scope.
 """
 
-model = "gpt-5.6-sol"
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 

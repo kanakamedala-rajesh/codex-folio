@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,6 +92,9 @@ func (authenticator dashboardProfileAuthenticator) Authenticate(_ context.Contex
 	if string(mode) == "profile-auth-fail" {
 		return profile.ErrAuthenticationFailed
 	}
+	if string(mode) == "profile-auth-cancel" {
+		return profile.ErrAuthCancelled
+	}
 	_, _ = io.WriteString(request.Stdout, "browser-auth-secret-must-not-reach-dashboard")
 	if string(mode) == "profile-needs-auth" {
 		return os.WriteFile(authenticator.control, []byte("supported"), 0600)
@@ -137,6 +141,9 @@ func TestOverviewBrowser(t *testing.T) {
 	}
 	if suite == "deep" {
 		runServiceHealthBrowser(t)
+	}
+	if suite == "smoke" {
+		runTrustedBrowserRestart(t)
 	}
 	runOverviewBrowser(t, suite)
 }
@@ -248,6 +255,32 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 func runOverviewBrowser(t *testing.T, suite string) []byte {
 	t.Helper()
 	paths := launchTestPaths(t)
+	if suite == "deep" {
+		userHome := t.TempDir()
+		configuredHome := filepath.Join(userHome, "configured-codex")
+		t.Setenv("HOME", userHome)
+		t.Setenv("USERPROFILE", userHome)
+		t.Setenv("CODEX_HOME", configuredHome)
+		for _, fixture := range []struct{ path, schema string }{
+			{filepath.Join(userHome, ".codex"), `CREATE TABLE unrelated (id TEXT)`},
+			{configuredHome, `CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER)`},
+		} {
+			if err := os.MkdirAll(fixture.path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			database, err := sql.Open("sqlite", filepath.Join(fixture.path, "state_5.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(fixture.schema); err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	secureVault := seedReadyLaunchProfile(t, paths)
 	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
 	referencedMarker := filepath.Join(personalHome, "browser-removal-marker")
@@ -384,6 +417,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	activities := seedDashboardActivity(t, state, projects, project, repository)
+	if suite == "deep" {
+		seedUnimportedDashboardSessions(t, state, repository)
+	}
 	plan, err := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: repository, ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -506,7 +542,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	server, err := httpapi.NewServer(httpapi.Options{BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
 	}})
 	if err != nil {
@@ -742,7 +778,19 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				if string(mode) == "analytics-activity-seed" && seeded && !activitySeeded {
 					_, seedErr := state.SetAnalyticsRetention(context.Background(), "90")
 					if seedErr == nil {
-						_, seedErr = activities.Refresh(context.Background(), "Personal")
+						var sources []activity.SourceReview
+						sources, seedErr = activities.ReviewSources(context.Background())
+						if seedErr == nil {
+							for _, source := range sources {
+								if source.Label != "Work" && source.Label != "Personal" {
+									continue
+								}
+								_, seedErr = activities.ImportSource(context.Background(), source.SourceID, true)
+								if seedErr != nil {
+									break
+								}
+							}
+						}
 					}
 					if seedErr != nil {
 						analyticsSeedErrors <- seedErr
@@ -890,6 +938,37 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser selection changed the running Work launch")
 	}
 	return nil
+}
+
+func seedUnimportedDashboardSessions(t *testing.T, state *store.Store, repository string) {
+	t.Helper()
+	at := time.Now().UTC().Truncate(24 * time.Hour).Add(-23 * time.Hour)
+	for _, fixture := range []struct {
+		alias string
+		ids   []string
+	}{
+		{"Work", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc52"}},
+		{"Personal", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc53"}},
+	} {
+		target, err := state.ResolveActivityProfile(context.Background(), fixture.alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		database, err := sql.Open("sqlite", filepath.Join(target.IdentityHome, "state_5.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range fixture.ids {
+			_, err = database.Exec(`INSERT INTO threads (id, created_at_ms, updated_at_ms, source, model, cwd, tokens_used, title, preview, first_user_message) VALUES (?, ?, ?, 'cli', 'gpt-5', ?, 7, 'private title', 'private preview', 'private prompt')`, id, at.UnixMilli(), at.Add(time.Minute).UnixMilli(), repository)
+			if err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func dashboardPaginationRecords(state *store.Store, start time.Time, seed bool) error {

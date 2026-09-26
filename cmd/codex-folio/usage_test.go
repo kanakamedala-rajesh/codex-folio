@@ -271,7 +271,7 @@ func TestComposedDocumentedProviderRefreshMeetsEngineeringBudget(t *testing.T) {
 	started := time.Now()
 	first, _, err := generated.RefreshUsage(ctx, httpapi.UsageRefreshRequest{Alias: "Work", TriggerReason: &trigger})
 	firstElapsed := time.Since(started)
-	if err != nil || first.Status != usage.AvailabilityAvailable || len(first.Observations) != len(usage.Registry()) || first.Observations[0].Value != 25 {
+	if err != nil || first.Status != usage.AvailabilityPartial || len(first.Observations) != 2 || first.Observations[0].Value != 25 || first.Availability[2].Reason != usage.ReasonHistoryAbsent || first.Availability[3].State != usage.AvailabilityUnsupported {
 		t.Fatalf("documented provider refresh = %#v/%v", first, err)
 	}
 	if firstElapsed >= 10*time.Second {
@@ -291,13 +291,13 @@ func TestComposedDocumentedProviderRefreshMeetsEngineeringBudget(t *testing.T) {
 	repeatedStarted := time.Now()
 	for attempt := 1; attempt < 25; attempt++ {
 		clock.now = clock.now.Add(time.Second)
-		if result, err := command.RefreshUsage(ctx, "Work"); err != nil || len(result.Observations) != len(usage.Registry()) {
+		if result, err := command.RefreshUsage(ctx, "Work"); err != nil || len(result.Observations) != 2 {
 			t.Fatalf("repeated refresh %d = %#v/%v", attempt+1, result, err)
 		}
 	}
 	repeatedElapsed := time.Since(repeatedStarted)
 	latest, err := command.LatestUsage(ctx, "Work")
-	if err != nil || latest.TriggerReason != usage.TriggerExplicitRefresh || len(latest.Observations) != len(usage.Registry()) || requests != 50 {
+	if err != nil || latest.TriggerReason != usage.TriggerExplicitRefresh || len(latest.Observations) != 2 || requests != 50 {
 		t.Fatalf("repeated persisted refreshes = %#v, requests=%d, error=%v", latest, requests, err)
 	}
 	t.Logf("documented-source refresh=%s; 25 real SQLite/vault writes=%s (local fake source, not a production-provider claim)", firstElapsed, repeatedElapsed)

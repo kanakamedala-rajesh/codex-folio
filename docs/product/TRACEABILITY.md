@@ -1,6 +1,6 @@
 # VenkataSudha CodexFolio decision traceability
 
-Status: implementation mapping for the completed Q1–Q122 grill
+Status: implementation mapping for Q1–Q122 and approved M5A successors (#82; contract ticket #83)
 
 This map keeps the implementation from quietly losing settled product constraints. Detailed rationale remains in `DECISIONS.md` and `docs/adr/`; this file maps decision groups to delivery and acceptance evidence.
 
@@ -26,6 +26,19 @@ This map keeps the implementation from quietly losing settled product constraint
 | Portable config and new-device behavior | Q98–Q99, Q117 | M5 | SP, OP | ADR 0028/0033 |
 | Onboarding and shell integration | Q101–Q105 | M2 | PL, OP | ADR 0019/0030 |
 
+## M5A successor traceability
+
+Historical milestone evidence remains scoped to its original delivered candidate. #83 reconciles contracts only; its required repository review must pass before dependent behavior tickets rely on these changes.
+
+| Parent #82 requirement | Changed baseline | Governing successor | Acceptance/evidence |
+|---|---|---|---|
+| Decisions 6–8; testing 5–6, 10–11: qualified prompt-free protection and recoverable migration | ADR 0008; decisions 27/43 | ADR 0035; `../research/CREDENTIAL-VAULT.md` | SP-01–SP-04, EC-01, EC-08; native OS/WSL protection, interruption/reopen, real two-identity restart matrix |
+| Decision 12: remembered explicit browser trust distinct from sessions | ADR 0015; decision 48 | ADR 0036; `../architecture/ARCHITECTURE.md` | SP-07, EC-07–EC-08; restart/renewal/revocation/new-browser and negative request tests |
+| Decisions 2–5, 17: on-demand lifetime, independent consent, foreground entry point | ADR 0012/0019/0023; decisions 15/81 | ADR 0037; `../architecture/ARCHITECTURE.md` | PL-04–PL-06, OP-01–OP-04/OP-07, EC-03/EC-07–EC-08 |
+| Decisions 10–11: existing-home and automatically detected onboarding | ADR 0030 | ADR 0037; `CONTEXT.md` | PL-01–PL-03/PL-08, EC-02/EC-07–EC-08 |
+| Decisions 13–16: Unassigned History, assignment, provenance, privacy | ADR 0017/0018/0025/0029 | ADR 0037; `CONTEXT.md` | UA-01–UA-10, SP-03–SP-06, EC-04–EC-07 |
+| Decision 1; testing 10–11: placement and non-waivable core exit proof | Decision 119, original milestone order | #82; `IMPLEMENTATION-PLAN.md` | EC-08; M5A follows M5, M6 remains optional, M7 remains hardening |
+
 ## Milestone evidence index
 
 | Milestone | Required proof before exit |
@@ -36,6 +49,7 @@ This map keeps the implementation from quietly losing settled product constraint
 | M3 | source fixtures, provenance/freshness behavior, deduplication, retention, and safe export tests |
 | M4 | reviewed repository-first handoff between profiles with no repo-local state |
 | M5 | accepted route/state comps, WCAG evidence, responsive browser QA, explicit service lifecycle tests |
+| M5A | EC-01–EC-08: complete automated journeys plus mandatory candidate-bound installed-Codex/two-real-identity restart evidence on Windows AMD64, macOS ARM64, supported Linux AMD64, and WSL2 Windows-user-backed protection; no inherited qualification exceptions; required canonical verification and independent milestone audit |
 | M6 | failure-injected transactional rollback and automatic Safe fallback for every experiment |
 | M7 | signed artifacts, clean-machine lifecycle, compatibility window, soak, and complete release documentation |
 

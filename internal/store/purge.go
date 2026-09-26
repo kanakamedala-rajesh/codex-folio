@@ -116,7 +116,8 @@ func purgeSelections(scope usage.HistoryScope) []historySelection {
 	provenance.args = append(provenance.args, availability.args...)
 	provenance.args = append(provenance.args, observations.args...)
 	provenance.args = append(provenance.args, availability.args...)
-	sessions := selectClass("observed_sessions", "observed_sessions", "observed_session_id", "o", "o.profile_id", "o.project_identity_id", "o.started_at", "COALESCE(o.last_observed_at, o.ended_at, o.started_at)", false)
+	sessionProfile := `CASE WHEN EXISTS (SELECT 1 FROM observed_session_assignments a WHERE a.observed_session_id = o.observed_session_id) THEN (SELECT a.profile_id FROM observed_session_assignments a WHERE a.observed_session_id = o.observed_session_id) ELSE o.profile_id END`
+	sessions := selectClass("observed_sessions", "observed_sessions", "observed_session_id", "o", sessionProfile, "o.project_identity_id", "o.started_at", "COALESCE(o.last_observed_at, o.ended_at, o.started_at)", false)
 	launches := selectClass("managed_launches", "managed_launches", "managed_launch_id", "m", "m.profile_id", "m.project_identity_id", "m.started_at", "COALESCE(m.ended_at, m.started_at)", false)
 	launches.query += ` AND m.state IN ('exited', 'abandoned')`
 	correlations := historySelection{table: "correlation_evidence", column: "correlation_evidence_id", query: `SELECT c.correlation_evidence_id FROM correlation_evidence c WHERE c.observed_session_id IN (` + sessions.query + `) OR c.managed_launch_id IN (` + launches.query + `)`}

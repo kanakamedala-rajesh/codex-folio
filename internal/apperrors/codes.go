@@ -99,6 +99,7 @@ const (
 	StoreRecoveryCandidateNotFound           = "CF_STORE_RECOVERY_CANDIDATE_NOT_FOUND"
 	StoreRecoveryRestoreFailed               = "CF_STORE_RECOVERY_RESTORE_FAILED"
 	VaultUnavailable                         = "CF_VAULT_UNAVAILABLE"
+	VaultMigrationRequired                   = "CF_VAULT_MIGRATION_REQUIRED"
 	VaultLocked                              = "CF_VAULT_LOCKED"
 	VaultKeyInvalid                          = "CF_VAULT_KEY_INVALID"
 	VaultEnvelopeInvalid                     = "CF_VAULT_ENVELOPE_INVALID"
@@ -237,6 +238,7 @@ func IsRegistered(code string) bool {
 		StoreRecoveryCandidateNotFound,
 		StoreRecoveryRestoreFailed,
 		VaultUnavailable,
+		VaultMigrationRequired,
 		VaultLocked,
 		VaultKeyInvalid,
 		VaultEnvelopeInvalid,

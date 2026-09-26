@@ -180,7 +180,7 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 	}
 	availabilityState := usage.AvailabilityAvailable
 	if len(snapshot.Observations) == 0 {
-		availabilityState = snapshot.Availability[0].State
+		availabilityState = storedProvenanceAvailabilityState(snapshot.Availability[0].State)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, provenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, availabilityState, usage.ProvenanceProvider); err != nil {
@@ -202,7 +202,7 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 		if itemProvenanceID == "" {
 			itemProvenanceID, err = newStoreIdentifier("provenance")
 			if err == nil {
-				_, err = tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label) VALUES (?, ?, ?, ?, ?, ?, ?)`, itemProvenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, storedAvailabilityState(item.State), item.Provenance)
+				_, err = tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label) VALUES (?, ?, ?, ?, ?, ?, ?)`, itemProvenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, storedProvenanceAvailabilityState(item.State), item.Provenance)
 			}
 			if err != nil {
 				rollback()
@@ -427,7 +427,7 @@ func validUsageProvenance(value string) bool {
 }
 
 func validAvailability(state string) bool {
-	return state == usage.AvailabilityAvailable || state == usage.AvailabilityUnsupported || state == usage.AvailabilityTemporarilyUnavailable || state == usage.AvailabilityStale || state == usage.AvailabilityReauthenticationRequired || state == usage.AvailabilityContradictory
+	return state == usage.AvailabilityAvailable || state == usage.AvailabilityUnsupported || state == usage.AvailabilityTemporarilyUnavailable || state == usage.AvailabilityStale || state == usage.AvailabilityReauthenticationRequired || state == usage.AvailabilityContradictory || state == usage.AvailabilityNoActivity
 }
 
 func validFreshness(value string) bool {
@@ -443,6 +443,13 @@ func storedAvailabilityState(value string) string {
 		return usage.AvailabilityAvailable
 	}
 	return value
+}
+
+func storedProvenanceAvailabilityState(value string) string {
+	if value == usage.AvailabilityNoActivity {
+		return usage.AvailabilityTemporarilyUnavailable
+	}
+	return storedAvailabilityState(value)
 }
 
 func storedAvailabilityCondition(value string) string {

@@ -199,33 +199,79 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 			return
 		}
 	}
-	if input.AuthMethod == string(profile.AuthMethodDeviceCode) && input.Action == "reauthenticate" {
+	if input.Action == "reauthenticate" {
+		if server.getProfileOperation(input.Alias).State == "running" {
+			server.writeAPIError(response, http.StatusConflict, apperrors.ProfileSetupInvalid)
+			return
+		}
 		item, err := server.profileByAlias(request, input.Alias)
 		if err != nil {
 			server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ProfileNotSelectable))
 			return
 		}
+		if item.Status == string(profile.StatusPending) {
+			server.writeAPIError(response, http.StatusConflict, apperrors.ProfileNotSelectable)
+			return
+		}
+		server.setProfileOperation(item.Alias, profileOperation{State: "waiting"})
 		writeJSON(response, http.StatusOK, ProfileAuthenticationResponse{
 			Profile: item, Warnings: []string{}, Outcome: "terminal_required",
-			TerminalCommand: server.profileTerminalCommand("reauthenticate", item.Alias, valueOrEmpty(input.CodexOverride)),
+			TerminalCommand: server.profileTerminalCommand("reauthenticate", item.Alias, input.AuthMethod, valueOrEmpty(input.CodexOverride)),
 		})
 		return
 	}
 
-	action := input.Action
-	method := profile.AuthMethod(input.AuthMethod)
-	nonInteractive := false
-	if input.Action == "prepare" || input.AuthMethod == string(profile.AuthMethodDeviceCode) {
-		action, method, nonInteractive = "add", "", true
+	server.profileOperationMu.Lock()
+	if server.profileOperations == nil {
+		server.profileOperations = make(map[string]profileOperation)
 	}
-	_ = http.NewResponseController(response).SetWriteDeadline(time.Time{})
+	key := strings.ToLower(input.Alias)
+	previous := server.profileOperations[key]
+	if previous.State != "" {
+		server.profileOperationMu.Unlock()
+		item, err := server.profileByAlias(request, input.Alias)
+		if errors.Is(err, profile.ErrNotFound) && previous.State != "running" {
+			server.profileOperationMu.Lock()
+			if server.profileOperations[key] != previous {
+				server.profileOperationMu.Unlock()
+				server.writeAPIError(response, http.StatusConflict, apperrors.ProfileSetupInvalid)
+				return
+			}
+			server.profileOperations[key] = profileOperation{State: "running"}
+			server.profileOperationMu.Unlock()
+			previous = profileOperation{}
+		} else {
+			if err != nil {
+				server.writeAPIError(response, http.StatusConflict, apperrors.ProfileSetupInvalid)
+				return
+			}
+			outcome := "terminal_required"
+			terminalCommand := server.profileTerminalCommand("add", item.Alias, input.AuthMethod, valueOrEmpty(input.CodexOverride))
+			if previous.State == "ready" && item.Status == string(profile.StatusReady) {
+				outcome, terminalCommand = "ready", ""
+			}
+			writeJSON(response, http.StatusOK, ProfileAuthenticationResponse{
+				Profile: item, Warnings: []string{}, Outcome: outcome, TerminalCommand: terminalCommand,
+			})
+			return
+		}
+	} else {
+		server.profileOperations[key] = profileOperation{State: "running"}
+		server.profileOperationMu.Unlock()
+	}
+	prepared := false
+	defer func() {
+		if !prepared {
+			server.setProfileOperation(input.Alias, previous)
+		}
+	}()
 	referencedHome := ""
 	if input.IdentityHomeMode == string(profile.HomeOwnershipReferenced) {
 		referencedHome = valueOrEmpty(input.ReferencedHomePath)
 	}
 	result, err := server.profileAuthentication.Authenticate(request.Context(), CommandProfileAuthenticationRequest{
-		Action: action, Alias: input.Alias, DisplayName: valueOrEmpty(input.DisplayName), CodexOverride: valueOrEmpty(input.CodexOverride),
-		ReferencedHomePath: referencedHome, AuthMethod: method, NonInteractive: nonInteractive,
+		Action: "add", Alias: input.Alias, DisplayName: valueOrEmpty(input.DisplayName), CodexOverride: valueOrEmpty(input.CodexOverride),
+		ReferencedHomePath: referencedHome, AuthMethod: "", NonInteractive: true,
 	}, io.Discard)
 	choiceRequired := diagnostics.CodeFor(err, "") == apperrors.ProfileSetupChoiceRequired
 	if err != nil && !choiceRequired {
@@ -255,20 +301,21 @@ func (server *Server) browserProfileAuthentication(response http.ResponseWriter,
 	outcome := "ready"
 	terminalCommand := ""
 	if projected.Status == string(profile.StatusPending) {
-		outcome = "pending"
-	}
-	if input.AuthMethod == string(profile.AuthMethodDeviceCode) && projected.Status == string(profile.StatusPending) {
 		outcome = "terminal_required"
-		terminalCommand = server.profileTerminalCommand("add", projected.Alias, valueOrEmpty(input.CodexOverride))
+		terminalCommand = server.profileTerminalCommand("add", projected.Alias, input.AuthMethod, valueOrEmpty(input.CodexOverride))
+		server.setProfileOperation(projected.Alias, profileOperation{State: "waiting"})
+	} else {
+		server.setProfileOperation(projected.Alias, profileOperation{})
 	}
+	prepared = true
 	writeJSON(response, http.StatusOK, ProfileAuthenticationResponse{
 		Profile: projected, Stages: profileStages(stages), CodexFound: discovery.Version != "", CodexVersion: discovery.Version,
 		Outcome: outcome, TerminalCommand: terminalCommand, Warnings: warnings,
 	})
 }
 
-func (server *Server) profileTerminalCommand(action, alias, codexOverride string) string {
-	arguments := []string{"profile", action, alias, "--device-code"}
+func (server *Server) profileTerminalCommand(action, alias, method, codexOverride string) string {
+	arguments := []string{"profile", action, alias, "--" + method}
 	if codexOverride != "" {
 		arguments = append(arguments, "--codex-bin="+codexOverride)
 	}
@@ -333,6 +380,13 @@ func (server *Server) profileInventory(request *http.Request) (ProfilesResponse,
 		projected, err := server.browserProfile(request, item)
 		if err != nil {
 			return ProfilesResponse{}, err
+		}
+		operation := server.getProfileOperation(item.Alias)
+		if operation.State != "" {
+			projected.SetupOperation = &operation.State
+		}
+		if operation.Code != "" {
+			projected.SetupErrorCode = &operation.Code
 		}
 		result.Profiles = append(result.Profiles, projected)
 	}

@@ -35,6 +35,74 @@ func (resolver launchTestResolver) Resolve(string) (launch.Candidate, error) {
 	return resolver.candidate, nil
 }
 
+func TestColdLaunchUsesRememberedStorageBeforePassphraseAndStore(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		remembered platform.VaultMode
+		explicit   platform.VaultMode
+		input      string
+		wantMode   platform.VaultMode
+		wantSecret string
+		wantChild  string
+	}{
+		{"passphrase", platform.VaultModePassphrase, "", "private fixture phrase\nchild input", platform.VaultModePassphrase, "private fixture phrase", "child input"},
+		{"wsl", platform.VaultModeWSLDPAPI, "", "child input", platform.VaultModeWSLDPAPI, "", "child input"},
+		{"explicit", platform.VaultModePassphrase, platform.VaultModeSecretService, "child input", platform.VaultModeSecretService, "", "child input"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			paths := launchTestPaths(t)
+			secureVault := seedReadyLaunchProfile(t, paths)
+			if err := rememberEverydaySecureStorage(paths, test.remembered); err != nil {
+				t.Fatal(err)
+			}
+			opened := false
+			childInput := ""
+			var stderr bytes.Buffer
+			code := withLaunchCommandServiceAndUsage(strings.NewReader(test.input), &stderr, paths,
+				launchOptions{serviceOptions: serviceOptions{vaultMode: test.explicit}},
+				func(paths platform.Paths, mode platform.VaultMode, secret string) (*store.Store, error) {
+					opened = true
+					if mode != test.wantMode || secret != test.wantSecret {
+						t.Errorf("opened mode=%q secret match=%t", mode, secret == test.wantSecret)
+					}
+					return store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault})
+				}, nil, nil, newUsageCommandService, platform.OwnerOptions{},
+				func(_ *httpapi.CommandClient, input io.Reader) int {
+					data, err := io.ReadAll(input)
+					if err != nil {
+						t.Error(err)
+					}
+					childInput = string(data)
+					return exitSuccess
+				})
+			if code != exitSuccess || !opened || childInput != test.wantChild || stderr.Len() != 0 {
+				t.Fatalf("cold launch = code:%d opened:%t child:%q stderr:%q", code, opened, childInput, stderr.String())
+			}
+		})
+	}
+}
+
+func TestColdLaunchRejectsInvalidRememberedStorageBeforeOpeningStore(t *testing.T) {
+	paths := launchTestPaths(t)
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.SecureStorageFile, []byte(`{"version":1,"mode":"unknown"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened := false
+	var stderr bytes.Buffer
+	code := withLaunchCommandServiceAndUsage(strings.NewReader(""), &stderr, paths, launchOptions{},
+		func(platform.Paths, platform.VaultMode, string) (*store.Store, error) {
+			opened = true
+			return nil, errors.New("invalid selection must not open state")
+		}, nil, nil, newUsageCommandService, platform.OwnerOptions{},
+		func(*httpapi.CommandClient, io.Reader) int { return exitSuccess })
+	if code != exitFailure || opened || !strings.Contains(stderr.String(), apperrors.VaultUnavailable) {
+		t.Fatalf("invalid selection = code:%d opened:%t stderr:%q", code, opened, stderr.String())
+	}
+}
+
 type launchHTTPDoerFunc func(*http.Request) (*http.Response, error)
 
 func (do launchHTTPDoerFunc) Do(request *http.Request) (*http.Response, error) { return do(request) }
@@ -1081,6 +1149,8 @@ func launchTestPaths(t *testing.T) platform.Paths {
 		MetadataFile:      filepath.Join(root, "runtime", "service.owner.json"),
 		DatabaseFile:      filepath.Join(root, "codex-folio.sqlite3"),
 		VaultFile:         filepath.Join(root, "codex-folio.vault"),
+		WSLVaultFile:      filepath.Join(root, "codex-folio-wsl-dpapi.vault"),
+		SecureStorageFile: filepath.Join(root, "secure-storage.json"),
 		ManagedHomes:      filepath.Join(root, "managed-homes"),
 		ProfileQuarantine: filepath.Join(root, "profile-quarantine"),
 	}

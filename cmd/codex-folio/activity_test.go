@@ -51,6 +51,7 @@ func TestActivityJSONUsesPublicAPIProjection(t *testing.T) {
 }
 
 func TestActivityServiceComposesSupportedReaderProjectAndStore(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	home := filepath.Join(paths.Root, "managed-home")
@@ -80,6 +81,17 @@ func TestActivityServiceComposesSupportedReaderProjectAndStore(t *testing.T) {
 	}
 	service, err := newActivityCommandService(stateStore, projects)
 	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.Refresh(context.Background(), "Work")
+	if err != nil || len(before) != 0 {
+		t.Fatalf("refresh imported without consent: %#v, %v", before, err)
+	}
+	sources, err := service.ReviewSources(context.Background())
+	if err != nil || len(sources) < 1 {
+		t.Fatalf("sources = %#v, %v", sources, err)
+	}
+	if _, err := service.ImportSource(context.Background(), sources[0].SourceID, true); err != nil {
 		t.Fatal(err)
 	}
 	timeline, err := service.Refresh(context.Background(), "Work")

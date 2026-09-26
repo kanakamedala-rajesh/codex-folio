@@ -36,13 +36,17 @@ const (
 	AvailabilityReauthenticationRequired = "reauthentication_required"
 	AvailabilityPartial                  = "partial"
 	AvailabilityContradictory            = "contradictory"
+	AvailabilityNoActivity               = "no_activity"
 
-	ReasonUnsupported      = "capability_unsupported"
-	ReasonCollectionFailed = "collection_failed"
-	ReasonMalformedSource  = "malformed_source"
-	ReasonReauthentication = "reauthentication_required"
-	ReasonStale            = "evidence_older_than_10_minutes"
-	ReasonContradictory    = "supported_sources_disagree"
+	ReasonUnsupported        = "capability_unsupported"
+	ReasonCollectionFailed   = "collection_failed"
+	ReasonMalformedSource    = "malformed_source"
+	ReasonReauthentication   = "reauthentication_required"
+	ReasonStale              = "evidence_older_than_10_minutes"
+	ReasonContradictory      = "supported_sources_disagree"
+	ReasonHistoryAbsent      = "historical_measurement_absent"
+	ReasonNoActivity         = "no_activity"
+	ReasonAttributionUnknown = "history_attribution_unknown"
 
 	TriggerExplicitRefresh  = "explicit_refresh"
 	TriggerDashboardOpen    = "dashboard_open"
@@ -55,6 +59,7 @@ const (
 	AggregationSum          = "sum"
 	ScopeSelectedProfile    = "selected_profile"
 	ScopeCombinedIdentity   = "combined_identity"
+	ScopeOverallHistory     = "overall_history"
 
 	freshnessLimit = 10 * time.Minute
 )

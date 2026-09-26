@@ -2,8 +2,9 @@
 import { URL } from "node:url";
 import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
@@ -138,6 +139,26 @@ async function profileAction(name) {
   const response = await completed;
   assert.equal(response.status(), 200, await response.text());
   return response;
+}
+async function runTerminalProfile(alias, method = "browser", expectedCode = "", action = "add") {
+  // The harness holds the command token; the browser page never receives it.
+  const response = await page.request.post(
+    new URL("/api/v1/command/profile-authentication", link).href,
+    {
+      headers: {
+        "X-CodexFolio-Command-Token": "browser-fixture-command",
+        Origin: new URL(link).origin,
+      },
+      data: { action, alias, auth_method: method, non_interactive: true },
+    },
+  );
+  assert.equal(response.status(), 200);
+  const events = (await response.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.equal(events.at(-1)?.code ?? "", expectedCode);
+  return events;
 }
 async function lifecycleAction(name, action) {
   const completed = page.waitForResponse(
@@ -276,6 +297,22 @@ try {
     await page.goto(link);
     await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
     assert.ok(!page.url().includes("bootstrap="));
+    await page.getByRole("heading", { name: "Trusted browser", exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Trust this browser" }).count(), 1);
+    check("new browser offers explicit trust without granting it automatically");
+    if (phase === "smoke") {
+      await page.getByRole("button", { name: "Trust this browser" }).click();
+      await page.getByText("This browser is trusted. You can revoke it in Settings.").waitFor();
+      await page.reload();
+      await page.getByRole("heading", { name: "Current capacity", exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Trust this browser" }).count(), 0);
+      const privateContext = await browser.newContext();
+      const privatePage = await privateContext.newPage();
+      await privatePage.goto(new URL("/", link).href);
+      await privatePage.getByText("Open a one-time dashboard link from your terminal.").waitFor();
+      await privateContext.close();
+      check("trusted browser reopens without bootstrap; private browser remains unauthorized");
+    }
     await page
       .getByText("Refresh failed. Last-known values keep their original capture times.", {
         exact: true,
@@ -858,7 +895,10 @@ try {
       assert.match(settings, /Native per-user mechanism: systemd-user/);
       assert.match(settings, /codex-folio service install/);
       check("Settings exposes native enrollment status and explicit terminal guidance");
-      assert.match(settings, /Periodic collection schedule[\s\S]*On demand · Saved intervals/);
+      assert.match(
+        settings,
+        /Periodic collection schedule[\s\S]*Periodic collection has not been chosen/,
+      );
       assert.equal(
         await page.getByLabel("Managed Launch interval · minutes", { exact: true }).inputValue(),
         "5",
@@ -886,6 +926,28 @@ try {
         "45",
       );
       check("Settings persists bounded collection intervals without enrolling the service");
+      await page.getByRole("button", { name: "Enable periodic collection", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page.getByText("Periodic collection enabled.", { exact: true }).waitFor();
+      assert.equal(
+        (await (await page.request.get(new URL("/api/v1/collection-settings", link).href)).json())
+          .consent,
+        "accepted",
+      );
+      await page.getByRole("button", { name: "Decline periodic collection", exact: true }).click();
+      await page
+        .getByText("Periodic collection declined; on-demand refresh remains available.", {
+          exact: true,
+        })
+        .waitFor();
+      const declinedSchedule = await (
+        await page.request.get(new URL("/api/v1/collection-settings", link).href)
+      ).json();
+      assert.equal(declinedSchedule.consent, "declined");
+      assert.equal(declinedSchedule.scheduler_enabled, false);
+      check(
+        "Settings consent controls are keyboard-accessible and independent of OS-login enrollment",
+      );
 
       const portableSection = page.locator(
         'section[aria-labelledby="portable-configuration-title"]',
@@ -1552,9 +1614,32 @@ try {
         true,
       );
       await profileAction("Continue in Codex");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      assert.match(await page.locator("main").innerText(), /profile add Imported --browser/);
+      await runTerminalProfile("Imported");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      const importedHistoryOffer = page.getByRole("region", { name: "Import existing history?" });
+      await importedHistoryOffer
+        .getByRole("heading", { name: "Review local history sources" })
+        .waitFor();
+      await importedHistoryOffer
+        .getByText(/candidate sessions/)
+        .first()
+        .waitFor();
+      assert.equal(
+        await importedHistoryOffer
+          .getByRole("button", { name: "Import source" })
+          .first()
+          .isDisabled(),
+        true,
+      );
+      await scanAccessibility("onboarding-history");
+      await capture("onboarding-history-narrow", 390, 844);
+      await importedHistoryOffer.getByRole("button", { name: "Not now" }).focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await importedHistoryOffer.count(), 0);
+      await page.setViewportSize({ width: 1440, height: 1000 });
       assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       check(
         "an imported profile requires an explicit local Identity Home choice and fake-Codex authentication before becoming Ready",
       );
@@ -1568,10 +1653,34 @@ try {
       await page.getByText("Pending · Resume setup", { exact: true }).first().waitFor();
       await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
       await profileAction("Continue in Codex");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      await runTerminalProfile("Research");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      assert.match(await page.locator("main").innerText(), /Found · 0\.153\.4/);
+      const researchHistoryOffer = page.getByRole("region", { name: "Import existing history?" });
+      await researchHistoryOffer
+        .getByText(/candidate sessions/)
+        .first()
+        .waitFor();
+      const researchSource = researchHistoryOffer.getByRole("region", {
+        name: "Work",
+        exact: true,
+      });
+      await researchSource
+        .getByRole("checkbox", { name: /I choose to import this source/ })
+        .check();
+      const onboardingImport = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/activity/sources") &&
+          response.request().method() === "POST",
+      );
+      await researchSource.getByRole("button", { name: "Import source" }).click();
+      assert.equal((await onboardingImport).status(), 200);
+      await researchHistoryOffer.getByText(/existing sessions were skipped/).waitFor();
+      await researchHistoryOffer.getByRole("button", { name: "Not now" }).click();
       assert.doesNotMatch(await page.locator("main").innerText(), /browser-auth-secret/);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      check(
+        "profile completion offers reviewed history with separate consent, decline and repeat import",
+      );
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
       const profileLaunchBefore = await (
@@ -1718,16 +1827,150 @@ try {
         "configuration assignment, conflict preview, cancellation, rejected application, reviewed promotion and successful projection",
       );
 
+      const unsignedReferencedHome = mkdtempSync(join(output, "referenced-awaiting-auth-"));
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Referenced pending");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("ReferencePending");
+      await page.getByLabel("Reference an existing Identity Home", { exact: true }).check();
+      await page
+        .getByLabel("Existing Identity Home path", { exact: true })
+        .fill(unsignedReferencedHome);
+      writeFileSync(control, "profile-needs-auth");
+      await profileAction("Use existing sign-in");
+      await page.getByText("Waiting for terminal setup to start…", { exact: true }).waitFor();
+      assert.match(
+        await page.locator("main").innerText(),
+        /profile add ReferencePending --browser/,
+      );
+      assert.doesNotMatch(
+        await page.locator("main").innerText(),
+        new RegExp(unsignedReferencedHome),
+      );
+      await runTerminalProfile("ReferencePending");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
       await page.getByLabel("Display Name", { exact: true }).fill("Referenced");
       await page.getByLabel("CLI Alias", { exact: true }).fill("Referenced");
       await page.getByLabel("Reference an existing Identity Home", { exact: true }).check();
       await page.getByLabel("Existing Identity Home path", { exact: true }).fill(referencedHome);
+      const referencedSessionId = "018f4f70-6f77-7c3f-9b77-93aa087dfc54";
+      const referencedDatabase = new DatabaseSync(join(referencedHome, "state_5.sqlite"));
+      try {
+        const fixture = readFileSync(
+          join(
+            "..",
+            "..",
+            "internal",
+            "adapters",
+            "codex",
+            "testdata",
+            "local-state",
+            "v5",
+            "threads.sql",
+          ),
+          "utf8",
+        );
+        referencedDatabase.exec(fixture.slice(0, fixture.indexOf("INSERT INTO threads")));
+        referencedDatabase
+          .prepare(
+            "INSERT INTO threads (id, created_at_ms, updated_at_ms, source, model, cwd, tokens_used, title, preview, first_user_message) VALUES (?, ?, ?, 'cli', 'gpt-5', ?, 913, 'private title', 'private preview', 'private prompt')",
+          )
+          .run(referencedSessionId, Date.now(), Date.now(), referencedHome);
+      } finally {
+        referencedDatabase.close();
+      }
       const reusedSignIn = await profileAction("Use existing sign-in");
       assert.equal(reusedSignIn.request().postDataJSON().action, "prepare");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       assert.doesNotMatch(await page.locator("main").innerText(), new RegExp(referencedHome));
+      const referencedHistoryOffer = page.getByRole("region", { name: "Import existing history?" });
+      const referencedSource = referencedHistoryOffer.getByRole("region", {
+        name: "Referenced",
+        exact: true,
+      });
+      await referencedSource.getByText("1 candidate sessions").waitFor();
+      assert.equal(
+        await referencedHistoryOffer
+          .getByRole("button", { name: "Continue to launch" })
+          .isEnabled(),
+        true,
+      );
+      await referencedSource
+        .getByRole("checkbox", { name: /I choose to import this source/ })
+        .check();
+      const beforeReferencedImport = (
+        await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
+      ).records;
+      await page.route("**/api/v1/activity/sources", async (route) => {
+        if (route.request().method() === "POST")
+          await route.fulfill({ status: 503, body: "fixture unavailable" });
+        else await route.continue();
+      });
+      await referencedSource.getByRole("button", { name: "Import source" }).click();
+      await referencedHistoryOffer
+        .getByText("Import failed. No success is assumed. Review the source and try again.")
+        .waitFor();
+      assert.equal(
+        await referencedHistoryOffer
+          .getByRole("button", { name: "Continue to launch" })
+          .isEnabled(),
+        true,
+      );
+      assert.deepEqual(
+        (await (await page.request.get(new URL("/api/v1/activity", link).href)).json()).records,
+        beforeReferencedImport,
+      );
+      const referencedProfile = (
+        await (await page.request.get(new URL("/api/v1/profiles", link).href)).json()
+      ).profiles.find((profile) => profile.alias === "Referenced");
+      assert.equal(referencedProfile.status, "ready");
+      await page.unroute("**/api/v1/activity/sources");
+      const referencedImport = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/v1/activity/sources") &&
+          response.request().method() === "POST",
+      );
+      await referencedSource.getByRole("button", { name: "Import source" }).click();
+      assert.equal((await referencedImport).status(), 200);
+      await referencedHistoryOffer.getByText(/1 new sessions were added/).waitFor();
+      const afterReferencedImport = (
+        await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
+      ).records;
+      assert.equal(afterReferencedImport.length, beforeReferencedImport.length + 1);
+      assert.equal(
+        afterReferencedImport.filter((record) => record.source_session_id === referencedSessionId)
+          .length,
+        1,
+      );
+      await referencedHistoryOffer.getByRole("button", { name: "Not now" }).click();
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Sessions", exact: true })
+        .click();
+      await page
+        .getByRole("combobox", { name: "Record type", exact: true })
+        .selectOption("observed_session");
+      await page
+        .getByRole("combobox", { name: "Profile", exact: true })
+        .selectOption("__unassigned__");
+      await page.getByRole("combobox", { name: "Date range", exact: true }).selectOption("all");
+      await page
+        .getByRole("table", { name: "Metadata timeline" })
+        .locator("tbody tr")
+        .first()
+        .getByRole("button", { name: "Open details" })
+        .click();
+      assert.match(await page.locator("main").innerText(), /Observed Session · Unassigned History/);
+      assert.match(await page.locator("main").innerText(), new RegExp(referencedSessionId));
+      await page.getByRole("button", { name: "Back to Sessions", exact: true }).click();
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Profiles", exact: true })
+        .click();
+      check(
+        "referenced-home onboarding import adds a new Unassigned session to history; failure keeps Ready launch available",
+      );
 
       await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
       await page.getByLabel("Display Name", { exact: true }).fill("Device");
@@ -1735,7 +1978,10 @@ try {
       await page.getByLabel("Device code", { exact: true }).check();
       await profileAction("Continue in Codex");
       await page
-        .getByText("Continue device-code authentication in your terminal:", { exact: true })
+        .getByText(
+          "Run this command in your terminal. This page will update when Codex finishes:",
+          { exact: true },
+        )
         .waitFor();
       assert.match(
         await page.locator("main").innerText(),
@@ -1752,12 +1998,32 @@ try {
           response.url().endsWith("/api/v1/profiles") && response.request().method() === "POST",
       );
       await page.getByRole("button", { name: "Continue in Codex", exact: true }).click();
-      assert.equal((await failed).status(), 409);
+      assert.equal((await failed).status(), 200);
+      await runTerminalProfile("Failure", "browser", "CF_PROFILE_AUTHENTICATION_FAILED");
+      await page.getByText("Codex authentication did not complete.", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       const failedProfile = page.getByRole("button", { name: "Failure", exact: true });
       await failedProfile.waitFor();
       await failedProfile.click();
       assert.match(await page.locator("main").innerText(), /Pending · Resume setup/);
+
+      writeFileSync(control, "profile-auth-cancel");
+      await page.getByRole("button", { name: "Add Identity Profile", exact: true }).click();
+      await page.getByLabel("Display Name", { exact: true }).fill("Interrupted");
+      await page.getByLabel("CLI Alias", { exact: true }).fill("Interrupted");
+      await profileAction("Continue in Codex");
+      await runTerminalProfile("Interrupted", "browser", "CF_PROFILE_AUTHENTICATION_CANCELLED");
+      await page.getByText("Codex authentication was cancelled.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Interrupted", exact: true }).click();
+      await page.getByRole("button", { name: "Pending · Resume setup", exact: true }).click();
+      writeFileSync(control, "supported");
+      await profileAction("Continue in Codex");
+      await runTerminalProfile("Interrupted");
+      await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
+      check(
+        "dashboard terminal handoff observes completion, failure and interrupted Pending resume without auth output",
+      );
 
       await page.getByRole("button", { name: "Work", exact: true }).click();
       await testNarrowFocusVisibility(page, check);
@@ -1773,8 +2039,8 @@ try {
       await capture("reauth-narrow", 390, 844);
       await page.setViewportSize({ width: 1440, height: 1000 });
       await profileAction("Continue in Codex");
+      await runTerminalProfile("Work", "browser", "", "reauthenticate");
       await page.getByText("Identity Profile is ready.", { exact: true }).waitFor();
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Personal", exact: true }).click();
       const selectedProfile = page.waitForResponse(
         (response) =>
@@ -1977,6 +2243,17 @@ try {
       await missing.close();
       check("missing bootstrap has actionable terminal guidance; CSRF-less mutation rejected");
       check("bootstrap replay rejected");
+    }
+    if (phase === "smoke") {
+      await page
+        .getByRole("navigation", { name: "Primary", exact: true })
+        .getByRole("button", { name: "Settings", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Forget this browser" }).click();
+      await page.getByRole("heading", { name: "Relaunch CodexFolio", exact: true }).waitFor();
+      await page.reload();
+      await page.getByText("Open a one-time dashboard link from your terminal.").waitFor();
+      check("forgetting the browser ends the session and prevents reopening");
     }
   }
   assert.deepEqual(errors, []);

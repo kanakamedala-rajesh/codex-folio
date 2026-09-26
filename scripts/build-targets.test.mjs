@@ -36,6 +36,11 @@ for (const target of targets) {
     assert.match(result.stdout, /source revision: [0-9a-f]{40}/);
     assert.match(result.stdout, /build mode: (native|cross-compiled)/);
     assert.match(result.stdout, /qualification: compile-only/);
+    if (target.name === "linux-amd64") {
+      const helperPath = resolve("build", "targets", target.name, "codex-folio-wsl-vault.exe");
+      assert.equal(existsSync(helperPath), true);
+      assertTargetBinary("windows-amd64", readFileSync(helperPath));
+    }
     console.log(result.stdout.trim());
   });
 }

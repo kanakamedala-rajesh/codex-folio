@@ -255,6 +255,23 @@ function createTargetArchive({
       mode: 0o644,
     },
   ];
+  if (target.goos === "linux") {
+    const helperPath = join(
+      rootDirectory,
+      "build",
+      "targets",
+      target.name,
+      "codex-folio-wsl-vault.exe",
+    );
+    if (!existsSync(helperPath)) {
+      throw new Error(`target build did not produce ${helperPath}`);
+    }
+    entries.push({
+      name: `${stem}/codex-folio-wsl-vault.exe`,
+      data: readFileSync(helperPath),
+      mode: 0o755,
+    });
+  }
   const archiveData = target.format === "zip" ? createZip(entries) : createTarGz(entries);
   writeFileSync(join(outputDirectory, archive), archiveData);
 
@@ -321,7 +338,11 @@ function createBuildInfo({
 
 function createInstallGuide(target, version, buildClass) {
   const command = target.format === "zip" ? ".\\install.ps1" : "./install.sh";
-  return `# VenkataSudha CodexFolio ${version}\n\nThis ${buildClass} archive is an unsigned Phase 0 dry-run artifact for ${target.name}.\nIt contains compile-only evidence and is not a stable release or native runtime qualification.\n\nInspect the installer before running it. The installer copies the executable to a user-local directory; it does not run during the release dry run.\n\nInstaller helper: \`${command}\`\n`;
+  const payload =
+    target.goos === "linux"
+      ? "the executable and bundled Windows-backed WSL vault helper"
+      : "the executable";
+  return `# VenkataSudha CodexFolio ${version}\n\nThis ${buildClass} archive is an unsigned Phase 0 dry-run artifact for ${target.name}.\nIt contains compile-only evidence and is not a stable release or native runtime qualification.\n\nInspect the installer before running it. The installer copies ${payload} to a user-local directory; it does not run during the release dry run.\n\nInstaller helper: \`${command}\`\n`;
 }
 
 function createInstaller(target, version, buildClass) {
@@ -329,7 +350,11 @@ function createInstaller(target, version, buildClass) {
     return `$ErrorActionPreference = "Stop"\n\n# VenkataSudha CodexFolio ${version} ${buildClass} ${target.name}\n$installDirectory = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {\n  Join-Path $HOME "AppData\\Local\\Programs\\CodexFolio"\n} else {\n  Join-Path $env:LOCALAPPDATA "Programs\\CodexFolio"\n}\n\nNew-Item -ItemType Directory -Force -Path $installDirectory | Out-Null\nCopy-Item -Force (Join-Path $PSScriptRoot "codex-folio.exe") (Join-Path $installDirectory "codex-folio.exe")\nWrite-Output "Installed codex-folio.exe to $installDirectory"\n`;
   }
 
-  return `#!/bin/sh\nset -eu\n\n# VenkataSudha CodexFolio ${version} ${buildClass} ${target.name}\ninstall_directory="\${PREFIX:-$HOME/.local}/bin"\nscript_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nmkdir -p "$install_directory"\ninstall -m 0755 "$script_directory/codex-folio" "$install_directory/codex-folio"\nprintf 'Installed codex-folio to %s\\n' "$install_directory/codex-folio"\n`;
+  const helperInstall =
+    target.goos === "linux"
+      ? `install -m 0755 "$script_directory/codex-folio-wsl-vault.exe" "$install_directory/codex-folio-wsl-vault.exe"\n`
+      : "";
+  return `#!/bin/sh\nset -eu\n\n# VenkataSudha CodexFolio ${version} ${buildClass} ${target.name}\ninstall_directory="\${PREFIX:-$HOME/.local}/bin"\nscript_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nmkdir -p "$install_directory"\ninstall -m 0755 "$script_directory/codex-folio" "$install_directory/codex-folio"\n${helperInstall}printf 'Installed codex-folio to %s\\n' "$install_directory/codex-folio"\n`;
 }
 
 function createDependencyLicenseInventory(version, buildClass) {

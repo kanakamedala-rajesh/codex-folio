@@ -1,6 +1,6 @@
 # VenkataSudha CodexFolio implementation plan
 
-Status: accepted implementation baseline; Phase 0 initiated
+Status: accepted implementation baseline, including approved M5A contract (#82); implementation and native qualification require separate evidence
 
 ## 1. Outcome
 
@@ -25,10 +25,10 @@ CodexFolio does not replace Codex. Codex remains responsible for authentication 
 4. Never claim live identity switching or exact cross-workspace thread transfer. A running Codex process retains its Launch Profile.
 5. Guarantee repository-first Safe Continuation; keep Exact Continuation experimental, explicit, allowlisted, transactional, and replaceable by the safe fallback.
 6. Keep Identity Homes isolated by default. Shared Work Home is experimental and visibly marked.
-7. Never store vault keys beside encrypted records or silently downgrade to plaintext.
+7. Never store vault keys beside encrypted records or downgrade to plaintext; preserve protected state and recovery when secure storage is unavailable.
 8. Keep the dashboard read-only with respect to remote identities. Local profile and preference management is allowed.
 9. Bind to loopback only in the MVP, but authenticate and authorize the browser boundary as a network boundary.
-10. Do not install background service integration, shell integration, telemetry, or experimental features without explicit user action.
+10. Automatically starting the on-demand companion does not authorize background collection or OS-login enrollment; obtain their separate consent. Shell/PATH setup, telemetry, and experimental features also require their own explicit user action.
 
 ## 3. Delivery architecture
 
@@ -52,7 +52,7 @@ The application is a modular monolith: one repository, Go module, executable, re
 
 - Installed Codex discovery, version and capability detection, App Server transport, and local metadata readers.
 - SQLite migrations, transactions, backups, retention, and exports.
-- Windows DPAPI, macOS Keychain, Linux Secret Service, and headless passphrase vault adapters.
+- Windows DPAPI, macOS Keychain, supported Linux secure storage, explicit passphrase mode, and the M5A Windows-user-backed WSL integration through the existing vault boundary (ADR 0035); qualification awaits native proof.
 - Platform paths, process supervision, user-service installation, notifications, browser launch, clock, and filesystem.
 - Optional CodexFolio-controlled update and telemetry endpoints.
 
@@ -214,6 +214,23 @@ Deliverables:
 
 Exit gate: WCAG 2.2 AA automated and manual checks pass for core journeys; browser acceptance passes at supported wide/narrow viewports, dark/light/high contrast, keyboard-only, reduced motion, and 200% zoom; service install/uninstall is explicit and reversible.
 
+### Milestone 5A — effortless everyday Codex companion
+
+Approved parent: #82. Contract reconciliation: #83 and ADRs 0035–0037. This milestone follows M5 without renumbering M6/M7; the parent is not an executable ticket. Contracts and their required ticket review precede dependent behavior implementation.
+
+Deliverables through bounded executable tickets:
+
+- plain startup guides one-time setup, starts/reuses one state owner, highlights eligible Selected Profile, and launches installed Codex in the foreground with preserved streams, input, arguments, working directory, signals, and exit status; the picker retains the usable service through launch;
+- companion availability after child exit, explicit/deferred stop that never kills Codex, and separate remembered background-collection choice and optional OS-login enrollment; refusal preserves launch/on-demand refresh;
+- qualified prompt-free Windows DPAPI, macOS Keychain, supported Linux secure storage, and Windows-user-backed WSL2 integration, with guided prerequisites/recovery, explicit passphrase alternative, recoverable migration, and no plaintext/colocated-key or silent replacement-key downgrade;
+- Codex-owned onboarding with existing-home registration, distinct managed/referenced ownership, immediate terminal instructions, automatically detected completion, validated readiness, and resumable Pending Profiles;
+- explicitly trusted, revocable browsers across ordinary restarts, transparent short-session renewal, repeatable dashboard reopening, and unchanged loopback/bootstrap/Host/Origin/CSRF and secret-custody protections;
+- consented source-preserving history import, explicit Unassigned History separate from selectable identities and Combined Identity View, reversible single/bulk assignment, durable provenance, deduplication, correct aggregates, and honest metric coverage under existing privacy/retention/purge/export rules;
+- user-approved one-time PATH setup, direct binary support, preserved advanced commands, printed dashboard address without ordinary-launch browser opening, and safe foreground launch despite optional analytics failures;
+- complete automated CLI/service/browser journeys plus storage failure injection, accessible changed flows, and usage documentation updated only as behavior ships.
+
+Exit gate: satisfy EC-01–EC-08 in `ACCEPTANCE-CRITERIA.md`, all child tickets, required canonical verification, and independent milestone audit. Mandatory candidate-bound native evidence uses installed Codex and two real authenticated identities on Windows AMD64, macOS ARM64, Linux AMD64 with supported secure storage, and WSL2 with actual Windows-user-backed protection. Cover setup/addition and completion detection, repeated switching/foreground launch, trusted dashboard reopening, post-child companion availability, and repetition after environment restart without routine application passphrase or separate service/unlock commands. Preserve sanitized environment/prerequisite/action/result/limitation records. Fake adapters, compilation, a foreground-only WSL helper, explicit passphrase mode, or inherited prior-milestone exceptions do not establish this core promise. Missing native/live evidence leaves M5A incomplete. Acceptance of these contracts is not implementation or qualification evidence.
+
 ### Milestone 6 — isolated experimental seams
 
 Goal: add high-value experiments without allowing them to destabilize ordinary launch, analytics, or Safe Continuation.
@@ -265,6 +282,8 @@ M3 Collection + analytics domain
 M4 Safe Continuation   M5 UI/service operational surface
    |                   /
    |------------------/
+   |
+M5A Everyday companion
    |
 M7 Production hardening
 

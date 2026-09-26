@@ -6,7 +6,7 @@ CodexFolio reviewer blocker IDs. Never performs general implementation,
 refactoring, cleanup, or redesign.
 """
 
-model = "gpt-5.6-sol"
+model = "gpt-6-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 

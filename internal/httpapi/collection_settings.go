@@ -19,8 +19,8 @@ import (
 const providerFloorBasis = "codex_app_server_supported_read_no_published_polling_cadence"
 
 type CollectionSettingsService interface {
-	CollectionSettings(context.Context) (usage.CollectionSettings, bool, error)
-	SetCollectionSettings(context.Context, usage.CollectionSettings) (usage.CollectionSettings, bool, error)
+	CollectionSettings(context.Context) (usage.CollectionSettings, usage.CollectionConsent, error)
+	SetCollectionSettings(context.Context, usage.CollectionSettings, *usage.CollectionConsent) (usage.CollectionSettings, usage.CollectionConsent, error)
 }
 
 func (server *Server) collectionSettingsHandler(response http.ResponseWriter, request *http.Request) {
@@ -29,7 +29,7 @@ func (server *Server) collectionSettingsHandler(response http.ResponseWriter, re
 		return
 	}
 	var settings usage.CollectionSettings
-	var enabled bool
+	var consent usage.CollectionConsent
 	var err error
 	switch request.Method {
 	case http.MethodGet:
@@ -37,7 +37,7 @@ func (server *Server) collectionSettingsHandler(response http.ResponseWriter, re
 			server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 			return
 		}
-		settings, enabled, err = server.collectionSettings.CollectionSettings(request.Context())
+		settings, consent, err = server.collectionSettings.CollectionSettings(request.Context())
 	case http.MethodPut:
 		contentType, _, parseErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
 		if parseErr != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
@@ -63,11 +63,20 @@ func (server *Server) collectionSettingsHandler(response http.ResponseWriter, re
 			server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 			return
 		}
-		settings, enabled, err = server.collectionSettings.SetCollectionSettings(request.Context(), usage.CollectionSettings{
+		if input.Consent != nil && *input.Consent != string(usage.CollectionConsentAccepted) && *input.Consent != string(usage.CollectionConsentDeclined) {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
+			return
+		}
+		var choice *usage.CollectionConsent
+		if input.Consent != nil {
+			parsed := usage.CollectionConsent(*input.Consent)
+			choice = &parsed
+		}
+		settings, consent, err = server.collectionSettings.SetCollectionSettings(request.Context(), usage.CollectionSettings{
 			ActiveInterval:  time.Duration(input.ActiveIntervalSeconds) * time.Second,
 			IdleInterval:    time.Duration(input.IdleIntervalSeconds) * time.Second,
 			ProviderMinimum: usage.ProviderSafeMinimum,
-		})
+		}, choice)
 	default:
 		server.writeMethodError(response, http.MethodGet+", "+http.MethodPut)
 		return
@@ -76,15 +85,16 @@ func (server *Server) collectionSettingsHandler(response http.ResponseWriter, re
 		server.writeAPIError(response, http.StatusBadRequest, diagnostics.CodeFor(err, apperrors.UsageRequestInvalid))
 		return
 	}
-	writeJSON(response, http.StatusOK, collectionSettingsResponse(settings, enabled))
+	writeJSON(response, http.StatusOK, collectionSettingsResponse(settings, consent))
 }
 
-func collectionSettingsResponse(settings usage.CollectionSettings, enabled bool) CollectionSettingsResponse {
+func collectionSettingsResponse(settings usage.CollectionSettings, consent usage.CollectionConsent) CollectionSettingsResponse {
 	return CollectionSettingsResponse{
 		ActiveIntervalSeconds:  int64(settings.ActiveInterval / time.Second),
 		IdleIntervalSeconds:    int64(settings.IdleInterval / time.Second),
 		ProviderMinimumSeconds: int64(settings.ProviderMinimum / time.Second),
-		SchedulerEnabled:       enabled,
+		SchedulerEnabled:       consent == usage.CollectionConsentAccepted,
+		Consent:                string(consent),
 		ProviderFloorBasis:     providerFloorBasis,
 	}
 }

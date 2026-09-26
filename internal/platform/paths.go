@@ -28,6 +28,8 @@ const (
 	metadataFileName      = "service.owner.json"
 	clientFileName        = "service.client.json"
 	vaultFileName         = "codex-folio.vault"
+	wslVaultFileName      = "codex-folio-wsl-dpapi.vault"
+	secureStorageFileName = "secure-storage.json"
 	managedHomesName      = "managed-homes"
 	profileQuarantineName = "profile-quarantine"
 	shellIntegrationName  = "shell-integration"
@@ -63,6 +65,8 @@ type Paths struct {
 	ClientFile        string
 	DatabaseFile      string
 	VaultFile         string
+	WSLVaultFile      string
+	SecureStorageFile string
 	ManagedHomes      string
 	ProfileQuarantine string
 	ShellIntegration  string
@@ -117,6 +121,8 @@ func ResolvePaths(options PathOptions) (Paths, error) {
 		ClientFile:        filepath.Join(ownerRuntime, clientFileName),
 		DatabaseFile:      filepath.Join(root, "codex-folio.sqlite3"),
 		VaultFile:         filepath.Join(root, vaultFileName),
+		WSLVaultFile:      filepath.Join(root, wslVaultFileName),
+		SecureStorageFile: filepath.Join(root, secureStorageFileName),
 		ManagedHomes:      filepath.Join(root, managedHomesName),
 		ProfileQuarantine: filepath.Join(root, profileQuarantineName),
 		ShellIntegration:  filepath.Join(root, shellIntegrationName),

@@ -67,6 +67,18 @@ try {
     targetName,
   );
 
+  if (target.goos === "linux") {
+    const helperPath = join(outputDirectory, "codex-folio-wsl-vault.exe");
+    run(
+      "go",
+      ["build", "-trimpath", "-buildvcs=false", "-o", helperPath, "./cmd/codex-folio-wsl-vault"],
+      rootDirectory,
+      { goos: "windows", goarch: "amd64" },
+      "windows-amd64",
+    );
+    console.log(`built ${helperPath}`);
+  }
+
   console.log(`built ${outputPath}`);
   if (targetName !== null) console.log(`target: ${targetName}`);
   console.log(`version: ${readVersion()}`);

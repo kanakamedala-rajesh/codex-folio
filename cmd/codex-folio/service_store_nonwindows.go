@@ -10,6 +10,7 @@ import (
 	"venkatasudha.com/codex-folio/internal/apperrors"
 	"venkatasudha.com/codex-folio/internal/platform"
 	"venkatasudha.com/codex-folio/internal/store"
+	"venkatasudha.com/codex-folio/internal/vault"
 )
 
 func openServiceStore(paths platform.Paths) (*store.Store, error) {
@@ -19,9 +20,7 @@ func openServiceStore(paths platform.Paths) (*store.Store, error) {
 func openServiceStoreWithVaultMode(paths platform.Paths, mode platform.VaultMode, passphrase string) (*store.Store, error) {
 	switch mode {
 	case "", platform.VaultModeSecretService:
-		secureVault, err := platform.NewSecretServiceVaultWithOptions(platform.SecretServiceOptions{
-			AllowCreate: allowSecretServiceInitialization(paths.DatabaseFile),
-		})
+		secureVault, err := newNativeServiceVault(paths, platform.VaultModeSecretService, allowSecretServiceInitialization(paths.DatabaseFile))
 		if err != nil {
 			return nil, err
 		}
@@ -42,8 +41,28 @@ func openServiceStoreWithVaultMode(paths platform.Paths, mode platform.VaultMode
 			return nil, err
 		}
 		return stateStore, nil
+	case platform.VaultModeWSLDPAPI:
+		secureVault, err := newNativeServiceVault(paths, mode, allowVaultInitialization(paths.DatabaseFile))
+		if err != nil {
+			return nil, err
+		}
+		return store.OpenWithVault(paths.DatabaseFile, secureVault)
 	default:
 		return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("unsupported vault mode"))
+	}
+}
+
+func newNativeServiceVault(paths platform.Paths, mode platform.VaultMode, allowCreate bool) (vault.Vault, error) {
+	switch mode {
+	case "", platform.VaultModeSecretService:
+		return platform.NewSecretServiceVaultWithOptions(platform.SecretServiceOptions{AllowCreate: allowCreate})
+	case platform.VaultModeWSLDPAPI:
+		if !platform.IsWSL2() {
+			return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("Windows-backed storage requires WSL2"))
+		}
+		return platform.NewWSLDPAPIVaultWithOptions(paths.WSLVaultFile, platform.WSLDPAPIOptions{AllowCreate: allowCreate})
+	default:
+		return nil, apperrors.New(apperrors.VaultUnavailable, errors.New("unsupported native vault mode"))
 	}
 }
 

@@ -89,8 +89,15 @@ func seedDashboardActivity(t *testing.T, state *store.Store, projects *activity.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, alias := range []string{"Work", "Personal"} {
-		if _, err := service.Refresh(ctx, alias); err != nil {
+	sources, err := service.ReviewSources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if source.Label != "Work" && source.Label != "Personal" {
+			continue
+		}
+		if _, err := service.ImportSource(ctx, source.SourceID, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -98,6 +105,7 @@ func seedDashboardActivity(t *testing.T, state *store.Store, projects *activity.
 }
 
 func TestDashboardActivityFixturePreservesIndependentMetadata(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
 	paths := launchTestPaths(t)
 	secureVault := seedReadyLaunchProfile(t, paths)
 	seedReferencedReadyProfile(t, paths, secureVault)
@@ -124,12 +132,12 @@ func TestDashboardActivityFixturePreservesIndependentMetadata(t *testing.T) {
 		t.Fatalf("fixture records = %d, error = %v", len(records), err)
 	}
 	states := map[string]int{}
-	foundOlderPersonal := false
+	foundOlderUnassigned := false
 	for _, record := range records {
 		states[record.Correlation.State]++
-		if record.ProfileAlias == "Personal" && record.TokensUsed != nil && *record.TokensUsed == 84 {
+		if record.ProfileAlias == "Unassigned History" && record.TokensUsed != nil && *record.TokensUsed == 84 {
 			age := time.Since(record.LastObservedAt)
-			foundOlderPersonal = age > 30*24*time.Hour && age < 90*24*time.Hour
+			foundOlderUnassigned = age > 30*24*time.Hour && age < 90*24*time.Hour
 		}
 		if record.RecordType == activity.RecordTypeManagedLaunch && (record.Lifecycle != "exited" || record.ExitStatus == nil || *record.ExitStatus != 17 || record.Model != "" || record.TokensUsed != nil) {
 			t.Fatalf("managed facts were conflated: %#v", record)
@@ -138,10 +146,10 @@ func TestDashboardActivityFixturePreservesIndependentMetadata(t *testing.T) {
 			t.Fatalf("partial observation = %#v", record)
 		}
 	}
-	if !foundOlderPersonal {
-		t.Fatal("fixture does not contain a supported Personal observation between 30 and 90 days old")
+	if !foundOlderUnassigned {
+		t.Fatal("fixture does not contain a supported Unassigned observation between 30 and 90 days old")
 	}
-	if states[activity.CorrelationCorrelated] != 2 || states[activity.CorrelationContradictory] != 1 || states[activity.CorrelationUncorrelated] != 3 {
+	if states[activity.CorrelationCorrelated] != 4 || states[activity.CorrelationContradictory] != 0 || states[activity.CorrelationUncorrelated] != 2 {
 		t.Fatalf("fixture correlations = %#v", states)
 	}
 	encoded := string(mustJSON(t, httpapi.ActivityResponseFor(records)))

@@ -1,3 +1,4 @@
+import { summarizeHistory } from "./historicalSummary";
 import { quotaWindowLabel } from "./quotaWindow";
 import { useEffect, useEffectEvent, useMemo, useState, type RefObject } from "react";
 import type {
@@ -688,15 +689,18 @@ function RecordTable({
 function TokenView({
   records,
   projects,
+  summary,
 }: {
   records: ActivityRecord[];
   projects: ProjectIdentity[];
+  summary: AnalyticsResponse | null;
 }) {
   const supported = records.filter((record) => record.tokens_used !== "");
   return (
     <section className="border-t border-rule py-6">
       <h2 className="mb-4 text-[1.4rem] font-bold">{c.tokensTitle}</h2>
       <p className="mb-4 max-w-[75ch] text-muted">{c.tokensSubtitle}</p>
+      {summary && <HistoricalSummary data={summary} />}
       <EvidenceChart
         label={c.tokensChart}
         rows={supported.map((record) => ({
@@ -706,6 +710,48 @@ function TokenView({
       />
       {supported.length ? <p className="mb-4 text-sm text-muted">{c.chartTableNote}</p> : null}
       <RecordTable records={records} projects={projects} mode="tokens" />
+    </section>
+  );
+}
+
+function HistoricalSummary({ data }: { data: AnalyticsResponse }) {
+  const metrics = data.historical_metrics ?? [];
+  return (
+    <section aria-label={c.historicalSummary} className="mb-6 rounded border border-rule p-4">
+      <h3 className="mb-2 font-semibold">{c.historicalSummary}</h3>
+      <p className="mb-3 max-w-[75ch] text-sm text-muted">{c.historicalSummaryDetail}</p>
+      {metrics.length ? (
+        <dl className="grid gap-4">
+          {metrics.map((metric) => (
+            <div key={`${metric.metric_key}:${metric.source}:${metric.source_version}`}>
+              <dt className="font-semibold">
+                {metric.metric_key === "codex.local.tokens_used" ? c.tokens : metric.metric_key} ·{" "}
+                {metric.source === "local_metadata" ? c.historicalSource : metric.source}
+                {metric.source_version ? ` ${metric.source_version}` : ""}
+              </dt>
+              <dd className="mt-1">
+                {metric.value === undefined
+                  ? c.unavailable
+                  : `${number.format(BigInt(metric.value))} ${metric.unit}`}
+                {` · ${metric.availability} · ${c.historicalFreshness}`}
+              </dd>
+              <dd className="mt-1 text-sm text-muted">
+                {c.historicalCoverage(metric.measured_session_count, metric.session_count)} ·{" "}
+                {c.unassignedContribution}:{" "}
+                {metric.unassigned_value !== undefined
+                  ? `${number.format(BigInt(metric.unassigned_value))} ${metric.unit}`
+                  : c.unavailable}
+              </dd>
+              <dd className="mt-1 text-sm text-muted">
+                {c.historicalPeriod}: {instant(metric.coverage_start_at)} –{" "}
+                {instant(metric.coverage_end_at)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p>{c.noHistoricalSummary}</p>
+      )}
     </section>
   );
 }
@@ -1133,6 +1179,8 @@ export function Analytics({
                 const next = item.toLowerCase() as AnalyticsTab;
                 if (next === "capacity") setStatus(c.loading);
                 else if (next !== "compare") setActivityStatus(c.activityLoading);
+                if (next === "capacity" && !profileId)
+                  setProfileId(selection?.profile_id ?? data.candidates[0]?.profile_id ?? "");
                 setTab(next);
               }}
               className={`${button} aria-[current=page]:border-accent aria-[current=page]:text-accent`}
@@ -1148,7 +1196,7 @@ export function Analytics({
         <>
           <details open className="mb-6 border-b border-rule pb-4">
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">
-              Filters · {profile?.alias ?? c.none} ·{" "}
+              Filters · {profile?.alias ?? (tab === "capacity" ? c.none : c.overallHistory)} ·{" "}
               {range === "30-days"
                 ? c.last30Days
                 : range === "90-days"
@@ -1186,6 +1234,7 @@ export function Analytics({
                   }}
                   className={field}
                 >
+                  {tab !== "capacity" && <option value="">{c.overallHistory}</option>}
                   {data.candidates.map((item) => (
                     <option key={item.profile_id} value={item.profile_id}>
                       {item.alias}
@@ -1288,7 +1337,15 @@ export function Analytics({
               <p className="mb-4 max-w-[75ch] text-muted">{c.boundary}</p>
             </>
           ) : tab === "tokens" ? (
-            <TokenView records={visibleActivity} projects={projects} />
+            <TokenView
+              records={visibleActivity}
+              projects={projects}
+              summary={
+                !profileId && !projectId
+                  ? { ...data, historical_metrics: summarizeHistory(visibleActivity) }
+                  : null
+              }
+            />
           ) : tab === "projects" ? (
             <ProjectView
               projects={visibleProjects}

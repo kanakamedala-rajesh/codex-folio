@@ -578,6 +578,106 @@ func migrations() []migration {
 				return err
 			},
 		},
+		{
+			version: 25,
+			name:    "persistent-browser-trust",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE browser_trust (
+					credential_digest BLOB PRIMARY KEY NOT NULL CHECK (length(credential_digest) = 32),
+					granted_at TEXT NOT NULL
+				)`)
+				return err
+			},
+		},
+		{
+			version: 26,
+			name:    "dashboard-tls-identity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE dashboard_tls_identity (
+					identity_id TEXT PRIMARY KEY NOT NULL CHECK (identity_id = 'dashboard'),
+					root_certificate_pem BLOB NOT NULL CHECK (typeof(root_certificate_pem) = 'blob'),
+					server_certificate_pem BLOB NOT NULL CHECK (typeof(server_certificate_pem) = 'blob'),
+					server_key_ciphertext BLOB NOT NULL CHECK (typeof(server_key_ciphertext) = 'blob')
+				)`)
+				return err
+			},
+		},
+		{
+			version: 27,
+			name:    "collection-consent",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `ALTER TABLE settings ADD COLUMN collection_consent TEXT NOT NULL DEFAULT 'undecided' CHECK (collection_consent IN ('undecided', 'accepted', 'declined'))`)
+				return err
+			},
+		},
+		{
+			version: 28,
+			name:    "unassigned-session-identity",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`ALTER TABLE observed_sessions ADD COLUMN attribution_provenance TEXT NOT NULL DEFAULT 'legacy_profile_observation' CHECK (attribution_provenance IN ('legacy_profile_observation', 'managed_launch', 'unassigned'))`,
+					`UPDATE observed_sessions SET attribution_provenance = 'unassigned' WHERE profile_id IS NULL`,
+					`DROP INDEX idx_observed_sessions_source_identity`,
+					`UPDATE observed_sessions SET attribution_provenance = 'managed_launch', correlation_state = 'correlated', profile_id = (SELECT ml.profile_id FROM correlation_evidence ce JOIN managed_launches ml ON ml.managed_launch_id = ce.managed_launch_id WHERE ce.observed_session_id = observed_sessions.observed_session_id AND ce.evidence_type = 'explicit' AND ce.confidence = 'high' LIMIT 1) WHERE EXISTS (SELECT 1 FROM correlation_evidence ce JOIN managed_launches ml ON ml.managed_launch_id = ce.managed_launch_id WHERE ce.observed_session_id = observed_sessions.observed_session_id AND ce.evidence_type = 'explicit' AND ce.confidence = 'high')`,
+					`DELETE FROM correlation_evidence WHERE observed_session_id IN (SELECT observed_session_id FROM (SELECT observed_session_id, ROW_NUMBER() OVER (PARTITION BY source, source_session_id ORDER BY (attribution_provenance = 'managed_launch') DESC, rtrim(COALESCE(last_observed_at, started_at), 'Z') DESC, observed_session_id) AS rank FROM observed_sessions WHERE source_session_id IS NOT NULL) WHERE rank > 1)`,
+					`UPDATE observed_sessions SET profile_id = NULL, attribution_provenance = 'unassigned', correlation_state = 'uncorrelated' WHERE source_session_id IS NOT NULL AND attribution_provenance <> 'managed_launch' AND (source, source_session_id) IN (SELECT source, source_session_id FROM observed_sessions GROUP BY source, source_session_id HAVING COUNT(DISTINCT COALESCE(profile_id, '')) > 1)`,
+					`DELETE FROM correlation_evidence WHERE observed_session_id IN (SELECT observed_session_id FROM observed_sessions WHERE profile_id IS NULL)`,
+					`DELETE FROM observed_sessions WHERE observed_session_id IN (SELECT observed_session_id FROM (SELECT observed_session_id, ROW_NUMBER() OVER (PARTITION BY source, source_session_id ORDER BY (attribution_provenance = 'managed_launch') DESC, rtrim(COALESCE(last_observed_at, started_at), 'Z') DESC, observed_session_id) AS rank FROM observed_sessions WHERE source_session_id IS NOT NULL) WHERE rank > 1)`,
+					`CREATE UNIQUE INDEX idx_observed_sessions_source_identity ON observed_sessions (source, source_session_id) WHERE source_session_id IS NOT NULL`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			version: 29,
+			name:    "historical-session-assignments",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `CREATE TABLE observed_session_assignments (
+					observed_session_id TEXT PRIMARY KEY NOT NULL,
+					profile_id TEXT,
+					assigned_at TEXT NOT NULL,
+					FOREIGN KEY (observed_session_id) REFERENCES observed_sessions (observed_session_id) ON DELETE CASCADE,
+					FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id) ON DELETE SET NULL
+				)`)
+				return err
+			},
+		},
+		{
+			version: 30,
+			name:    "usage-no-activity-availability",
+			apply: func(ctx context.Context, tx *sql.Tx) error {
+				for _, statement := range []string{
+					`PRAGMA defer_foreign_keys = ON`,
+					`CREATE TABLE metric_availability_v30 (
+						metric_availability_id TEXT PRIMARY KEY NOT NULL,
+						profile_id TEXT NOT NULL,
+						metric_key TEXT NOT NULL,
+						state TEXT NOT NULL CHECK (state IN ('available', 'unsupported', 'temporarily_unavailable', 'stale', 'reauthentication_required', 'contradictory', 'no_activity')),
+						checked_at TEXT NOT NULL,
+						provenance_id TEXT,
+						reason TEXT NOT NULL DEFAULT '',
+						condition TEXT NOT NULL DEFAULT '',
+						FOREIGN KEY (profile_id) REFERENCES identity_profiles (profile_id),
+						FOREIGN KEY (metric_key) REFERENCES usage_metrics (metric_key),
+						FOREIGN KEY (provenance_id) REFERENCES metric_provenance (provenance_id)
+					)`,
+					`INSERT INTO metric_availability_v30 SELECT metric_availability_id, profile_id, metric_key, state, checked_at, provenance_id, reason, condition FROM metric_availability`,
+					`DROP TABLE metric_availability`,
+					`ALTER TABLE metric_availability_v30 RENAME TO metric_availability`,
+					`CREATE INDEX idx_metric_availability_profile ON metric_availability (profile_id)`,
+					`CREATE INDEX idx_metric_availability_provenance ON metric_availability (provenance_id)`,
+				} {
+					if _, err := tx.ExecContext(ctx, statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -832,13 +932,15 @@ var expectedTables = map[string][]string{
 	"configuration_pack_versions":    {"configuration_pack_version_id", "configuration_pack_id", "pack_version", "state", "content_digest", "content_json", "created_at"},
 	"correlation_evidence":           {"correlation_evidence_id", "managed_launch_id", "observed_session_id", "confidence", "evidence_type", "observed_at"},
 	"diagnostic_aggregates":          {"diagnostic_aggregate_id", "component", "error_code", "severity", "occurrence_count", "first_seen_at", "last_seen_at"},
+	"dashboard_tls_identity":         {"identity_id", "root_certificate_pem", "server_certificate_pem", "server_key_ciphertext"},
 	"experimental_transactions":      {"experimental_transaction_id", "capability", "state", "started_at", "updated_at"},
 	"identity_homes":                 {"identity_home_id", "profile_id", "ownership", "location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext", "created_at", "updated_at"},
 	"identity_profiles":              {"profile_id", "display_name", "status", "identity_home_id", "authentication_method", "email", "workspace", "created_at", "updated_at"},
 	"managed_launches":               {"managed_launch_id", "profile_id", "lease_id", "project_identity_id", "state", "started_at", "ended_at", "process_id", "exit_status", "expected_session_id", "continuation_checkpoint_id", "continuation_revision", "boot_session_id"},
 	"metric_availability":            {"metric_availability_id", "profile_id", "metric_key", "state", "checked_at", "provenance_id", "reason", "condition"},
 	"metric_provenance":              {"provenance_id", "source", "source_version", "captured_at", "freshness", "availability", "provenance_label"},
-	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state"},
+	"observed_sessions":              {"observed_session_id", "profile_id", "source", "started_at", "ended_at", "source_session_id", "source_version", "project_identity_id", "last_observed_at", "model", "tokens_used", "correlation_state", "attribution_provenance"},
+	"observed_session_assignments":   {"observed_session_id", "profile_id", "assigned_at"},
 	"pending_profiles":               {"pending_profile_id", "display_name", "requested_alias", "state", "identity_home_id", "created_at", "updated_at"},
 	"profile_setup_stages":           {"profile_id", "discovery_completed", "home_completed", "authentication_completed", "validation_completed", "selection_completed", "updated_at"},
 	"profile_quarantine":             {"profile_id", "state", "was_selected", "quarantined_at", "purge_after", "updated_at"},
@@ -847,8 +949,9 @@ var expectedTables = map[string][]string{
 	"schema_migrations":              {"version", "name", "applied_at"},
 	"selected_profile":               {"selection_id", "profile_id", "updated_at"},
 	"service_ownership":              {"ownership_id", "process_id", "generation", "state", "started_at", "last_seen_at"},
-	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
+	"settings":                       {"settings_id", "analytics_retention_mode", "analytics_retention_days", "diagnostics_retention_days", "locale", "appearance", "service_enabled", "experimental_features_enabled", "updated_at", "checkpoint_repository_retention_mode", "checkpoint_repository_retention_days", "checkpoint_transcript_retention_mode", "checkpoint_transcript_retention_days", "collection_active_interval_seconds", "collection_idle_interval_seconds", "collection_consent", "notification_detail_enabled", "diagnostics_enabled", "diagnostics_level", "automatic_update_checks_enabled"},
 	"telemetry_state":                {"telemetry_state_id", "enabled", "schema_version", "consented_at", "installation_id"},
+	"browser_trust":                  {"credential_digest", "granted_at"},
 	"update_check_state":             {"update_check_state_id", "status", "current_version", "available_version", "release_notes", "download_url", "installer_guidance", "checked_at", "next_check_at", "error_code"},
 	"usage_aggregates":               {"aggregate_id", "group_key", "profile_id", "project_identity_id", "metric_key", "value", "unit", "source", "source_version", "provenance_label", "availability", "assumptions", "uncertainty", "bucket_kind", "bucket_start", "bucket_end", "timezone", "first_observed_at", "last_observed_at", "first_captured_at", "last_captured_at", "samples", "source_scope_ciphertext"},
 	"usage_metrics":                  {"metric_key", "unit", "value_kind", "created_at", "source_class", "scope", "aggregation"},
@@ -894,11 +997,12 @@ var expectedIndexes = []string{
 }
 
 var sensitiveColumns = map[string][]string{
-	"usage_aggregates":   {"source_scope_ciphertext"},
-	"checkpoints":        {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
-	"identity_homes":     {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
-	"project_identities": {"canonical_path_ciphertext"},
-	"usage_snapshots":    {"login_identity_ciphertext", "workspace_ciphertext"},
+	"dashboard_tls_identity": {"server_key_ciphertext"},
+	"usage_aggregates":       {"source_scope_ciphertext"},
+	"checkpoints":            {"goal_ciphertext", "completed_work_ciphertext", "pending_work_ciphertext", "validation_ciphertext", "risks_ciphertext", "next_action_ciphertext", "recovery_metadata_ciphertext"},
+	"identity_homes":         {"location_ciphertext", "documented_login_identity_ciphertext", "documented_workspace_ciphertext"},
+	"project_identities":     {"canonical_path_ciphertext"},
+	"usage_snapshots":        {"login_identity_ciphertext", "workspace_ciphertext"},
 }
 
 func validateSchema(ctx context.Context, database *sql.DB) error {

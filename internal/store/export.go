@@ -59,8 +59,20 @@ func (store *Store) ExportAnalytics(ctx context.Context, request activity.Export
 		if err == nil {
 			exported := []activity.ActivityExportRecord{}
 			for _, record := range records {
+				if request.Scope == usage.ScopeCombinedIdentity && record.ProfileID == "" {
+					continue
+				}
 				if exportRecordMatches(record.ProfileID, record.ProjectID, record.StartedAt, record.LastObservedAt, profileID, request.ProjectID, request.From, request.To) {
-					exported = append(exported, activity.ActivityExportRecord{TimelineRecord: record})
+					entry := activity.ActivityExportRecord{TimelineRecord: record}
+					if record.RecordType == activity.RecordTypeObservedSession && record.Source == activity.SourceLocalMetadata {
+						entry.MetricKey, entry.Unit, entry.Freshness = "codex.local.tokens_used", "tokens", "historical"
+						entry.Availability = "absent"
+						if record.TokensUsed != nil {
+							entry.Availability = "available"
+						}
+						entry.CoverageStartAt, entry.CoverageEndAt = exportTime(record.StartedAt), exportTime(record.LastObservedAt)
+					}
+					exported = append(exported, entry)
 				}
 			}
 			result.Activity = &exported

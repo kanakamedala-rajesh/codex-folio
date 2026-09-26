@@ -200,17 +200,48 @@ func (server *Server) analytics(response http.ResponseWriter, request *http.Requ
 	query := request.URL.Query()
 	scope := query.Get("scope")
 	values, hasScope := query["scope"]
-	if len(query) > 1 || (len(query) == 1 && (!hasScope || len(values) != 1 || (scope != usage.ScopeSelectedProfile && scope != usage.ScopeCombinedIdentity))) {
+	if len(query) > 1 || (len(query) == 1 && (!hasScope || len(values) != 1 || (scope != usage.ScopeSelectedProfile && scope != usage.ScopeCombinedIdentity && scope != usage.ScopeOverallHistory))) {
 		server.writeUsageError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 		return
 	}
-	view, records, err := server.usage.View(request.Context(), scope)
+	viewScope := scope
+	if scope == usage.ScopeOverallHistory {
+		viewScope = usage.ScopeCombinedIdentity
+	}
+	view, records, err := server.usage.View(request.Context(), viewScope)
 	if err != nil {
 		server.writeUsageServiceError(response, err)
 		return
 	}
+	if scope == usage.ScopeOverallHistory {
+		if server.activities == nil {
+			server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+			return
+		}
+		records, err = server.activities.List(request.Context(), activity.Filters{})
+		if err != nil {
+			server.writeUsageServiceError(response, err)
+			return
+		}
+	}
 	result := analyticsResponse(view, records)
+	if scope == usage.ScopeOverallHistory {
+		result.Scope = usage.ScopeOverallHistory
+		// Provider snapshots and aggregates remain tied to the combined identity
+		// view; this scope represents only locally observed session history.
+		result.Profiles = []UsageSnapshotResponse{}
+		result.Aggregates = []UsageAggregate{}
+		result.Ambiguities = []UsageMetricAmbiguity{}
+		result.Candidates = []UsageCandidate{}
+		result.RecommendedProfileId = ""
+		result.EligibleProfileCount = 0
+	}
+	result.HistoricalMetrics = historicalMetrics(records, view, result.Scope)
 	result.Recent = []UsageSnapshotResponse{}
+	if scope == usage.ScopeOverallHistory {
+		writeJSON(response, http.StatusOK, result)
+		return
+	}
 	for _, candidate := range view.Candidates {
 		snapshots, err := server.usage.Recent(request.Context(), usage.ProfileTarget{ID: candidate.ProfileID, Alias: candidate.Alias})
 		if err != nil {
@@ -267,6 +298,7 @@ func analyticsResponse(view usage.DashboardView, records []activity.TimelineReco
 		Scope: view.Scope, EligibleProfileCount: int64(view.EligibleProfileCount), Profiles: []UsageSnapshotResponse{},
 		RecommendedProfileId: view.RecommendedProfileID, Candidates: []UsageCandidate{},
 		Aggregates: []UsageAggregate{}, Ambiguities: []UsageMetricAmbiguity{}, Activity: ActivityResponseFor(records).Records,
+		HistoricalMetrics: []HistoricalMetric{},
 	}
 	for _, candidate := range view.Candidates {
 		result.Candidates = append(result.Candidates, UsageCandidate{ProfileId: candidate.ProfileID, Alias: candidate.Alias, Eligible: candidate.Eligible, CapacityState: candidate.CapacityState})
@@ -283,6 +315,32 @@ func analyticsResponse(view usage.DashboardView, records []activity.TimelineReco
 	}
 	for _, key := range view.AmbiguousMetricKeys {
 		result.Ambiguities = append(result.Ambiguities, UsageMetricAmbiguity{MetricKey: key, Reason: usage.ReasonContradictory})
+	}
+	return result
+}
+
+// historicalMetrics projects domain summaries into the browser contract.
+func historicalMetrics(records []activity.TimelineRecord, view usage.DashboardView, scope string) []HistoricalMetric {
+	selectedID := ""
+	if scope == usage.ScopeSelectedProfile {
+		if len(view.Candidates) == 0 {
+			return []HistoricalMetric{}
+		}
+		selectedID = view.Candidates[0].ProfileID
+	}
+	summaries := activity.HistoricalMetrics(records, scope, selectedID)
+	result := make([]HistoricalMetric, 0, len(summaries))
+	for _, summary := range summaries {
+		result = append(result, HistoricalMetric{
+			MetricKey: "codex.local.tokens_used", Unit: "tokens", Source: summary.Source,
+			SourceVersion: summary.SourceVersion, Freshness: "historical",
+			Value: summary.Value, UnassignedValue: summary.UnassignedValue,
+			Availability: summary.Availability, SessionCount: summary.SessionCount,
+			MeasuredSessionCount:   summary.MeasuredSessionCount,
+			UnassignedSessionCount: summary.UnassignedSessionCount,
+			CoverageStartAt:        formatUsageTime(summary.CoverageStartAt),
+			CoverageEndAt:          formatUsageTime(summary.CoverageEndAt),
+		})
 	}
 	return result
 }
