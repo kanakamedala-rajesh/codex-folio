@@ -301,6 +301,7 @@ export function Sessions({
       )
     : [];
   function open(record: ActivityRecord) {
+    setAssignmentTarget(record.profile_id ?? "");
     setSelectedKey(key(record));
     requestAnimationFrame(() => heading.current?.focus());
   }

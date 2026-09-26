@@ -476,6 +476,12 @@ export async function testSessions({
   await choices.nth(0).check();
   await choices.nth(1).check();
   const assignment = page.getByRole("region", { name: "Assign selected sessions" });
+  const assignmentResponse = () =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/activity/assignments" &&
+        response.request().method() === "POST",
+    );
   await assignment.getByRole("combobox", { name: "Assign to" }).selectOption(work.profile_id);
   const authorizedAssignment = page.waitForRequest(
     (request) =>
@@ -507,22 +513,39 @@ export async function testSessions({
     2,
   );
   await select("Profile", "");
-  const assignedRow = page
-    .getByRole("table", { name: "Metadata timeline" })
-    .getByRole("row")
-    .filter({ hasText: "Observed Session" })
-    .first();
-  await assignedRow.getByRole("button", { name: "Open details" }).click();
+  const assignedForCorrection = newlyAssigned[0];
+  await assignment.getByRole("combobox", { name: "Assign to" }).selectOption(personal.profile_id);
+  await rows()
+    .locator(`button[data-session-key="observed_session:${assignedForCorrection.id}"]`)
+    .click();
   const detail = page.getByRole("region", { name: "Correct ownership" });
-  await detail.getByRole("combobox", { name: "Assign to" }).selectOption(personal.profile_id);
+  assert.equal(
+    await detail.getByRole("combobox", { name: "Assign to" }).inputValue(),
+    work.profile_id,
+    "opening an assigned session uses its current owner, not the bulk target",
+  );
+  const unchangedAssignment = assignmentResponse();
   await detail.getByRole("button", { name: "Save assignment" }).click();
-  await detail.getByRole("status").filter({ hasText: "Ownership updated" }).waitFor();
+  assert.equal((await unchangedAssignment).status(), 200);
+  const afterUnchangedSave = (
+    await (await page.request.get(new URL("/api/v1/activity", link).href)).json()
+  ).records.find((record) => record.id === assignedForCorrection.id);
+  assert.equal(
+    afterUnchangedSave?.profile_id,
+    work.profile_id,
+    "unchanged Save preserves ownership",
+  );
+  await detail.getByRole("combobox", { name: "Assign to" }).selectOption(personal.profile_id);
+  const correctedAssignment = assignmentResponse();
+  await detail.getByRole("button", { name: "Save assignment" }).click();
+  assert.equal((await correctedAssignment).status(), 200);
   await page.getByRole("button", { name: "Back to Sessions" }).click();
   const corrected = (await (await page.request.get(new URL("/api/v1/activity", link).href)).json())
     .records;
   assert.ok(
     corrected.some(
       (record) =>
+        record.id === assignedForCorrection.id &&
         record.attribution_provenance === "user_assigned" &&
         record.profile_id === personal.profile_id,
     ),
@@ -559,8 +582,9 @@ export async function testSessions({
     .locator(`button[data-session-key="observed_session:${workSession.id}"]`)
     .click();
   await detail.getByRole("combobox", { name: "Assign to" }).selectOption("");
+  const returnedAssignment = assignmentResponse();
   await detail.getByRole("button", { name: "Save assignment" }).click();
-  await detail.getByRole("status").filter({ hasText: "Ownership updated" }).waitFor();
+  assert.equal((await returnedAssignment).status(), 200);
   await page.getByRole("button", { name: "Back to Sessions" }).click();
   const returned = (await (await page.request.get(historyURL)).json()).records;
   const returnedSession = returned.find((record) => record.id === workSession.id);
@@ -579,6 +603,21 @@ export async function testSessions({
     await rows().locator(`button[data-session-key="observed_session:${workSession.id}"]`).count(),
     1,
   );
+  await assignment.getByRole("combobox", { name: "Assign to" }).selectOption(personal.profile_id);
+  await rows().locator(`button[data-session-key="observed_session:${workSession.id}"]`).click();
+  assert.equal(
+    await detail.getByRole("combobox", { name: "Assign to" }).inputValue(),
+    "",
+    "opening an Unassigned session clears a stale bulk target",
+  );
+  const unchangedUnassigned = assignmentResponse();
+  await detail.getByRole("button", { name: "Save assignment" }).click();
+  assert.equal((await unchangedUnassigned).status(), 200);
+  const afterUnassignedSave = (await (await page.request.get(historyURL)).json()).records.find(
+    (record) => record.id === workSession.id,
+  );
+  assert.equal(afterUnassignedSave?.profile_id, "", "unchanged Save keeps the session Unassigned");
+  await page.getByRole("button", { name: "Back to Sessions" }).click();
   const invalidAssignment = await page.request.post(assignmentURL, {
     data: {
       session_ids: [workSession.id, "missing-observed-session"],
