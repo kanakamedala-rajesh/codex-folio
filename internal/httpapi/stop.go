@@ -114,14 +114,18 @@ func (server *Server) commandStop(response http.ResponseWriter, request *http.Re
 		server.stopRequested = false
 	}
 	counter, ok := server.launches.(activeLaunchCounter)
-	if !ok {
+	if !ok && (server.operational.Load() || server.launches != nil) {
 		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
-	count, err := counter.ActiveManagedLaunchCount(request.Context())
-	if err != nil {
-		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
-		return
+	count := 0
+	if ok {
+		var err error
+		count, err = counter.ActiveManagedLaunchCount(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+			return
+		}
 	}
 	result.ActiveLaunches = count
 	if input.Action == "defer" || input.Action == "request" && count == 0 || server.stopRequested {

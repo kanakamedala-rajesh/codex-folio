@@ -461,7 +461,7 @@ func rememberEverydaySecureStorage(paths platform.Paths, mode platform.VaultMode
 		return apperrors.New(apperrors.VaultUnavailable, err)
 	}
 	if current, readErr := os.ReadFile(paths.SecureStorageFile); readErr == nil && string(current) == string(encoded) {
-		return nil
+		return syncEverydayStorageDirectory(paths.Root)
 	} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		return apperrors.New(apperrors.VaultUnavailable, readErr)
 	}
@@ -482,13 +482,17 @@ func rememberEverydaySecureStorage(paths platform.Paths, mode platform.VaultMode
 		_ = temporary.Close()
 		return apperrors.New(apperrors.VaultUnavailable, err)
 	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return apperrors.New(apperrors.VaultUnavailable, err)
+	}
 	if err := temporary.Close(); err != nil {
 		return apperrors.New(apperrors.VaultUnavailable, err)
 	}
 	if err := os.Rename(temporaryName, paths.SecureStorageFile); err != nil {
 		return apperrors.New(apperrors.VaultUnavailable, err)
 	}
-	return nil
+	return syncEverydayStorageDirectory(paths.Root)
 }
 
 func prepareCompanionStartupStatus(paths platform.Paths) (string, error) {

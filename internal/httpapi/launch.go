@@ -82,10 +82,6 @@ func (client *CommandClient) Launch(ctx context.Context, input CommandLaunchRequ
 }
 
 func (server *Server) commandLaunch(response http.ResponseWriter, request *http.Request) {
-	if server.launches == nil {
-		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
-		return
-	}
 	if request.Method != http.MethodPost {
 		server.writeMethodError(response, http.MethodPost)
 		return
@@ -111,6 +107,10 @@ func (server *Server) commandLaunch(response http.ResponseWriter, request *http.
 	var result CommandLaunchResponse
 	server.stopMu.Lock()
 	defer server.stopMu.Unlock()
+	if server.launches == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
 	if server.stopCommitted && (input.Action == "prepare" || input.Action == "prepare-handoff") {
 		server.writeAPIError(response, http.StatusConflict, apperrors.HTTPAPIServiceUnavailable)
 		return

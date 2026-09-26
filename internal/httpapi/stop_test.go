@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"venkatasudha.com/codex-folio/internal/launch"
+	"venkatasudha.com/codex-folio/internal/profile"
 )
 
 type stopLaunchFixture struct {
@@ -111,6 +112,29 @@ func TestCompanionStopNeverAssumesIdleOnReadFailure(t *testing.T) {
 	case <-server.StopReady():
 		t.Fatal("uncertain state stopped service")
 	default:
+	}
+}
+
+func TestLockedCompanionStopPreventsActivation(t *testing.T) {
+	server, err := NewServer(Options{StartLocked: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := stopRequest(t, server, "request"); result.State != "stopping" || result.ActiveLaunches != 0 {
+		t.Fatalf("locked stop: %+v", result)
+	}
+	select {
+	case <-server.StopReady():
+	default:
+		t.Fatal("locked companion did not accept stop")
+	}
+	if err := server.Activate(OperationalServices{
+		Selection: &profile.Selector{}, Profiles: &profile.Registry{}, Usage: &recordingUsageService{},
+	}); err == nil {
+		t.Fatal("activation succeeded after stop was committed")
+	}
+	if server.operational.Load() {
+		t.Fatal("stopped companion became operational")
 	}
 }
 

@@ -1396,6 +1396,11 @@ func (server *Server) Activate(services OperationalServices) error {
 	if services.Selection == nil || services.Profiles == nil || services.Usage == nil {
 		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("operational services are incomplete"))
 	}
+	server.stopMu.Lock()
+	defer server.stopMu.Unlock()
+	if server.stopCommitted {
+		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("service is stopping"))
+	}
 	server.selection = services.Selection
 	server.browserTrust = services.BrowserTrust
 	server.profiles = services.Profiles

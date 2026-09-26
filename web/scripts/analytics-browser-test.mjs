@@ -115,8 +115,8 @@ export async function testAnalytics({
     { timeout: 30_000 },
   );
   const started = performance.now();
-  await analyticsLink.focus();
-  await analyticsLink.press("Enter");
+  // The preceding navigation queues heading focus; retain keyboard coverage above.
+  await analyticsLink.click();
   assert.equal((await reloadedProjects).status(), 200);
   const response = await responsePromise;
   assert.equal(response.status(), 200, await response.text());
