@@ -707,11 +707,16 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 
 func dashboardPort(root string) int {
 	root = filepath.Clean(root)
+	portCount := 40000
 	if runtime.GOOS == "windows" {
 		root = strings.ToLower(root)
+		// Keep the deterministic listener below Windows' high dynamic and
+		// system-reserved ranges so ordinary browser and provider traffic cannot
+		// claim its selected port.
+		portCount = 20000
 	}
 	digest := sha256.Sum256([]byte(root))
-	return 20000 + int(binary.BigEndian.Uint16(digest[:2]))%40000
+	return 20000 + int(binary.BigEndian.Uint16(digest[:2]))%portCount
 }
 
 func dashboardServiceClient(origin, token string, certificate tls.Certificate) platform.ServiceClient {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
@@ -36,7 +37,7 @@ func readPassphraseMigrationRecord(paths platform.Paths) (passphraseMigrationRec
 	if err != nil {
 		return passphraseMigrationRecord{}, false, migrationRequiredError(err)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
 		return passphraseMigrationRecord{}, false, migrationRequiredError(errors.New("secure-storage migration record path is unsafe"))
 	}
 	data, err := os.ReadFile(path)

@@ -282,11 +282,13 @@ absolute Linux path; secrets are never passed through that environment value.
 An existing non-empty state root without a selection remains on its legacy
 provider and is never initialized with a replacement WSL key.
 
-For an existing Linux or WSL passphrase installation, stop its running service
-owner and run the plain command without `--vault-mode`. Choose **migrate now**,
-then enter the old passphrase once through the private terminal prompt.
+For an existing Windows, Linux, or WSL passphrase installation, stop its
+running service owner and run the plain command without `--vault-mode`. Choose
+**migrate now**, then enter the old passphrase once through the private terminal
+prompt.
 CodexFolio's detached service creates a validated recovery backup, moves every
-allowlisted protected database field to the supported native destination,
+allowlisted protected database field to Windows DPAPI, Linux Secret Service,
+or Windows-user DPAPI through the WSL2 helper,
 reopens and authenticates the retained state, and only then remembers the new
 storage choice. Profiles, selection, history, checkpoints and Identity Homes
 remain; Codex-owned authentication files are not opened or copied. The picker

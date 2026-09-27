@@ -292,6 +292,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	fakeCodex, launchLog := writeDashboardFakeCodex(t, control)
+	handoffLaunchLog := filepath.Join(t.TempDir(), "handoff-launch.log")
 	clock := dashboardClock{control: control}
 	state, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault, Clock: clock})
 	if err != nil {
@@ -683,7 +684,17 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				var handoffStderr bytes.Buffer
 				code := runHandoffWithDependencies(
 					[]string{"Personal", "--checkpoint", parts[1], "--revision", parts[2], "--codex-bin", fakeCodex}, strings.NewReader(""), io.Discard, &handoffStderr,
-					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, newForegroundProcess, nil, nil,
+					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, func(plan launch.Plan, stdin io.Reader, stdout, stderr io.Writer) (foregroundProcess, error) {
+						// cmd.exe cannot losslessly carry the JSON context through the batch fixture's
+						// %~1 expansion. Capture the prepared argument here, while the native shim
+						// continues to exercise the foreground start, wait, and exit lifecycle.
+						content := strings.Join(append([]string{plan.WorkingDirectory}, plan.Arguments...), "\n") + "\n"
+						if err := os.WriteFile(handoffLaunchLog, []byte(content), 0600); err != nil {
+							return nil, err
+						}
+						plan.Arguments = nil
+						return newForegroundProcess(plan, stdin, stdout, stderr)
+					}, nil, nil,
 					func() profile.Authenticator { return dashboardProfileAuthenticator{control: control} }, platform.OwnerOptions{},
 				)
 				if code != 0 {
@@ -871,7 +882,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
 			t.Fatalf("native fake Codex launch = %q, want working directory %q and transported arguments", content, repository)
 		}
-		handoffContent, err := os.ReadFile(launchLog)
+		handoffContent, err := os.ReadFile(handoffLaunchLog)
 		if err != nil {
 			t.Fatal(err)
 		}

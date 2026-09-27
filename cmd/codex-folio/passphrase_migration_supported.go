@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 package main
 
@@ -42,20 +42,22 @@ func migrateOpenedPassphraseStoreWithVaultFactory(paths platform.Paths, target p
 	if err != nil {
 		return nil, err
 	}
-	destinationVault, err := newDestination(paths, target, true)
-	if err != nil {
-		return nil, err
-	}
 	if _, err := os.Lstat(passphraseMigrationBackupDirectory(paths)); err == nil {
 		return nil, migrationRequiredError(errors.New("a previous passphrase migration recovery archive already exists"))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, migrationRequiredError(err)
 	}
+	destinationVault, err := newDestination(paths, target, true)
+	if err != nil {
+		return nil, err
+	}
 	record := passphraseMigrationRecord{Target: target, BackupID: backup.ID}
 	if err := writePassphraseMigrationRecord(paths, record); err != nil {
+		_ = restoreNativeVaultMigration(paths)
 		return nil, err
 	}
 	if err := archivePassphraseMigrationBackups(paths); err != nil {
+		_ = restoreNativeVaultMigration(paths)
 		return nil, err
 	}
 	if err := sourceStore.ReprotectVaultState(context.Background(), destinationVault); err != nil {
@@ -68,6 +70,9 @@ func migrateOpenedPassphraseStoreWithVaultFactory(paths platform.Paths, target p
 		return nil, rollbackPassphraseMigration(paths, backup.ID, err)
 	}
 	if err := closeSource(); err != nil {
+		return nil, rollbackPassphraseMigration(paths, backup.ID, err)
+	}
+	if err := commitNativeVaultMigration(paths, target); err != nil {
 		return nil, rollbackPassphraseMigration(paths, backup.ID, err)
 	}
 	destinationStore, err := openVerifiedMigratedDestination(paths, target, newDestination)
@@ -98,6 +103,18 @@ func resumeInterruptedPassphraseMigrationWithVaultFactory(paths platform.Paths, 
 		return false, migrationRequiredError(errors.New("secure-storage migration target changed; restore the original platform prerequisites"))
 	}
 	if record.DatabaseReady {
+		if err := commitNativeVaultMigration(paths, target); err != nil {
+			if restoreErr := restorePassphraseMigrationBackup(paths, record.BackupID); restoreErr != nil {
+				return false, migrationRequiredError(errors.Join(err, restoreErr))
+			}
+			if selectionErr := rememberEverydaySecureStorage(paths, platform.VaultModePassphrase); selectionErr != nil {
+				return false, selectionErr
+			}
+			if removeErr := removePassphraseMigrationRecord(paths); removeErr != nil {
+				return false, removeErr
+			}
+			return false, nil
+		}
 		if destinationStore, openErr := openVerifiedMigratedDestination(paths, target, newDestination); openErr == nil {
 			_ = destinationStore.Close()
 			if _, err := os.Lstat(passphraseMigrationBackupDirectory(paths)); errors.Is(err, os.ErrNotExist) {
@@ -174,8 +191,14 @@ func restorePassphraseMigrationBackup(paths platform.Paths, backupID string) err
 		return err
 	}
 	_, err = recovery.Restore(context.Background(), backupID)
-	if err != nil || directory == "" {
+	if err != nil {
 		return err
+	}
+	if err := restoreNativeVaultMigration(paths); err != nil {
+		return err
+	}
+	if directory == "" {
+		return nil
 	}
 	// Restore the old candidate set only after its vault generation is active.
 	if err := os.Rename(directory, filepath.Join(filepath.Dir(paths.DatabaseFile), store.RecoveryDirectoryName)); err != nil {

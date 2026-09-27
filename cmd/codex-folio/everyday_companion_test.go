@@ -362,8 +362,8 @@ func TestPlainStartupSecretServiceCancellationIsRecoverable(t *testing.T) {
 }
 
 func TestPlainStartupDetectsExistingPassphraseStateBeforeNativeInitialization(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("existing Linux passphrase migration detection is Linux-specific")
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("existing passphrase migration detection is unavailable on this platform")
 	}
 	paths := launchTestPaths(t)
 	if err := os.MkdirAll(paths.Root, 0o700); err != nil {

@@ -291,13 +291,16 @@ browser authorization without automatically opening a browser.
 
 ### Migrate an existing passphrase installation
 
-On Linux or WSL, stop the current passphrase service owner and run the plain
-command without an explicit vault mode:
+On Windows, Linux, or WSL, stop the current passphrase service owner and run
+the plain command without an explicit vault mode:
 
 ```sh
 ./build/bin/codex-folio
 ./build/bin/codex-folio --state-root /absolute/existing/state
 ```
+
+On Windows, the equivalent explicit state-root form is
+`build\bin\codex-folio.exe --state-root C:\absolute\existing\state`.
 
 When CodexFolio detects a non-empty SQLite database with the existing `CFPV`
 passphrase vault, choose **migrate now**. The next prompt reads the old
@@ -306,10 +309,10 @@ environment variables and is not persisted. The detached service retains the
 sole state-owner lock throughout the transition. It verifies the source state,
 creates a validated migration backup, isolates passphrase-generation recovery
 candidates in `passphrase-migration-recovery`, and re-protects every allowlisted
-encrypted SQLite field through Linux Secret Service or the Windows-backed WSL
-provider, reloads that destination, authenticates all retained protected rows,
-and only then commits the non-secret storage selection. The same invocation
-continues to the picker and foreground launch.
+encrypted SQLite field through Windows DPAPI, Linux Secret Service, or the
+Windows-backed WSL provider, reloads that destination, authenticates all
+retained protected rows, and only then commits the non-secret storage
+selection. The same invocation continues to the picker and foreground launch.
 
 The transition preserves Identity Profiles, Selected Profile, Identity Home
 references, project paths, checkpoints, usage/history scopes and other retained
@@ -786,10 +789,10 @@ error code to the foreground flow, so locked or unavailable Keychain, DPAPI, or
 Secret Service prerequisites can be explained inline without exposing secrets.
 The selection is remembered only after the service becomes ready. Refusing or
 cancelling setup leaves it unset and is recoverable by rerunning the command.
-If a non-empty database and an existing Linux passphrase vault predate this
-selection record, plain startup offers the guided migration above before native
-initialization. It does not create an empty replacement database or commit the
-destination choice before protected-state reopen succeeds.
+If a non-empty database and an existing Windows or Linux passphrase vault
+predate this selection record, plain startup offers the guided migration above
+before native initialization. It does not create an empty replacement database
+or commit the destination choice before protected-state reopen succeeds.
 
 Ordinary startup never opens a browser or enrolls OS-login startup. It offers
 periodic collection consent explicitly when unanswered. Its printed dashboard address contains no

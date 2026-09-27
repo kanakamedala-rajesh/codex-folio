@@ -135,7 +135,9 @@ func ensureEverydayCompanion(paths platform.Paths, options serviceOptions, input
 
 func promptPassphraseMigration(input io.Reader, output io.Writer, target platform.VaultMode) (string, error) {
 	label := "Linux Secret Service"
-	if target == platform.VaultModeWSLDPAPI {
+	if runtime.GOOS == "windows" {
+		label = "Windows DPAPI"
+	} else if target == platform.VaultModeWSLDPAPI {
 		label = "Windows-backed WSL storage"
 	}
 	_, _ = fmt.Fprintf(output, "Existing passphrase-protected CodexFolio state can migrate to %s. Migration asks for the old passphrase once, preserves retained state and Identity Homes, and does not copy Codex credentials.\n", label)
@@ -434,7 +436,7 @@ func resolveEverydaySecureStorageForPlatform(paths platform.Paths, options servi
 }
 
 func existingPassphraseInstallation(paths platform.Paths) bool {
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		return false
 	}
 	database, err := os.Stat(paths.DatabaseFile)
