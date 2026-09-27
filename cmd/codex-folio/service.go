@@ -1518,6 +1518,8 @@ func serviceRemediation(code string) string {
 		return "the Managed Launch lease is invalid or already completed"
 	case apperrors.LaunchProcessStartFailed:
 		return "Codex could not be started in the foreground"
+	case apperrors.LaunchDaemonUnsupported:
+		return "this Identity Home needs a Codex version with --no-daemon; update the installed Codex CLI, or use a shorter app state root for a new profile"
 	case apperrors.LaunchProcessStatusInvalid:
 		return "Codex returned an invalid process status"
 	case apperrors.DiagnosticsConfigurationInvalid:

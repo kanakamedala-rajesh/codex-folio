@@ -1101,7 +1101,7 @@ func TestNativeForegroundProcessForwardsStreamsAndStatus(t *testing.T) {
 	if os.Getenv("CODEX_FOLIO_FOREGROUND_HELPER") == "1" {
 		input, _ := io.ReadAll(os.Stdin)
 		_, _ = os.Stdout.Write(input)
-		_, _ = io.WriteString(os.Stderr, os.Getenv("CODEX_HOME"))
+		_, _ = io.WriteString(os.Stderr, os.Getenv("CODEX_FOLIO_FOREGROUND_HOME"))
 		os.Exit(23)
 	}
 
@@ -1110,11 +1110,16 @@ func TestNativeForegroundProcessForwardsStreamsAndStatus(t *testing.T) {
 		t.Fatalf("Abs(test binary) error = %v", err)
 	}
 	workingDirectory := t.TempDir()
+	identityHome, err := os.MkdirTemp("", "cf-foreground-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(identityHome) })
 	plan := launch.Plan{
 		Executable:       executable,
 		WorkingDirectory: workingDirectory,
 		Arguments:        []string{"-test.run=^TestNativeForegroundProcessForwardsStreamsAndStatus$"},
-		Environment:      map[string]string{"CODEX_FOLIO_FOREGROUND_HELPER": "1", "CODEX_HOME": workingDirectory},
+		Environment:      map[string]string{"CODEX_FOLIO_FOREGROUND_HELPER": "1", "CODEX_FOLIO_FOREGROUND_HOME": identityHome},
 	}
 	var stdout, stderr bytes.Buffer
 	process, err := newForegroundProcess(plan, strings.NewReader("native input"), &stdout, &stderr)
@@ -1127,8 +1132,8 @@ func TestNativeForegroundProcessForwardsStreamsAndStatus(t *testing.T) {
 	if err := process.Wait(); err == nil {
 		t.Fatal("Wait() error = nil, want non-zero child status")
 	}
-	if process.ExitStatus() != 23 || stdout.String() != "native input" || stderr.String() != workingDirectory {
-		t.Fatalf("status/stdout/stderr = %d/%q/%q, want 23/native input/%q", process.ExitStatus(), stdout.String(), stderr.String(), workingDirectory)
+	if process.ExitStatus() != 23 || stdout.String() != "native input" || stderr.String() != identityHome {
+		t.Fatalf("status/stdout/stderr = %d/%q/%q, want 23/native input/%q", process.ExitStatus(), stdout.String(), stderr.String(), identityHome)
 	}
 }
 

@@ -241,10 +241,10 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 	t.Setenv("CODEX_FOLIO_TEST_CONTROL", control)
 	t.Setenv("CODEX_FOLIO_TEST_LAUNCH_LOG", logPath)
 	executable := filepath.Join(directory, "codex")
-	content := "#!/bin/sh\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile :; do mode=$(cat \"$CODEX_FOLIO_TEST_CONTROL\"); [ \"$mode\" = \"launch-exit-23\" ] && exit 23; [ \"$mode\" = \"handoff-exit-0\" ] && exit 0; sleep 0.01; done\n"
+	content := "#!/bin/sh\nif [ \"$1\" = --help ]; then printf '      --no-daemon  Run without shared server\\n'; exit 0; fi\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile :; do mode=$(cat \"$CODEX_FOLIO_TEST_CONTROL\"); [ \"$mode\" = \"launch-exit-23\" ] && exit 23; [ \"$mode\" = \"handoff-exit-0\" ] && exit 0; sleep 0.01; done\n"
 	if runtime.GOOS == "windows" {
 		executable += ".cmd"
-		content = "@echo off\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif \"%launch_mode%\"==\"launch-exit-23\" exit /b 23\r\nif \"%launch_mode%\"==\"handoff-exit-0\" exit /b 0\r\n>nul ping 127.0.0.1 -n 2\r\ngoto wait\r\n"
+		content = "@echo off\r\nif \"%~1\"==\"--help\" (echo       --no-daemon  Run without shared server& exit /b 0)\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif \"%launch_mode%\"==\"launch-exit-23\" exit /b 23\r\nif \"%launch_mode%\"==\"handoff-exit-0\" exit /b 0\r\n>nul ping 127.0.0.1 -n 2\r\ngoto wait\r\n"
 	}
 	if err := os.WriteFile(executable, []byte(content), 0700); err != nil {
 		t.Fatal(err)

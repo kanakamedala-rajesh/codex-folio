@@ -317,14 +317,14 @@ func writeSelectionFakeCodex(t *testing.T, directory string) string {
 	}
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(directory, "fake-codex.cmd")
-		content := fmt.Sprintf("@echo off\r\n\"%s\" -test.run=TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput -- %%*\r\nexit /b %%errorlevel%%\r\n", testExecutable)
+		content := fmt.Sprintf("@echo off\r\nif \"%%1\"==\"--help\" (echo       --no-daemon  Run without shared server& exit /b 0)\r\n\"%s\" -test.run=TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput -- %%*\r\nexit /b %%errorlevel%%\r\n", testExecutable)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile(fake Codex) error = %v", err)
 		}
 		return path
 	}
 	path := filepath.Join(directory, "fake-codex")
-	content := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=^TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput$ -- \"$@\"\n", testExecutable)
+	content := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = --help ]; then printf '      --no-daemon  Run without shared server\\n'; exit 0; fi\nexec %q -test.run=^TestInteractiveSelectionEnterReusesPersistentOwnerAndPreservesChildInput$ -- \"$@\"\n", testExecutable)
 	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 		t.Fatalf("WriteFile(fake Codex) error = %v", err)
 	}

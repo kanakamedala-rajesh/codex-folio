@@ -17,6 +17,7 @@ const (
 	LaunchProfileNotFound                    = "CF_LAUNCH_PROFILE_NOT_FOUND"
 	LaunchProfileUnavailable                 = "CF_LAUNCH_PROFILE_UNAVAILABLE"
 	LaunchProcessStartFailed                 = "CF_LAUNCH_PROCESS_START_FAILED"
+	LaunchDaemonUnsupported                  = "CF_LAUNCH_DAEMON_UNSUPPORTED"
 	LaunchProcessStatusInvalid               = "CF_LAUNCH_PROCESS_STATUS_INVALID"
 	ProfileSetupInvalid                      = "CF_PROFILE_SETUP_INVALID"
 	ProfileAliasInvalid                      = "CF_PROFILE_ALIAS_INVALID"
@@ -156,6 +157,7 @@ func IsRegistered(code string) bool {
 		LaunchProfileNotFound,
 		LaunchProfileUnavailable,
 		LaunchProcessStartFailed,
+		LaunchDaemonUnsupported,
 		LaunchProcessStatusInvalid,
 		ProfileSetupInvalid,
 		ProfileAliasInvalid,
