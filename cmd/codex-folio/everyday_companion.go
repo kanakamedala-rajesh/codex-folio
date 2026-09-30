@@ -311,9 +311,13 @@ func useEverydayCompanion(paths platform.Paths, connection platform.ServiceClien
 		options.vaultMode = options.migrationTarget
 		options.migrationTarget = ""
 	}
-	dashboardAddress := nonSecretDashboardAddress(connection.Origin)
-	_, _ = fmt.Fprintf(stdout, "dashboard address: %s\n", dashboardAddress)
-	_, _ = fmt.Fprintln(stdout, "browser HTTPS setup: codex-folio service certificate (import the printed public root once; do not bypass certificate warnings)")
+	dashboardAddress, err := client.Dashboard(context.Background())
+	if err != nil {
+		_, _ = fmt.Fprintln(stdout, "Dashboard link unavailable; foreground Codex remains available.")
+	} else {
+		_, _ = fmt.Fprintf(stdout, "dashboard address: %s\n", dashboardAddress)
+		_, _ = fmt.Fprintln(stdout, "This one-time link authorizes this browser tab; keep it private.")
+	}
 	_, _ = fmt.Fprintf(stdout, "reopen with: %s\n", companionReopenCommand(options))
 	return exitSuccess
 }

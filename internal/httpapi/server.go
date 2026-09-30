@@ -153,6 +153,11 @@ type OperationalServices struct {
 // in-memory bootstrap, session, and CSRF material; none of those values are
 // persisted by this package.
 type Options struct {
+	// BrowserOnly uses non-ambient, process-scoped sessions on loopback HTTP.
+	BrowserOnly bool
+	// Dashboard routes launcher requests from the pinned command listener.
+	Dashboard *Server
+
 	TLSCertificate        *tls.Certificate
 	BrowserTrust          BrowserTrustStore
 	Product               string
@@ -195,6 +200,9 @@ type ServerOptions = Options
 // Server is the authorization-protected loopback HTTP service for the
 // embedded placeholder SPA. It has no durable session or bootstrap state.
 type Server struct {
+	browserOnly bool
+	dashboard   *Server
+
 	mu             sync.Mutex
 	tlsCertificate *tls.Certificate
 
@@ -270,6 +278,9 @@ func (systemClock) Now() time.Time {
 // NewServer creates a service with a fresh one-time bootstrap secret. The
 // caller obtains the launcher URL only after Listen has selected the port.
 func NewServer(options Options) (*Server, error) {
+	if options.BrowserOnly && (options.TLSCertificate != nil || options.CommandToken != "" || options.BrowserTrust != nil) {
+		return nil, errors.New("browser listener cannot own TLS, command credentials, or persistent trust")
+	}
 	if options.TLSCertificate != nil && (len(options.TLSCertificate.Certificate) == 0 || options.TLSCertificate.PrivateKey == nil) {
 		return nil, apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("TLS certificate is incomplete"))
 	}
@@ -303,6 +314,8 @@ func NewServer(options Options) (*Server, error) {
 	now := clock.Now().UTC()
 	commandToken := sha256.Sum256([]byte(options.CommandToken))
 	server := &Server{
+		browserOnly:           options.BrowserOnly,
+		dashboard:             options.Dashboard,
 		tlsCertificate:        options.TLSCertificate,
 		product:               product,
 		browserTrust:          options.BrowserTrust,
@@ -564,6 +577,9 @@ func (server *Server) Address() string {
 // BootstrapURL returns the one-time launcher URL. It is empty until Listen
 // has selected a port or after the bootstrap secret has been consumed.
 func (server *Server) BootstrapURL() string {
+	if server.dashboard != nil {
+		return server.dashboard.BootstrapURL()
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if server.origin == "" || !server.bootstrapAvailable || len(server.bootstrapToken) == 0 {
@@ -571,7 +587,11 @@ func (server *Server) BootstrapURL() string {
 	}
 	query := url.Values{}
 	query.Set(BootstrapQueryName, base64.RawURLEncoding.EncodeToString(server.bootstrapToken))
-	return server.origin + BootstrapPathName + "?" + query.Encode()
+	separator := "?"
+	if server.browserOnly {
+		separator = "#"
+	}
+	return server.origin + BootstrapPathName + separator + query.Encode()
 }
 
 func (server *Server) attachListener(listener net.Listener) error {
@@ -620,6 +640,10 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 	}
 	if !server.validOrigin(request) {
 		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPIOriginInvalid)
+		return
+	}
+	if (server.browserOnly && strings.HasPrefix(request.URL.Path, "/api/v1/command/")) || (server.dashboard != nil && !strings.HasPrefix(request.URL.Path, "/api/v1/command/")) {
+		server.writeAPIError(response, http.StatusNotFound, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
 	if strings.HasPrefix(server.Origin(), "https://") && !server.operational.Load() && !strings.HasPrefix(request.URL.Path, "/api/v1/command/") {
@@ -1284,28 +1308,25 @@ func (server *Server) exchangeBootstrap(response http.ResponseWriter, request *h
 			trustDigest = candidate
 		}
 	}
-	csrfToken, err := server.issueSession(response, now, trustDigest)
+	csrfToken, sessionToken, err := server.createSession(response, now, trustDigest)
 	if err != nil {
 		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
-	writeJSON(response, http.StatusOK, BootstrapResponse{CSRFToken: csrfToken})
+	result := BootstrapResponse{CSRFToken: csrfToken}
+	if server.browserOnly {
+		result.SessionToken = &sessionToken
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (server *Server) authorize(response http.ResponseWriter, request *http.Request) bool {
-	cookies := request.Cookies()
-	matching := make([]*http.Cookie, 0, 1)
-	for _, cookie := range cookies {
-		if cookie.Name == SessionCookieName {
-			matching = append(matching, cookie)
-		}
-	}
-	if len(matching) != 1 || matching[0].Value == "" {
+	value, valid := server.sessionCredential(request)
+	if !valid {
 		server.writeAPIError(response, http.StatusUnauthorized, apperrors.HTTPAPISessionInvalid)
 		return false
 	}
-
-	digest := sha256.Sum256([]byte(matching[0].Value))
+	digest := sha256.Sum256([]byte(value))
 	now := server.clock.Now().UTC()
 	server.mu.Lock()
 	current, ok := server.sessions[digest]
@@ -1339,24 +1360,11 @@ func (server *Server) validCSRF(request *http.Request) bool {
 	}
 	digest := sha256.Sum256([]byte(values[0]))
 
-	cookies := request.Cookies()
-	if len(cookies) == 0 {
+	value, valid := server.sessionCredential(request)
+	if !valid {
 		return false
 	}
-	var sessionCookie *http.Cookie
-	for _, cookie := range cookies {
-		if cookie.Name != SessionCookieName {
-			continue
-		}
-		if sessionCookie != nil {
-			return false
-		}
-		sessionCookie = cookie
-	}
-	if sessionCookie == nil {
-		return false
-	}
-	sessionDigest := sha256.Sum256([]byte(sessionCookie.Value))
+	sessionDigest := sha256.Sum256([]byte(value))
 	server.mu.Lock()
 	current, ok := server.sessions[sessionDigest]
 	server.mu.Unlock()
@@ -1406,7 +1414,9 @@ func (server *Server) Activate(services OperationalServices) error {
 		return apperrors.New(apperrors.HTTPAPIServiceUnavailable, errors.New("service is stopping"))
 	}
 	server.selection = services.Selection
-	server.browserTrust = services.BrowserTrust
+	if !server.browserOnly {
+		server.browserTrust = services.BrowserTrust
+	}
 	server.profiles = services.Profiles
 	server.profileLifecycle = services.ProfileLifecycle
 	server.profileAuthentication = services.ProfileAuthentication

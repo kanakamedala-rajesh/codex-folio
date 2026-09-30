@@ -25,14 +25,40 @@ type BrowserTrustStore interface {
 	RevokeAllBrowsers(context.Context) error
 }
 
+const SessionHeaderName = "X-CodexFolio-Session"
+
+func (server *Server) sessionCredential(request *http.Request) (string, bool) {
+	if server.browserOnly {
+		values := request.Header.Values(SessionHeaderName)
+		if len(values) != 1 || values[0] == "" {
+			return "", false
+		}
+		return values[0], true
+	}
+	var value string
+	count := 0
+	for _, cookie := range request.Cookies() {
+		if cookie.Name == SessionCookieName {
+			value = cookie.Value
+			count++
+		}
+	}
+	return value, count == 1 && value != ""
+}
+
 func (server *Server) issueSession(response http.ResponseWriter, now time.Time, trustDigest []byte) (string, error) {
+	csrf, _, err := server.createSession(response, now, trustDigest)
+	return csrf, err
+}
+
+func (server *Server) createSession(response http.ResponseWriter, now time.Time, trustDigest []byte) (string, string, error) {
 	sessionBytes, err := server.randomBytes(randomTokenSize)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	csrfBytes, err := server.randomBytes(randomTokenSize)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
 	csrfToken := base64.RawURLEncoding.EncodeToString(csrfBytes)
@@ -49,8 +75,10 @@ func (server *Server) issueSession(response http.ResponseWriter, now time.Time, 
 	}
 	server.sessions[sha256.Sum256([]byte(sessionID))] = current
 	server.mu.Unlock()
-	http.SetCookie(response, &http.Cookie{Name: SessionCookieName, Value: sessionID, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(server.Origin(), "https://"), SameSite: http.SameSiteStrictMode, MaxAge: maxAge(server.sessionTTL)})
-	return csrfToken, nil
+	if !server.browserOnly {
+		http.SetCookie(response, &http.Cookie{Name: SessionCookieName, Value: sessionID, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(server.Origin(), "https://"), SameSite: http.SameSiteStrictMode, MaxAge: maxAge(server.sessionTTL)})
+	}
+	return csrfToken, sessionID, nil
 }
 
 func (server *Server) browserTrustHandler(response http.ResponseWriter, request *http.Request) {

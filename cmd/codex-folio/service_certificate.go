@@ -49,7 +49,7 @@ func runServiceCertificate(paths platform.Paths, jsonOutput bool, stdout, stderr
 		}
 		return exitSuccess
 	}
-	if _, err := fmt.Fprintf(stdout, "Dashboard certificate authority: %s\nSHA-256 fingerprint: %s\nImport this certificate into the browser's trusted certificate authorities before opening the HTTPS dashboard.\n", result.Path, result.SHA256Fingerprint); err != nil {
+	if _, err := fmt.Fprintf(stdout, "Dashboard certificate authority: %s\nSHA-256 fingerprint: %s\nPrivate CLI connections pin the server certificate automatically. The HTTP dashboard needs no certificate import.\n", result.Path, result.SHA256Fingerprint); err != nil {
 		return writeServiceError(stderr, err)
 	}
 	return exitSuccess

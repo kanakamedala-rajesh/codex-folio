@@ -69,3 +69,4 @@ permission for release, deployment, credential use, or remote mutation.
 - [0035 — Qualify prompt-free secure storage](0035-qualify-prompt-free-secure-storage.md)
 - [0036 — Remember explicitly trusted browsers](0036-remember-explicitly-trusted-browsers.md)
 - [0037 — Separate companion lifetime from consent and attribution](0037-separate-companion-lifetime-from-consent-and-attribution.md)
+- [0038 — Use per-launch loopback dashboard authorization](0038-use-per-launch-loopback-dashboard-authorization.md)

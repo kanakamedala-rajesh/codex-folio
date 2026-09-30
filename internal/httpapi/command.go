@@ -411,18 +411,42 @@ func (server *Server) commandDashboard(response http.ResponseWriter, request *ht
 		server.writeMethodError(response, http.MethodPost)
 		return
 	}
-	token, err := server.randomBytes(randomTokenSize)
+	link, err := server.NewDashboardURL()
 	if err != nil {
 		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
 		return
 	}
+	writeJSON(response, http.StatusOK, dashboardLink{URL: link})
+}
+
+// NewDashboardURL issues a fresh one-time launcher link, never a permanent credential.
+func (server *Server) NewDashboardURL() (string, error) {
+	if server.dashboard != nil {
+		return server.dashboard.NewDashboardURL()
+	}
+	token, err := server.randomBytes(randomTokenSize)
+	if err != nil {
+		return "", err
+	}
 	encoded := base64.RawURLEncoding.EncodeToString(token)
 	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.closed || server.origin == "" {
+		return "", errors.New("dashboard is unavailable")
+	}
+	now := server.clock.Now().UTC()
+	for digest, expires := range server.bootstrapTokens {
+		if !now.Before(expires) {
+			delete(server.bootstrapTokens, digest)
+		}
+	}
 	digest := sha256.Sum256([]byte(encoded))
-	server.bootstrapTokens[digest] = server.clock.Now().UTC().Add(server.bootstrapTTL)
-	link := server.origin + BootstrapPathName + "?" + BootstrapQueryName + "=" + encoded
-	server.mu.Unlock()
-	writeJSON(response, http.StatusOK, dashboardLink{URL: link})
+	server.bootstrapTokens[digest] = now.Add(server.bootstrapTTL)
+	separator := "?"
+	if server.browserOnly {
+		separator = "#"
+	}
+	return server.origin + BootstrapPathName + separator + BootstrapQueryName + "=" + encoded, nil
 }
 
 func (server *Server) commandVault(response http.ResponseWriter, request *http.Request) {

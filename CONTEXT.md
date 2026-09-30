@@ -37,11 +37,11 @@ An experimental Codex home in which multiple Identity Profiles deliberately shar
 _Avoid_: Shared account, multi-login home
 
 **Persistent Browser Trust**:
-Explicit, revocable permission for a browser to reopen the local dashboard across ordinary restarts and renew short-lived Local Dashboard Sessions.
+Historical, explicit revocable permission for a browser to renew Local Dashboard Sessions across restarts; the current default dashboard requires fresh local authorization after a service restart.
 _Avoid_: Permanent session, trusted localhost
 
 **Local Dashboard Session**:
-Short-lived authorization for browser access to the local dashboard, distinct from Persistent Browser Trust and from Codex authentication.
+Short-lived authorization for browser access to the local dashboard, ending when the service restarts and distinct from Codex authentication.
 _Avoid_: Codex session, browser trust
 
 ## Continuity

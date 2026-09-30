@@ -33,7 +33,7 @@ Historical milestone evidence remains scoped to its original delivered candidate
 | Parent #82 requirement | Changed baseline | Governing successor | Acceptance/evidence |
 |---|---|---|---|
 | Decisions 6–8; testing 5–6, 10–11: qualified prompt-free protection and recoverable migration | ADR 0008; decisions 27/43 | ADR 0035; `../research/CREDENTIAL-VAULT.md` | SP-01–SP-04, EC-01, EC-08; native OS/WSL protection, interruption/reopen, real two-identity restart matrix |
-| Decision 12: remembered explicit browser trust distinct from sessions | ADR 0015; decision 48 | ADR 0036; `../architecture/ARCHITECTURE.md` | SP-07, EC-07–EC-08; restart/renewal/revocation/new-browser and negative request tests |
+| Decision 12 successor: fresh dashboard authorization without certificate setup | ADR 0015; decision 48; historical ADR 0036 | ADR 0038; user-approved #106 follow-up; `../architecture/ARCHITECTURE.md` | SP-07, EC-07–EC-08; fresh-link/replay/restart/transport-separation and negative request tests; historical trust evidence remains historical |
 | Decisions 2–5, 17: on-demand lifetime, independent consent, foreground entry point | ADR 0012/0019/0023; decisions 15/81 | ADR 0037; `../architecture/ARCHITECTURE.md` | PL-04–PL-06, OP-01–OP-04/OP-07, EC-03/EC-07–EC-08 |
 | Decisions 10–11: existing-home and automatically detected onboarding | ADR 0030 | ADR 0037; `CONTEXT.md` | PL-01–PL-03/PL-08, EC-02/EC-07–EC-08 |
 | Decisions 13–16: Unassigned History, assignment, provenance, privacy | ADR 0017/0018/0025/0029 | ADR 0037; `CONTEXT.md` | UA-01–UA-10, SP-03–SP-06, EC-04–EC-07 |

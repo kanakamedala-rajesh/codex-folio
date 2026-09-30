@@ -51,7 +51,33 @@ import "./styles.css";
 
 let renewSessionForRequest: (() => Promise<string | null>) | null = null;
 const trustStorageKey = "codex-folio.browser-trust.v1";
+const secureBrowser = window.location.protocol === "https:";
+const sessionStorageKey = "codex-folio.browser-session.v1";
+function browserSessionCredential(key = sessionStorageKey) {
+  try {
+    return sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+let browserSession = secureBrowser ? "" : browserSessionCredential();
+function saveBrowserSessionCredential(value: string, csrf = "") {
+  browserSession = value;
+  try {
+    if (value) {
+      sessionStorage.setItem(sessionStorageKey, value);
+      sessionStorage.setItem(`${sessionStorageKey}.csrf`, csrf);
+    } else {
+      sessionStorage.removeItem(sessionStorageKey);
+      sessionStorage.removeItem(`${sessionStorageKey}.csrf`);
+    }
+  } catch {
+    /* Keep this page usable when browser storage is disabled. */
+  }
+}
+if (!secureBrowser) saveBrowserTrustCredential(null);
 function browserTrustCredential() {
+  if (!secureBrowser) return "";
   try {
     return localStorage.getItem(trustStorageKey) || "";
   } catch {
@@ -60,7 +86,7 @@ function browserTrustCredential() {
 }
 function saveBrowserTrustCredential(value: string | null) {
   try {
-    if (value) localStorage.setItem(trustStorageKey, value);
+    if (value && secureBrowser) localStorage.setItem(trustStorageKey, value);
     else localStorage.removeItem(trustStorageKey);
   } catch {
     /* Browser storage may be disabled. */
@@ -70,7 +96,9 @@ const api = createCodexFolioApiClient("", async (input, init) => {
   const headers = new Headers(init?.headers);
   const credential = browserTrustCredential();
   if (credential) headers.set("X-CodexFolio-Trust", credential);
-  let response = await fetch(input, { ...init, headers });
+  if (!secureBrowser && browserSession) headers.set("X-CodexFolio-Session", browserSession);
+  const request = { ...init, headers, ...(!secureBrowser ? { credentials: "omit" as const } : {}) };
+  let response = await fetch(input, request);
   const renewedCsrf =
     response.status === 401 &&
     renewSessionForRequest &&
@@ -79,9 +107,10 @@ const api = createCodexFolioApiClient("", async (input, init) => {
     (await renewSessionForRequest());
   if (renewedCsrf) {
     if (headers.has("X-CodexFolio-CSRF")) headers.set("X-CodexFolio-CSRF", renewedCsrf);
-    response = await fetch(input, { ...init, headers });
+    response = await fetch(input, request);
   }
   if (!response.ok) {
+    if (!secureBrowser && [401, 403].includes(response.status)) saveBrowserSessionCredential("");
     const failure = (await response.json()) as { code: string; message: string };
     throw new UsageRefreshError(failure.code, response.status, failure.message);
   }
@@ -564,7 +593,7 @@ export function App() {
   });
   const heading = useRef<HTMLHeadingElement>(null);
   const more = useRef<HTMLDetailsElement>(null);
-  const csrf = useRef("");
+  const csrf = useRef(secureBrowser ? "" : browserSessionCredential(`${sessionStorageKey}.csrf`));
   const renewal = useRef<Promise<string | null> | null>(null);
   const startup = useRef<Promise<void> | null>(null);
   const operation = useRef(false);
@@ -576,6 +605,7 @@ export function App() {
     else setMessage(c.refreshFailed);
   }, []);
   const renewSession = useCallback(async () => {
+    if (!secureBrowser) return null;
     renewal.current ??= (async () => {
       try {
         const result = await api.manageBrowserTrust(
@@ -597,6 +627,7 @@ export function App() {
     }
   }, []);
   async function changeBrowserTrust(action: "grant" | "forget" | "revoke_all") {
+    if (!secureBrowser) return;
     setTrustBusy(true);
     setTrustMessage("");
     try {
@@ -860,13 +891,18 @@ export function App() {
   const start = useEffectEvent(() => {
     startup.current ??= (async () => {
       const url = new URL(window.location.href),
-        token = url.searchParams.get("bootstrap");
+        token = secureBrowser
+          ? url.searchParams.get("bootstrap")
+          : new URLSearchParams(url.hash.slice(1)).get("bootstrap");
       window.history.replaceState(null, "", window.location.pathname);
       try {
         if (token) {
+          if (!secureBrowser) saveBrowserSessionCredential("");
           const auth = await api.exchangeBootstrap({ bootstrap_token: token });
           csrf.current = auth.csrf_token;
-        } else if (!(await renewSession())) {
+          if (!secureBrowser)
+            saveBrowserSessionCredential(auth.session_token || "", auth.csrf_token);
+        } else if (secureBrowser ? !(await renewSession()) : !browserSession) {
           setStatus("missing");
           return;
         }
@@ -874,8 +910,10 @@ export function App() {
         setServiceHealth(health);
         setStatus("authorized");
         if (health.service_state === "ready") {
-          const trust = await api.getBrowserTrust();
-          setTrusted(trust.trusted);
+          if (secureBrowser) {
+            const trust = await api.getBrowserTrust();
+            setTrusted(trust.trusted);
+          }
           const next = await load(true);
           if (next) void refresh("dashboard_open", next);
         } else {
@@ -898,8 +936,10 @@ export function App() {
       if (cancelled()) return;
       setServiceHealth(health);
       if (health.service_state === "ready") {
-        const trust = await api.getBrowserTrust();
-        setTrusted(trust.trusted);
+        if (secureBrowser) {
+          const trust = await api.getBrowserTrust();
+          setTrusted(trust.trusted);
+        }
         const next = await load(true);
         setMessage(serviceHealthCopy.ready);
         if (next) void refresh("dashboard_open", next);
@@ -909,7 +949,16 @@ export function App() {
     }
   });
   useEffect(() => {
-    renewSessionForRequest = renewSession;
+    const reopen = () => {
+      if (!secureBrowser && new URLSearchParams(window.location.hash.slice(1)).has("bootstrap")) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener("hashchange", reopen);
+    return () => window.removeEventListener("hashchange", reopen);
+  }, []);
+  useEffect(() => {
+    renewSessionForRequest = secureBrowser ? renewSession : null;
     start();
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => {
@@ -1450,7 +1499,7 @@ export function App() {
             </small>
           </div>
           <main id="content">
-            {status === "authorized" && serviceState === "ready" && !trusted ? (
+            {secureBrowser && status === "authorized" && serviceState === "ready" && !trusted ? (
               <section
                 className="mb-6 rounded border border-rule bg-panel p-4"
                 aria-labelledby="browser-trust-prompt"
@@ -1769,7 +1818,7 @@ export function App() {
                     >
                       {[
                         ["settings-top", serviceHealthCopy.vaultAndRecovery],
-                        ["settings-browser-trust", c.browserTrustTitle],
+                        ...(secureBrowser ? [["settings-browser-trust", c.browserTrustTitle]] : []),
                         ["settings-configuration", "Configuration transfer"],
                         ["settings-background", c.backgroundService],
                         ["settings-schedule", c.collectionSchedule],
@@ -1803,44 +1852,46 @@ export function App() {
                           : serviceHealthCopy.locked}
                       </p>
                     </section>
-                    <section
-                      className="border-b border-rule py-6"
-                      aria-labelledby="settings-browser-trust"
-                    >
-                      <h2
-                        id="settings-browser-trust"
-                        tabIndex={-1}
-                        className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                    {secureBrowser ? (
+                      <section
+                        className="border-b border-rule py-6"
+                        aria-labelledby="settings-browser-trust"
                       >
-                        {c.browserTrustTitle}
-                      </h2>
-                      <p className="mb-4 max-w-[75ch] text-muted">
-                        {trusted ? c.browserTrustActive : c.browserTrustInactive}
-                      </p>
-                      <div className="flex flex-wrap gap-3">
-                        {trusted ? (
+                        <h2
+                          id="settings-browser-trust"
+                          tabIndex={-1}
+                          className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                        >
+                          {c.browserTrustTitle}
+                        </h2>
+                        <p className="mb-4 max-w-[75ch] text-muted">
+                          {trusted ? c.browserTrustActive : c.browserTrustInactive}
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          {trusted ? (
+                            <button
+                              type="button"
+                              disabled={trustBusy}
+                              onClick={() => void changeBrowserTrust("forget")}
+                              className="min-h-11 rounded border border-rule bg-panel px-3 py-2 disabled:opacity-60"
+                            >
+                              {c.browserTrustForget}
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             disabled={trustBusy}
-                            onClick={() => void changeBrowserTrust("forget")}
+                            onClick={() => void changeBrowserTrust("revoke_all")}
                             className="min-h-11 rounded border border-rule bg-panel px-3 py-2 disabled:opacity-60"
                           >
-                            {c.browserTrustForget}
+                            {c.browserTrustRevokeAll}
                           </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          disabled={trustBusy}
-                          onClick={() => void changeBrowserTrust("revoke_all")}
-                          className="min-h-11 rounded border border-rule bg-panel px-3 py-2 disabled:opacity-60"
-                        >
-                          {c.browserTrustRevokeAll}
-                        </button>
-                      </div>
-                      <p role="status" className="mt-2 mb-0">
-                        {trustMessage}
-                      </p>
-                    </section>
+                        </div>
+                        <p role="status" className="mt-2 mb-0">
+                          {trustMessage}
+                        </p>
+                      </section>
+                    ) : null}
                     {alerts ? (
                       <NotificationPrivacy data={alerts} busy={busy} manage={manageAlerts} />
                     ) : null}

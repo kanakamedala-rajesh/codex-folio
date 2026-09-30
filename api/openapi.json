@@ -395,6 +395,10 @@
     "BootstrapResponse": {
       "additionalProperties": false,
       "properties": {
+        "session_token": {
+          "description": "Short-lived, process-scoped HTTP dashboard session. Send only in X-CodexFolio-Session to this origin; never a cookie or durable browser trust.",
+          "type": "string"
+        },
         "csrf_token": {
           "description": "The in-memory CSRF value bound to the issued browser session.",
           "type": "string"

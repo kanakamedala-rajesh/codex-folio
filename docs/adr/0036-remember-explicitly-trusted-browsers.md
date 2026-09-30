@@ -1,5 +1,7 @@
 # Remember explicitly trusted browsers
 
+**Superseded for the default browser flow by [ADR 0038](0038-use-per-launch-loopback-dashboard-authorization.md).** The original decision and qualification rationale remain below.
+
 Milestone 5A ([specification #82](https://github.com/kanakamedala-rajesh/codex-folio/issues/82), decisions 12 and 19; contract ticket #83) adds explicitly granted, revocable persistent browser trust. It extends [ADR 0015](0015-authorize-the-loopback-dashboard.md) by replacing the requirement to bootstrap anew after ordinary browser/service/machine restarts with transparent renewal under valid trust. Its original rationale remains: loopback binding does not authenticate every local webpage or process.
 
 Persistent Browser Trust and a Local Dashboard Session are separate authorization lifetimes. The former survives ordinary restarts and authorizes renewal of the latter, which remains short-lived. Trust ends on explicit revocation, cleared browser state, or authorization reset. Offer both forgetting the current browser and revoking all browsers; revoked trust must no longer authorize dashboard access or session renewal. New browsers and private windows require fresh authorization through the local launcher. Trust is never inferred merely from a loopback request.

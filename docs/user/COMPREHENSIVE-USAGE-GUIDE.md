@@ -285,9 +285,8 @@ in arguments, environment variables or persistent plaintext.
 
 The owner remains available after the foreground Codex child exits. Plain
 startup does not enroll it at OS login or grant periodic collection consent;
-the interactive setup prompt offers that independent choice. It prints the current non-secret loopback
-dashboard address and a repeatable `service start` command that obtains fresh
-browser authorization without automatically opening a browser.
+the interactive setup prompt offers that independent choice. It prints a fresh one-time loopback HTTP dashboard URL without automatically
+opening a browser. No certificate installation is required.
 
 ### Migrate an existing passphrase installation
 
@@ -501,72 +500,49 @@ Start the service and copy its printed URL into a local browser:
 ./build/bin/codex-folio service start
 ```
 
-The service binds loopback only and serves the dashboard over HTTPS. The URL contains a single-use bootstrap token
-that is exchanged for a short-lived browser session and then removed from the
-address bar. Browser mutations require the authenticated session, same-origin
+The default dashboard binds a separate ephemeral loopback HTTP address. Open
+the complete one-time URL printed by ordinary startup or `service start`; no
+certificate import or browser warning bypass is required. Ordinary startup does
+not open a browser automatically. Private CLI commands use a separate,
+authenticated, certificate-pinned TLS connection and cannot be invoked through
+the browser listener.
+
+The URL carries a single-use authorization credential in its fragment, which
+is removed from the address bar before exchange for a short-lived session.
+The browser keeps that session in tab session storage and sends an explicit
+session header. Refreshing the same tab works while its session remains valid.
+No persistent HTTP browser trust or authorization cookie is issued. Service
+restart invalidates the session; old bookmarks and consumed links cannot
+authorize the new service. Obtain a fresh link by rerunning the plain command
+or `service start` when access expires or a new browser needs authorization.
+
+Browser mutations still require the authenticated session, same-origin
 Host/Origin checks, and CSRF protection. Production assets are embedded and do
-not load scripts, styles, or fonts from a CDN.
+not load scripts, styles, or fonts from a CDN. Loopback HTTP does not prove the
+server's identity to a browser or protect against arbitrary malicious local
+processes. Use the current link from the local launcher and keep it private.
+Do not publish, message, log, or bookmark authorization URLs.
 
-### Trust the local HTTPS certificate once
+### Existing installations and certificate metadata
 
-After the service is ready and the vault is unlocked, run `codex-folio service
-certificate` (add `--state-root PATH` if you use one). It prints the path to
-`dashboard-root-ca.pem` and its SHA-256 fingerprint. The file contains only a
-public, installation-specific root certificate; the HTTPS server key remains
-encrypted in the vault, and the root signing key is discarded after setup.
-Check the fingerprint shown by the command before importing that certificate
-into the browser or operating-system trust store used for the dashboard. The
-browser will otherwise block the HTTPS page. Do not use a browser's unsafe
-certificate-warning bypass: that would also allow a different local service
-to impersonate the dashboard while CodexFolio is stopped.
+After replacing an older HTTPS build, stop the running companion with
+`codex-folio service stop`, then run the plain command and open its new HTTP
+URL. If a Managed Launch is active, follow the deferred-stop guidance above;
+do not terminate it to upgrade. An old HTTPS bookmark cannot provide the new
+flow.
+The old trusted-browser state does not authorize the HTTP dashboard. You no
+longer need an imported CodexFolio root certificate for dashboard access;
+CodexFolio does not alter your browser or OS certificate trust store.
+`service certificate` and `service certificate --json` remain available for
+public certificate metadata used by the private CLI transport, not as a browser
+setup step. Existing HTTPS compatibility behavior does not grant persistent
+trust to the default HTTP listener.
 
-- **Windows:** Import the printed certificate into the current user's Trusted
-  Root Certification Authorities store using Windows certificate management.
-  On WSL2, import it in Windows, where the browser runs; the PEM file is under
-  the WSL distribution's state root and may be copied to a temporary Windows
-  location for import. [Microsoft documents the trusted-root store](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-root-certification-authorities-certificate-store).
-- **macOS:** Add the certificate to Keychain Access and explicitly enable trust
-  for website TLS. [Apple documents certificate import](https://support.apple.com/en-nz/guide/keychain-access/kyca2431/mac)
-  and [trust settings](https://support.apple.com/en-ie/guide/keychain-access/kychn001/mac).
-- **Linux:** Import the certificate into the chosen browser's trusted
-  authorities. System trust stores and sandboxed browsers can differ; confirm
-  the browser accepts the certificate without a warning. [Ubuntu documents
-  system trust-store behavior and its browser limitation](https://ubuntu.com/server/docs/how-to/security/install-a-root-ca-certificate-in-the-trust-store/).
-  Firefox also [documents its own CA import options](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
-
-The certificate is specific to this installation. A state reset or certificate
-replacement requires importing the new root; remove the old root from the
-browser or OS trust store. `service certificate --json` provides the same
-public path and fingerprint for scripts. CodexFolio never changes browser or
-system certificate trust automatically. For passphrase installations, the CLI
-unlocks the vault before a browser can use the stable HTTPS dashboard. While
-locked, the service uses a temporary certificate only for its pinned CLI
-unlock connection; the browser must wait for the unlocked address.
-
-After opening the one-time link, choose **Trust this browser** only on a browser
-you control. This explicit choice allows the current local dashboard address
-printed by ordinary startup to reopen without another bootstrap link. Trusted
-browsers renew short-lived sessions automatically, including after ordinary
-service, browser, or machine restarts. A new browser or private window still
-needs a fresh one-time link. Trust stays local and does not expose vault or
-command credentials to the browser.
-
-In **Settings → Trusted browser**, choose **Forget this browser** to remove
-this browser's trust, or **Revoke all browsers** to invalidate every trusted
-browser. Either action ends the current dashboard session; use `service start`
-for a new one-time link. Clearing browser state also prevents renewal from that
-browser. An installation authorization reset invalidates existing trust. These
-controls do not change a running foreground Codex session.
-
-While a passphrase service is locked, only the pinned CLI transport is
-available for status and unlock; the browser dashboard opens after successful
-CLI unlock. If database open or migration requires recovery, stop the
+While a passphrase service is locked, the browser can show safe service health
+but cannot access protected data. Unlock is available only through the pinned
+CLI transport; ordinary startup performs that unlock before printing its link. If database open or migration requires recovery, stop the
 foreground owner and run the existing `service recovery` commands before
 starting again.
-
-Do not publish, message, log, or bookmark bootstrap URLs. After each service restart, use the current non-secret address printed by
-ordinary startup for a browser you explicitly trusted. If authorization is expired or already used, run `service start` again
-to receive a new link.
 
 Implemented dashboard flows include:
 
@@ -795,9 +771,9 @@ before native initialization. It does not create an empty replacement database
 or commit the destination choice before protected-state reopen succeeds.
 
 Ordinary startup never opens a browser or enrolls OS-login startup. It offers
-periodic collection consent explicitly when unanswered. Its printed dashboard address contains no
-bootstrap credential; run the printed `service start` reopening command when a
-fresh one-time browser authorization URL is required.
+periodic collection consent explicitly when unanswered. Its printed dashboard URL contains a one-time authorization credential in the
+fragment; keep it private. Run the plain command or `service start` again when
+a fresh link is required.
 
 For automation, an explicit alias, a Project ID, or Codex arguments, use the
 advanced launch form:

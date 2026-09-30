@@ -6,7 +6,7 @@ VenkataSudha CodexFolio is a modular monolith: one repository, one Go module, on
 
 The executable has several process roles selected by commands—interactive CLI, foreground launcher, on-demand/persistent service, migration helper—but they share one compiled implementation and release version.
 
-Milestone 5A's successor contracts are [ADR 0035](../adr/0035-qualify-prompt-free-secure-storage.md), [ADR 0036](../adr/0036-remember-explicitly-trusted-browsers.md), and [ADR 0037](../adr/0037-separate-companion-lifetime-from-consent-and-attribution.md). They describe required behavior pending implementation and qualification, not capabilities delivered by the contract-only ticket #83.
+Milestone 5A's successor contracts are [ADR 0035](../adr/0035-qualify-prompt-free-secure-storage.md), [ADR 0036](../adr/0036-remember-explicitly-trusted-browsers.md), and [ADR 0037](../adr/0037-separate-companion-lifetime-from-consent-and-attribution.md). They describe required behavior pending implementation and qualification, not capabilities delivered by the contract-only ticket #83. The user-approved #106 follow-up [ADR 0038](../adr/0038-use-per-launch-loopback-dashboard-authorization.md) supersedes ADR 0036 for the default browser flow; historical native qualification is not relabeled.
 
 ## Dependency direction
 
@@ -71,7 +71,7 @@ Deterministic `launch <profile>` does not mutate Selected Profile. Codex owns it
 
 The loopback HTTP interface is versioned through OpenAPI. TypeScript transport types and client calls are generated; handwritten frontend code consumes domain-oriented response models and stable error codes. Credentials, encrypted values, raw source responses, full paths by default, and Codex protocol objects never cross into the SPA.
 
-The service hosts immutable embedded assets under a restrictive CSP. One-time launcher bootstrap authorizes a new/private browser; explicitly granted Persistent Browser Trust survives ordinary browser/service/machine restarts and permits transparent renewal of short-lived Local Dashboard Sessions. Current-browser or all-browser revocation, cleared browser state, and authorization reset end trust. Keep loopback, Host, Origin, cross-origin, CSRF, replay rejection, and secret-safe projection controls. A repeatable reopening mechanism must not depend on an old ephemeral address or consumed bootstrap URL; trust never transfers vault material into the browser.
+The service hosts immutable embedded assets under a restrictive CSP. [ADR 0038](../adr/0038-use-per-launch-loopback-dashboard-authorization.md) supersedes persistent browser trust for the default dashboard: a separate ephemeral loopback HTTP listener exchanges a one-time fragment bootstrap for a short-lived server-memory session. The browser keeps the token in tab session storage and sends an explicit session header, never an HTTP authorization cookie or durable trust credential. Ordinary launches print a fresh access URL without opening a browser. Service restart requires a fresh link; old bookmarks cannot reauthorize. Private CLI commands remain on authenticated, certificate-pinned TLS and are unavailable on the browser listener. Preserve loopback, Host, Origin, cross-origin, CSRF, replay rejection, and secret-safe projection controls; no vault material enters the browser. HTTP does not authenticate a local server or defeat arbitrary local process impersonation.
 
 ## Persistence
 

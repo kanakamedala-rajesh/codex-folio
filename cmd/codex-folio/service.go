@@ -648,6 +648,26 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		serverOptions.ServiceLifecycle = serviceLifecycle
 		serverOptions.StartLocked = true
 	}
+	// Keep command credentials behind pinned TLS; the browser needs no CA setup.
+	browserOptions := serverOptions
+	browserOptions.TLSCertificate = nil
+	browserOptions.CommandToken = ""
+	browserOptions.BrowserTrust = nil
+	browserOptions.BrowserOnly = true
+	browser, err := httpapi.NewServer(browserOptions)
+	if err != nil {
+		_ = stateOwner.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	defer browser.Close()
+	browserListener, err := browser.Listen()
+	if err != nil {
+		_ = stateOwner.Close()
+		_ = owner.Close()
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	serverOptions.Dashboard = browser
 	server, err := httpapi.NewServer(serverOptions)
 	if err != nil {
 		_ = stateOwner.Close()
@@ -669,6 +689,9 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 			if err := server.Activate(unlocked); err != nil {
 				_ = server.SetTLSCertificate(initialCertificate)
 				_ = owner.PublishClient(dashboardServiceClient(server.Origin(), commandToken, initialCertificate))
+				return err
+			}
+			if err := browser.Activate(unlocked); err != nil {
 				return err
 			}
 			return nil
@@ -694,7 +717,8 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 	}
-	serveErrors := make(chan error, 1)
+	serveErrors := make(chan error, 2)
+	go func() { serveErrors <- browser.Serve(browserListener) }()
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
@@ -702,7 +726,17 @@ func runServiceStartWithDependenciesAndMigration(paths platform.Paths, options s
 		_ = writeCompanionStartupStatus(options.startupStatus, companionStartupReady)
 	}
 
-	return waitForStop(owner, stateOwner, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+	return waitForStop(owner, &dashboardStateOwner{browser: browser, state: stateOwner}, server, options, stdout, stderr, false, serveErrors, diagnosticSink)
+}
+
+// Stop accepting browser work before closing its shared durable state.
+type dashboardStateOwner struct {
+	browser *httpapi.Server
+	state   interface{ Close() error }
+}
+
+func (owner *dashboardStateOwner) Close() error {
+	return errors.Join(owner.browser.Close(), owner.state.Close())
 }
 
 func dashboardPort(root string) int {
@@ -1154,6 +1188,7 @@ wait:
 			}
 			return exitSuccess
 		case err := <-serveErrors:
+			_ = server.Close()
 			_ = stateStore.Close()
 			_ = owner.Close()
 			if err != nil {

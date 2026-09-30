@@ -1,4 +1,4 @@
-/* global document, window, innerWidth, getComputedStyle, fetch */
+/* global document, window, innerWidth, getComputedStyle, fetch, sessionStorage */
 import { URL } from "node:url";
 import { Buffer } from "node:buffer";
 import { performance } from "node:perf_hooks";
@@ -31,7 +31,7 @@ const output =
   process.env.CODEX_FOLIO_BROWSER_OUTPUT ?? join(tmpdir(), "codex-folio-overview-browser");
 mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({
-  ...(phase === "startup-partial"
+  ...(process.env.CODEX_FOLIO_TEST_SPKI
     ? { args: [`--ignore-certificate-errors-spki-list=${process.env.CODEX_FOLIO_TEST_SPKI}`] }
     : {}),
   executablePath: process.env.CODEX_FOLIO_CHROMIUM || undefined,
@@ -266,8 +266,19 @@ try {
       assert.match(main, /codex-folio vault unlock/);
       assert.equal(await page.locator('input[type="password"]').count(), 0);
     }
-    const stateRequest = await page.request.get(new URL("/api/v1/analytics", link).href);
-    assert.equal(stateRequest.status(), 423);
+    const stateStatus = await page.evaluate(
+      async () =>
+        (
+          await fetch("/api/v1/analytics", {
+            credentials: "omit",
+            headers: {
+              "X-CodexFolio-Session":
+                sessionStorage.getItem("codex-folio.browser-session.v1") || "",
+            },
+          })
+        ).status,
+    );
+    assert.equal(stateStatus, 423);
     await page.evaluate(axe.source);
     await scanAccessibility(phase);
     await capture(`${phase}-wide`, 1440, 1000);
@@ -580,13 +591,14 @@ try {
       );
       await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
       await page.setViewportSize({ width: 1440, height: 1000 });
-      const approval = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/api/v1/handoff") &&
-          response.request().postDataJSON().action === "approve-assisted",
-      );
-      await page.getByRole("button", { name: "Approve sanitized preview", exact: true }).click();
-      const approvalResponse = await approval;
+      const [approvalResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/api/v1/handoff") &&
+            response.request().postDataJSON().action === "approve-assisted",
+        ),
+        page.getByRole("button", { name: "Approve sanitized preview", exact: true }).click(),
+      ]);
       const approved = (await approvalResponse.json()).handoff;
       assert.ok(approved);
       assert.equal(approved.source, "transcript-assisted");

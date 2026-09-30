@@ -3,7 +3,7 @@
 export const API_VERSION = "v1" as const;
 export const CONTRACT_VERSION = "0.0.1-alpha" as const;
 export const CONTRACT_SOURCE_SHA256 =
-  "e8218045ec5209cb2ff73e6bb97885bfac4f5253f6fe13f323fc7ee892f566d9" as const;
+  "3352de34d43b33107410e46d7bb95794814ec16cecc57c264d277177d01c76a1" as const;
 export const HandoffPath = "/api/v1/handoff" as const;
 export const AlertsPath = "/api/v1/alerts" as const;
 export const DiagnosticsPath = "/api/v1/diagnostics" as const;
@@ -809,6 +809,7 @@ export interface BootstrapRequest {
 }
 
 export interface BootstrapResponse {
+  session_token: string;
   csrf_token: string;
 }
 

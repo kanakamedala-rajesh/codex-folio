@@ -137,7 +137,7 @@ func TestOverviewBrowser(t *testing.T) {
 	if suite == "" {
 		suite = "deep"
 	}
-	if suite != "deep" && suite != "smoke" && suite != "startup-partial" {
+	if suite != "deep" && suite != "smoke" && suite != "startup-partial" && suite != "http-dashboard" {
 		t.Fatalf("unknown browser suite %q", suite)
 	}
 	if suite == "deep" {
@@ -146,6 +146,7 @@ func TestOverviewBrowser(t *testing.T) {
 	}
 	if suite == "smoke" {
 		runTrustedBrowserRestart(t)
+		runOverviewBrowser(t, "http-dashboard")
 	}
 	runOverviewBrowser(t, suite)
 }
@@ -161,7 +162,7 @@ func runServiceHealthBrowser(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			lifecycle := &vaultCommandLifecycle{health: scenario.health}
-			server, err := httpapi.NewServer(httpapi.Options{CommandToken: "health-browser-command", ServiceLifecycle: lifecycle, StartLocked: true})
+			server, err := httpapi.NewServer(httpapi.Options{BrowserOnly: true, ServiceLifecycle: lifecycle, StartLocked: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -549,8 +550,8 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	var dashboardCertificate *tls.Certificate
-	var trustedSPKI, trustedFingerprint string
-	if suite == "startup-partial" {
+	var trustedSPKI, trustedFingerprint, trustedRoot string
+	if suite != "http-dashboard" {
 		identity, err := state.LoadOrCreateDashboardTLSIdentity(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -558,10 +559,20 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		dashboardCertificate = &identity.Certificate
 		trustedSPKI = identity.LeafSPKISHA256Base64
 		trustedFingerprint = identity.LeafFingerprintSHA256
+		trustedRoot = filepath.Join(t.TempDir(), "browser-root.pem")
+		if err := os.WriteFile(trustedRoot, identity.RootCertificatePEM, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	server, err := httpapi.NewServer(httpapi.Options{TLSCertificate: dashboardCertificate, BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	options := httpapi.Options{TLSCertificate: dashboardCertificate, BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
-	}})
+	}}
+	if suite == "http-dashboard" {
+		options.BrowserOnly = true
+		options.BrowserTrust = nil
+		options.CommandToken = ""
+	}
+	server, err := httpapi.NewServer(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -849,13 +860,23 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			}
 		}()
 	}
+	if suite == "http-dashboard" {
+		second, err := server.NewDashboardURL()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "http-dashboard-browser-test.mjs"), server.BootstrapURL(), second, t.TempDir())
+		runner.Stdout, runner.Stderr = os.Stdout, os.Stderr
+		if err := runner.Run(); err != nil {
+			t.Fatal("HTTP dashboard browser journey failed:", err)
+		}
+		return nil
+	}
 	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
-	if suite == "startup-partial" {
-		runner.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI)
-	}
+	runner.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI, "NODE_EXTRA_CA_CERTS="+trustedRoot)
 	if suite == "benchmark" {
-		runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
+		runner.Env = append(runner.Env, "CODEX_FOLIO_BROWSER_OUTPUT="+output)
 	}
 	runner.Stdout = os.Stdout
 	runner.Stderr = os.Stderr
@@ -929,17 +950,22 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			t.Fatal(err)
 		}
 	}
-	link, err := httpapi.NewCommandClient(server.Origin(), "browser-fixture-command", nil).Dashboard(context.Background())
+	commandClient, err := httpapi.NewPinnedCommandClient(server.Origin(), "browser-fixture-command", trustedFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := commandClient.Dashboard(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reentry := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), link, control, "reentry", referencedHome)
+	reentry.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI, "NODE_EXTRA_CA_CERTS="+trustedRoot)
 	reentry.Stdout = os.Stdout
 	reentry.Stderr = os.Stderr
 	if err := reentry.Run(); err != nil {
 		t.Fatal("reentry journey failed:", err)
 	}
-	selected, err := httpapi.NewCommandClient(server.Origin(), "browser-fixture-command", nil).ListProfiles(context.Background())
+	selected, err := commandClient.ListProfiles(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -161,7 +161,7 @@ func TestPlainStartupStartsFullCompanionAndLeavesItAfterChildExit(t *testing.T) 
 	if code != 37 || startCalls != 1 || !process.started {
 		t.Fatalf("plain startup result = code:%d starts:%d child-started:%t; stdout=%q stderr=%q", code, startCalls, process.started, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "dashboard address: ") || !strings.Contains(stdout.String(), "reopen with: "+companionReopenCommand(serviceOptions{stateRoot: &paths.Root})) || strings.Contains(stdout.String(), "bootstrap=") {
+	if !strings.Contains(stdout.String(), "dashboard address: ") || !strings.Contains(stdout.String(), "reopen with: "+companionReopenCommand(serviceOptions{stateRoot: &paths.Root})) || !strings.Contains(stdout.String(), "bootstrap=") {
 		t.Fatalf("plain startup dashboard output = %q", stdout.String())
 	}
 	status, err := platform.Discover(paths, platform.OwnerOptions{})
@@ -608,7 +608,7 @@ func TestContendedMigrationDoesNotReuseRunningCompanion(t *testing.T) {
 	}
 }
 
-func TestOrdinaryStartupDoesNotRequestDiscardedDashboardAuthorization(t *testing.T) {
+func TestOrdinaryStartupPreservesForegroundUseWhenDashboardAuthorizationFails(t *testing.T) {
 	paths := launchTestPaths(t)
 	owner, err := platform.Acquire(paths, platform.OwnerOptions{})
 	if err != nil {
@@ -633,8 +633,8 @@ func TestOrdinaryStartupDoesNotRequestDiscardedDashboardAuthorization(t *testing
 	if code != exitSuccess || stderr.Len() != 0 {
 		t.Fatalf("degraded dashboard result = code:%d stdout:%q stderr:%q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), server.Origin()+"/") || strings.Contains(stdout.String(), "bootstrap=") {
-		t.Fatalf("non-secret dashboard output = %q", stdout.String())
+	if !strings.Contains(stdout.String(), "Dashboard link unavailable") || !strings.Contains(stdout.String(), "reopen with:") || strings.Contains(stdout.String(), "bootstrap=") || strings.Contains(stdout.String(), "dashboard address:") {
+		t.Fatal("degraded dashboard must offer reopening without an unusable link")
 	}
 }
 
