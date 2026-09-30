@@ -23,12 +23,22 @@ func TestCollectionSettingsPersistDefaultsAndRejectUnsafeIntervals(t *testing.T)
 	if err != nil || settings != usage.DefaultCollectionSettings() {
 		t.Fatalf("CollectionSettings() = %#v, %v", settings, err)
 	}
+	if consent, err := state.CollectionConsent(context.Background()); err != nil || consent != usage.CollectionConsentUndecided {
+		t.Fatalf("initial consent = %s, %v", consent, err)
+	}
 	if _, err := state.SetCollectionSettings(context.Background(), usage.CollectionSettings{ActiveInterval: 4 * time.Minute, IdleInterval: 30 * time.Minute}); err == nil {
 		t.Fatal("SetCollectionSettings() accepted an interval below the provider floor")
 	}
 	want := usage.CollectionSettings{ActiveInterval: 10 * time.Minute, IdleInterval: 45 * time.Minute, ProviderMinimum: usage.ProviderSafeMinimum}
 	if got, err := state.SetCollectionSettings(context.Background(), want); err != nil || got != want {
 		t.Fatalf("SetCollectionSettings() = %#v, %v", got, err)
+	}
+	declined := usage.CollectionConsentDeclined
+	if _, err := state.SetCollectionSettingsWithConsent(context.Background(), want, &declined); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.SetCollectionSettingsWithConsent(context.Background(), want, nil); err != nil {
+		t.Fatal(err)
 	}
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
@@ -40,6 +50,16 @@ func TestCollectionSettingsPersistDefaultsAndRejectUnsafeIntervals(t *testing.T)
 	defer func() { _ = state.Close() }()
 	if got, err := state.CollectionSettings(context.Background()); err != nil || got != want {
 		t.Fatalf("reopened CollectionSettings() = %#v, %v", got, err)
+	}
+	if consent, err := state.CollectionConsent(context.Background()); err != nil || consent != declined {
+		t.Fatalf("reopened consent = %s, %v", consent, err)
+	}
+	accepted := usage.CollectionConsentAccepted
+	if _, err := state.SetCollectionSettingsWithConsent(context.Background(), want, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if consent, err := state.CollectionConsent(context.Background()); err != nil || consent != accepted {
+		t.Fatalf("accepted consent = %s, %v", consent, err)
 	}
 }
 

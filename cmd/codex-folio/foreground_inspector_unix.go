@@ -20,7 +20,7 @@ func (foregroundProcessInspector) IsRunning(processID int) (bool, error) {
 	}
 	if err := process.Signal(syscall.Signal(0)); err == nil {
 		return true, nil
-	} else if errors.Is(err, syscall.ESRCH) {
+	} else if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
 		return false, nil
 	} else if errors.Is(err, syscall.EPERM) {
 		return true, nil

@@ -140,11 +140,14 @@ function validateContract(contract, productVersion) {
   }
 
   const activityPath = `/api/${apiVersion}/activity`;
+  const activitySourcesPath = `${activityPath}/sources`;
+  const activityAssignmentsPath = `${activityPath}/assignments`;
   const alertsPath = `/api/${apiVersion}/alerts`;
   const analyticsPath = `/api/${apiVersion}/analytics`;
   const historyPath = `/api/${apiVersion}/analytics/history`;
   const handoffPath = `/api/${apiVersion}/handoff`;
   const bootstrapPath = `/api/${apiVersion}/bootstrap`;
+  const browserTrustPath = `/api/${apiVersion}/browser-trust`;
   const collectionSettingsPath = `/api/${apiVersion}/collection-settings`;
   const diagnosticsPath = `/api/${apiVersion}/diagnostics`;
   const telemetryPath = `/api/${apiVersion}/telemetry`;
@@ -163,10 +166,13 @@ function validateContract(contract, productVersion) {
     contract.paths,
     [
       activityPath,
+      activitySourcesPath,
+      activityAssignmentsPath,
       alertsPath,
       analyticsPath,
       historyPath,
       bootstrapPath,
+      browserTrustPath,
       collectionSettingsPath,
       diagnosticsPath,
       telemetryPath,
@@ -205,6 +211,14 @@ function validateContract(contract, productVersion) {
     bootstrapOperation,
     `POST ${bootstrapPath}`,
   );
+  const browserTrustPathItem = contract.paths[browserTrustPath];
+  assertObject(browserTrustPathItem, `path ${browserTrustPath}`);
+  assertExactKeys(browserTrustPathItem, ["get", "post"], `path ${browserTrustPath}`);
+  assertEqual(browserTrustPathItem.get.operationId, "getBrowserTrust", "browser trust GET operationId");
+  assertEqual(browserTrustPathItem.post.operationId, "manageBrowserTrust", "browser trust POST operationId");
+  assertEqual(requestReference(browserTrustPathItem.post.requestBody, "browser trust request"), "#/$defs/BrowserTrustRequest", "browser trust request");
+  assertEqual(responseReference(browserTrustPathItem.get, "browser trust GET", ["200", "default"]), "#/$defs/BrowserTrustResponse", "browser trust GET response");
+  assertEqual(responseReference(browserTrustPathItem.post, "browser trust POST", ["200", "default"]), "#/$defs/BrowserTrustResponse", "browser trust POST response");
 
   const metadataPathItem = contract.paths[metadataPath];
   assertObject(metadataPathItem, `path ${metadataPath}`);
@@ -314,6 +328,28 @@ function validateContract(contract, productVersion) {
   }
   const activityResponseReference = responseReference(activityOperation, `GET ${activityPath}`, ["200", "default"]);
   assertEqual(errorResponseReference(activityOperation, `GET ${activityPath}`), "#/$defs/UsageErrorResponse", "activity error response reference");
+  const activitySourcesPathItem = contract.paths[activitySourcesPath];
+  assertObject(activitySourcesPathItem, `path ${activitySourcesPath}`);
+  assertExactKeys(activitySourcesPathItem, ["get", "post"], `path ${activitySourcesPath}`);
+  const getActivitySourcesOperation = activitySourcesPathItem.get;
+  const importActivitySourceOperation = activitySourcesPathItem.post;
+  assertExactKeys(getActivitySourcesOperation, ["operationId", "responses"], `GET ${activitySourcesPath}`);
+  assertExactKeys(importActivitySourceOperation, ["operationId", "requestBody", "responses"], `POST ${activitySourcesPath}`);
+  assertEqual(getActivitySourcesOperation.operationId, "getActivitySources", "source review operationId");
+  assertEqual(importActivitySourceOperation.operationId, "importActivitySource", "source import operationId");
+  assertEqual(responseReference(getActivitySourcesOperation, `GET ${activitySourcesPath}`, ["200", "default"]), "#/$defs/ActivitySourcesResponse", "source review response");
+  assertEqual(requestReference(importActivitySourceOperation.requestBody, `POST ${activitySourcesPath}`), "#/$defs/ActivitySourceImportRequest", "source import request");
+  assertEqual(responseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`, ["200", "default"]), "#/$defs/ActivitySourceImportResponse", "source import response");
+  assertEqual(errorResponseReference(getActivitySourcesOperation, `GET ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source review error response");
+  assertEqual(errorResponseReference(importActivitySourceOperation, `POST ${activitySourcesPath}`), "#/$defs/UsageErrorResponse", "source import error response");
+  const assignActivityOperation = contract.paths[activityAssignmentsPath]?.post;
+  assertObject(assignActivityOperation, `POST ${activityAssignmentsPath}`);
+  assertExactKeys(contract.paths[activityAssignmentsPath], ["post"], `path ${activityAssignmentsPath}`);
+  assertExactKeys(assignActivityOperation, ["operationId", "requestBody", "responses"], `POST ${activityAssignmentsPath}`);
+  assertEqual(assignActivityOperation.operationId, "assignActivity", "assignment operationId");
+  assertEqual(requestReference(assignActivityOperation.requestBody, `POST ${activityAssignmentsPath}`), "#/$defs/ActivityAssignmentRequest", "assignment request");
+  assertEqual(responseReference(assignActivityOperation, `POST ${activityAssignmentsPath}`, ["200", "default"]), "#/$defs/ActivityAssignmentResponse", "assignment response");
+  assertEqual(errorResponseReference(assignActivityOperation, `POST ${activityAssignmentsPath}`), "#/$defs/UsageErrorResponse", "assignment error response");
 
   const analyticsOperation = contract.paths[analyticsPath]?.get;
   assertObject(analyticsOperation, `GET ${analyticsPath}`);
@@ -536,6 +572,16 @@ function validateContract(contract, productVersion) {
     schemaNameFromReference(profileLifecycleRequestReference, "profile lifecycle request"),
     schemaNameFromReference(collectionSettingsRequestReference, "collection settings request"),
     schemaNameFromReference(collectionSettingsResponseReference, "collection settings response"),
+    "BrowserTrustRequest",
+    "BrowserTrustResponse",
+    "ActivitySource",
+    "ActivitySourcesResponse",
+    "ActivitySourceImportRequest",
+    "ActivitySourceImportResponse",
+    "ActivityAssignmentRequest",
+    "ActivityAssignmentResponse",
+    "HistoricalMetric",
+    "HistoricalSessionMetric",
   ];
   assertObject(contract.$defs, "$defs");
   assertExactKeys(contract.$defs, schemaNames, "$defs");
@@ -648,6 +694,9 @@ function validateContract(contract, productVersion) {
   const collectionSettingsResponseFields = schemaFields(contract.$defs[collectionSettingsResponseType], collectionSettingsResponseType);
 
   return {
+    browserTrustPath,
+    browserTrustRequestFields: schemaFields(contract.$defs.BrowserTrustRequest, "BrowserTrustRequest"),
+    browserTrustResponseFields: schemaFields(contract.$defs.BrowserTrustResponse, "BrowserTrustResponse"),
     alertsPath,
     alertsGetOperationId: getAlertsOperation.operationId,
     alertsManageOperationId: manageAlertsOperation.operationId,
@@ -701,6 +750,9 @@ function validateContract(contract, productVersion) {
     apiVersion,
     activityOperationId: activityOperation.operationId,
     activityPath,
+    activitySourcesPath,
+    activityAssignmentsPath,
+    activitySourceSchemas: ["ActivitySource", "ActivitySourcesResponse", "ActivitySourceImportRequest", "ActivityAssignmentRequest", "ActivityAssignmentResponse", "HistoricalMetric", "HistoricalSessionMetric", "ActivitySourceImportResponse"].map((name) => ({name, fields: schemaFields(contract.$defs[name], name)})),
     activityRecordFields,
     activityRecordType: "ActivityRecord",
     activityResponseFields,
@@ -874,6 +926,9 @@ function renderGo(productVersion, sourceHash, contractShape) {
     apiVersion,
     activityOperationId,
     activityPath,
+    activitySourcesPath,
+    activityAssignmentsPath,
+    activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
     activityResponseFields,
@@ -983,11 +1038,14 @@ function renderGo(productVersion, sourceHash, contractShape) {
     ...contractShape.configurationSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.historySchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     ...contractShape.handoffSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
+    ...activitySourceSchemas.map(({name, fields}) => renderGoStruct(name, fields)),
     renderGoStruct(activityRecordType, activityRecordFields),
     renderGoStruct(activityResponseType, activityResponseFields),
     renderGoStruct(analyticsResponseType, analyticsResponseFields),
     renderGoStruct(bootstrapRequestType, bootstrapRequestFields),
     renderGoStruct(bootstrapResponseType, bootstrapResponseFields),
+    renderGoStruct("BrowserTrustRequest", contractShape.browserTrustRequestFields),
+    renderGoStruct("BrowserTrustResponse", contractShape.browserTrustResponseFields),
     renderGoStruct(collectionSettingsRequestType, collectionSettingsRequestFields),
     renderGoStruct(collectionSettingsResponseType, collectionSettingsResponseFields),
     renderGoStruct(metadataResponseType, metadataFields),
@@ -1039,6 +1097,8 @@ import (
 const (
 \tAPIVersion           = "${apiVersion}"
 \tActivityPath         = "${activityPath}"
+\tActivitySourcesPath  = "${activitySourcesPath}"
+\tActivityAssignmentsPath = "${activityAssignmentsPath}"
 \tAlertsPath           = "${contractShape.alertsPath}"
 \tAnalyticsPath        = "${analyticsPath}"
 \tHistoryPath          = "${contractShape.historyPath}"
@@ -1046,6 +1106,7 @@ const (
 \tContractVersion      = "${productVersion}"
 \tContractSourceSHA256 = "${sourceHash}"
 \tBootstrapPath        = "${bootstrapPath}"
+\tBrowserTrustPath     = "${contractShape.browserTrustPath}"
 \tCollectionSettingsPath = "${collectionSettingsPath}"
 \tDiagnosticsPath      = "${contractShape.diagnosticsPath}"
 \tUpdatesPath          = "${contractShape.updatesPath}"
@@ -1328,6 +1389,43 @@ func (client *Client) ${activityMethod}(ctx context.Context, profileAlias, proje
 \t}
 \tif err := json.NewDecoder(response.Body).Decode(&result); err != nil { return result, response, err }
 \treturn result, response, nil
+}
+
+func (client *Client) GetActivitySources(ctx context.Context) (ActivitySourcesResponse, *http.Response, error) {
+\tvar result ActivitySourcesResponse
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+ActivitySourcesPath, nil)
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("GET %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
+}
+
+func (client *Client) ImportActivitySource(ctx context.Context, input ActivitySourceImportRequest) (ActivitySourceImportResponse, *http.Response, error) {
+\tvar result ActivitySourceImportResponse
+\tbody, err := json.Marshal(input)
+\tif err != nil { return result, nil, err }
+\trequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+ActivitySourcesPath, bytes.NewReader(body))
+\tif err != nil { return result, nil, err }
+\trequest.Header.Set("Accept", "application/json")
+\trequest.Header.Set("Content-Type", "application/json")
+\thttpClient := client.httpClient
+\tif httpClient == nil { httpClient = http.DefaultClient }
+\tresponse, err := httpClient.Do(request)
+\tif err != nil { return result, nil, err }
+\tdefer response.Body.Close()
+\tif response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+\t\treturn result, response, fmt.Errorf("POST %s returned HTTP %d", ActivitySourcesPath, response.StatusCode)
+\t}
+\terr = json.NewDecoder(response.Body).Decode(&result)
+\treturn result, response, err
 }
 
 func (client *Client) ${analyticsMethod}(ctx context.Context, scope string) (${analyticsResponseType}, *http.Response, error) {
@@ -1671,6 +1769,9 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     apiVersion,
     activityOperationId,
     activityPath,
+    activitySourcesPath,
+    activityAssignmentsPath,
+    activitySourceSchemas,
     activityRecordFields,
     activityRecordType,
     activityResponseFields,
@@ -1761,7 +1862,7 @@ function renderTypeScript(productVersion, sourceHash, contractShape) {
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
     .join("\n");
   const collectionSettingsRequestLines = collectionSettingsRequestFields
-    .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
+    .map(({ name, required, schema }) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`)
     .join("\n");
   const collectionSettingsResponseLines = collectionSettingsResponseFields
     .map(({ name, schema }) => `  ${name}: ${typescriptType(schema)};`)
@@ -1838,6 +1939,16 @@ export const DiagnosticsPath = "${contractShape.diagnosticsPath}" as const;
 export const UpdatesPath = "${contractShape.updatesPath}" as const;
 export const TelemetryPath = "${contractShape.telemetryPath}" as const;
 export const PortableConfigurationPath = "${contractShape.portableConfigurationPath}" as const;
+export const BrowserTrustPath = "${contractShape.browserTrustPath}" as const;
+export const BootstrapPath = "${bootstrapPath}" as const;
+
+export interface BrowserTrustRequest {
+${contractShape.browserTrustRequestFields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}
+}
+
+export interface BrowserTrustResponse {
+${contractShape.browserTrustResponseFields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}
+}
 
 ${contractShape.alertSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
@@ -1854,6 +1965,8 @@ ${contractShape.historySchemas.map(({name, fields}) => `export interface ${name}
 ${contractShape.handoffSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 ${contractShape.configurationSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
+
+${activitySourceSchemas.map(({name, fields}) => `export interface ${name} {\n${fields.map(({name, required, schema}) => `  ${name}${required ? "" : "?"}: ${typescriptType(schema)};`).join("\n")}\n}`).join("\n\n")}
 
 export interface ${activityRecordType} {
 ${activityRecordLines}
@@ -2125,6 +2238,24 @@ export interface ApiPaths {
       responses: { 200: { content: { "application/json": ${activityResponseType} } } };
     };
   };
+  "${activitySourcesPath}": {
+    get: {
+      operationId: "getActivitySources";
+      responses: { 200: { content: { "application/json": ActivitySourcesResponse } } };
+    };
+    post: {
+      operationId: "importActivitySource";
+      requestBody: ActivitySourceImportRequest;
+      responses: { 200: { content: { "application/json": ActivitySourceImportResponse } } };
+    };
+  };
+  "${activityAssignmentsPath}": {
+    post: {
+      operationId: "assignActivity";
+      requestBody: ActivityAssignmentRequest;
+      responses: { 200: { content: { "application/json": ActivityAssignmentResponse } } };
+    };
+  };
   "${bootstrapPath}": {
     post: {
       operationId: "${bootstrapOperationId}";
@@ -2136,6 +2267,17 @@ export interface ApiPaths {
           };
         };
       };
+    };
+  };
+  "${contractShape.browserTrustPath}": {
+    get: {
+      operationId: "getBrowserTrust";
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
+    };
+    post: {
+      operationId: "manageBrowserTrust";
+      requestBody: BrowserTrustRequest;
+      responses: { 200: { content: { "application/json": BrowserTrustResponse } } };
     };
   };
   "${metadataPath}": {
@@ -2282,7 +2424,21 @@ export interface CodexFolioApiClient {
     projectId?: string,
     init?: RequestInit,
   ): Promise<${activityResponseType}>;
+  getActivitySources(init?: RequestInit): Promise<ActivitySourcesResponse>;
+  importActivitySource(
+    request: ActivitySourceImportRequest,
+    init?: RequestInit,
+  ): Promise<ActivitySourceImportResponse>;
+  assignActivity(
+    request: ActivityAssignmentRequest,
+    init?: RequestInit,
+  ): Promise<ActivityAssignmentResponse>;
   ${bootstrapOperationId}(request: ${bootstrapRequestType}, init?: RequestInit): Promise<${bootstrapResponseType}>;
+  getBrowserTrust(init?: RequestInit): Promise<BrowserTrustResponse>;
+  manageBrowserTrust(
+    request: BrowserTrustRequest,
+    init?: RequestInit,
+  ): Promise<BrowserTrustResponse>;
   ${metadataOperationId}(init?: RequestInit): Promise<${metadataResponseType}>;
   ${collectionSettingsGetOperationId}(init?: RequestInit): Promise<${collectionSettingsResponseType}>;
   ${collectionSettingsSetOperationId}(
@@ -2576,6 +2732,55 @@ export function createCodexFolioApiClient(
       }
       return (await response.json()) as ${activityResponseType};
     },
+    async getActivitySources(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + "${activitySourcesPath}", {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourcesResponse;
+    },
+    async importActivitySource(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${activitySourcesPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivitySourceImportResponse;
+    },
+    async assignActivity(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + "${activityAssignmentsPath}", {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as ActivityAssignmentResponse;
+    },
     async ${bootstrapOperationId}(request, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("Accept", "application/json");
@@ -2591,6 +2796,38 @@ export function createCodexFolioApiClient(
         throw new Error("POST ${bootstrapPath} failed with HTTP " + response.status);
       }
       return (await response.json()) as ${bootstrapResponseType};
+    },
+    async getBrowserTrust(init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "GET",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
+    },
+    async manageBrowserTrust(request, init = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Accept", "application/json");
+      headers.set("Content-Type", "application/json");
+      const response = await fetcher(baseUrl + BrowserTrustPath, {
+        ...init,
+        body: JSON.stringify(request),
+        credentials: init.credentials ?? "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        const failure = (await response.json()) as ${usageErrorResponseType};
+        throw new UsageRefreshError(failure.code, response.status, failure.message);
+      }
+      return (await response.json()) as BrowserTrustResponse;
     },
     async ${metadataOperationId}(init = {}) {
       const headers = new Headers(init.headers);

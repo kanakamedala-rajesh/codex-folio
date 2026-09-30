@@ -180,7 +180,7 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 	}
 	availabilityState := usage.AvailabilityAvailable
 	if len(snapshot.Observations) == 0 {
-		availabilityState = snapshot.Availability[0].State
+		availabilityState = storedProvenanceAvailabilityState(snapshot.Availability[0].State)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, provenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, availabilityState, usage.ProvenanceProvider); err != nil {
@@ -202,7 +202,7 @@ func (store *Store) SaveUsageSnapshot(ctx context.Context, target usage.ProfileT
 		if itemProvenanceID == "" {
 			itemProvenanceID, err = newStoreIdentifier("provenance")
 			if err == nil {
-				_, err = tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label) VALUES (?, ?, ?, ?, ?, ?, ?)`, itemProvenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, storedAvailabilityState(item.State), item.Provenance)
+				_, err = tx.ExecContext(ctx, `INSERT INTO metric_provenance (provenance_id, source, source_version, captured_at, freshness, availability, provenance_label) VALUES (?, ?, ?, ?, ?, ?, ?)`, itemProvenanceID, snapshot.Source, snapshot.SourceVersion, formatStoredTime(snapshot.CapturedAt.UTC()), usage.FreshnessFresh, storedProvenanceAvailabilityState(item.State), item.Provenance)
 			}
 			if err != nil {
 				rollback()
@@ -261,6 +261,10 @@ func (store *Store) LatestUsageSnapshot(ctx context.Context, target usage.Profil
 }
 
 func (store *Store) usageSnapshot(ctx context.Context, target usage.ProfileTarget, snapshotID string) (usage.Snapshot, error) {
+	return store.readUsageSnapshot(ctx, target, snapshotID, true)
+}
+
+func (store *Store) readUsageSnapshot(ctx context.Context, target usage.ProfileTarget, snapshotID string, includeScope bool) (usage.Snapshot, error) {
 	if store == nil || store.db == nil || target.ID == "" || target.Alias == "" {
 		return usage.Snapshot{}, apperrors.New(apperrors.UsageRequestInvalid, usage.ErrInvalid)
 	}
@@ -282,7 +286,7 @@ func (store *Store) usageSnapshot(ctx context.Context, target usage.ProfileTarge
 	if snapshot.CapturedAt, err = parseStoredTime(capturedAt); err != nil {
 		return usage.Snapshot{}, coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}
-	if len(loginCiphertext) > 0 || len(workspaceCiphertext) > 0 {
+	if includeScope && (len(loginCiphertext) > 0 || len(workspaceCiphertext) > 0) {
 		secureVault, vaultErr := store.requireVault()
 		if vaultErr != nil {
 			return usage.Snapshot{}, vaultErr
@@ -427,7 +431,7 @@ func validUsageProvenance(value string) bool {
 }
 
 func validAvailability(state string) bool {
-	return state == usage.AvailabilityAvailable || state == usage.AvailabilityUnsupported || state == usage.AvailabilityTemporarilyUnavailable || state == usage.AvailabilityStale || state == usage.AvailabilityReauthenticationRequired || state == usage.AvailabilityContradictory
+	return state == usage.AvailabilityAvailable || state == usage.AvailabilityUnsupported || state == usage.AvailabilityTemporarilyUnavailable || state == usage.AvailabilityStale || state == usage.AvailabilityReauthenticationRequired || state == usage.AvailabilityContradictory || state == usage.AvailabilityNoActivity
 }
 
 func validFreshness(value string) bool {
@@ -443,6 +447,13 @@ func storedAvailabilityState(value string) string {
 		return usage.AvailabilityAvailable
 	}
 	return value
+}
+
+func storedProvenanceAvailabilityState(value string) string {
+	if value == usage.AvailabilityNoActivity {
+		return usage.AvailabilityTemporarilyUnavailable
+	}
+	return storedAvailabilityState(value)
 }
 
 func storedAvailabilityCondition(value string) string {
@@ -500,6 +511,18 @@ func (store *Store) LatestSuccessfulUsageRefresh(ctx context.Context, target usa
 // RecentUsageSnapshots returns the last twelve raw captures, including failed
 // captures as gaps. It never fills a historical gap with last-known evidence.
 func (store *Store) RecentUsageSnapshots(ctx context.Context, target usage.ProfileTarget) ([]usage.Snapshot, error) {
+	return store.recentUsageSnapshots(ctx, target, true)
+}
+
+// RecentUsageMetricSnapshots returns the bounded capture history used by
+// dashboard charts and alert evaluation. These consumers need metric evidence,
+// not identity scope, so no encrypted login or workspace fields are opened.
+// Ranking and aggregation must continue to use snapshots with identity scope.
+func (store *Store) RecentUsageMetricSnapshots(ctx context.Context, target usage.ProfileTarget) ([]usage.Snapshot, error) {
+	return store.recentUsageSnapshots(ctx, target, false)
+}
+
+func (store *Store) recentUsageSnapshots(ctx context.Context, target usage.ProfileTarget, includeScope bool) ([]usage.Snapshot, error) {
 	ctx = contextOrBackground(ctx)
 	store.operationMu.RLock()
 	rows, err := store.db.QueryContext(ctx, `SELECT snapshot_id FROM usage_snapshots WHERE profile_id = ? ORDER BY rtrim(captured_at, 'Z') DESC, snapshot_id DESC LIMIT 12`, target.ID)
@@ -525,7 +548,7 @@ func (store *Store) RecentUsageSnapshots(ctx context.Context, target usage.Profi
 	}
 	result := make([]usage.Snapshot, 0, len(ids))
 	for i := len(ids) - 1; i >= 0; i-- {
-		snapshot, err := store.usageSnapshot(ctx, target, ids[i])
+		snapshot, err := store.readUsageSnapshot(ctx, target, ids[i], includeScope)
 		if err != nil {
 			return nil, err
 		}

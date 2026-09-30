@@ -50,7 +50,7 @@ func (store *Store) AlertEvidence(ctx context.Context, profileID string) ([]aler
 	result := make([]alerts.Evidence, 0, len(targets))
 	for _, target := range targets {
 		item := alerts.Evidence{ProfileID: target.id, Alias: target.alias, ProfileStatus: target.status}
-		snapshots, snapshotErr := store.RecentUsageSnapshots(ctx, usage.ProfileTarget{ID: target.id, Alias: target.alias})
+		snapshots, snapshotErr := store.RecentUsageMetricSnapshots(ctx, usage.ProfileTarget{ID: target.id, Alias: target.alias})
 		if snapshotErr != nil {
 			return nil, snapshotErr
 		}

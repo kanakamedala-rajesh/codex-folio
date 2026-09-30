@@ -13,6 +13,7 @@ import (
 
 type serviceOperationalComposer func(*store.Store) (httpapi.OperationalServices, error)
 type serviceActivator func(httpapi.OperationalServices) error
+type serviceVaultMigrator func(*store.Store) (*store.Store, error)
 
 // lockedServiceLifecycle retains the one owner while a passphrase-backed
 // service waits for an explicit per-process unlock. Opening the vault, opening
@@ -24,6 +25,7 @@ type lockedServiceLifecycle struct {
 	mode       platform.VaultMode
 	openStore  profileStoreOpener
 	compose    serviceOperationalComposer
+	migrate    serviceVaultMigrator
 	activate   serviceActivator
 	store      *store.Store
 	background serviceCloser
@@ -44,6 +46,12 @@ func newLockedServiceLifecycle(paths platform.Paths, mode platform.VaultMode, op
 			GuidanceCommands: []string{"codex-folio vault unlock"},
 		},
 	}
+}
+
+func (lifecycle *lockedServiceLifecycle) SetMigrator(migrate serviceVaultMigrator) {
+	lifecycle.mu.Lock()
+	defer lifecycle.mu.Unlock()
+	lifecycle.migrate = migrate
 }
 
 func (lifecycle *lockedServiceLifecycle) SetActivator(activate serviceActivator) {
@@ -80,6 +88,21 @@ func (lifecycle *lockedServiceLifecycle) Unlock(ctx context.Context, passphrase 
 	if err != nil {
 		lifecycle.recordFailure(err)
 		return err
+	}
+	if lifecycle.migrate != nil {
+		openedStore := stateStore
+		stateStore, err = lifecycle.migrate(openedStore)
+		if err != nil {
+			_ = openedStore.Close()
+			lifecycle.recordFailure(err)
+			return err
+		}
+		if stateStore == nil {
+			_ = openedStore.Close()
+			err = apperrors.New(apperrors.StoreOpenFailed, errors.New("secure-storage migration returned no destination store"))
+			lifecycle.recordFailure(err)
+			return err
+		}
 	}
 	services, err := lifecycle.compose(stateStore)
 	if err == nil {

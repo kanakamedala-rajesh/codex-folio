@@ -120,3 +120,104 @@ func TestAnalyticsExportFiltersNormalizedEvidenceAndDisclosesPathsExplicitly(t *
 }
 
 func int64Pointer(value int64) *int64 { return &value }
+
+func TestCombinedIdentityActivityExportExcludesUnassignedHistory(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{
+		{SourceSessionID: "linked", ProfileID: "profile-1", Source: activity.SourceLocalMetadata, SourceVersion: "0.153.4", StartedAt: at, LastObservedAt: at},
+		{SourceSessionID: "unassigned", Source: activity.SourceLocalMetadata, SourceVersion: "0.153.4", StartedAt: at, LastObservedAt: at},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(history) != 2 {
+		t.Fatalf("overall history = %#v/%v", history, err)
+	}
+	records, err := stateStore.ExportAnalytics(ctx, activity.ExportRequest{
+		Format: "json", Datasets: []string{"activity"}, Scope: usage.ScopeCombinedIdentity,
+		ProfileID: "*", ProjectID: "*", From: "all", To: "all",
+	})
+	if err != nil || records.Activity == nil || len(*records.Activity) != 1 || (*records.Activity)[0].SourceSessionID != "linked" {
+		t.Fatalf("combined activity export = %#v/%v", records.Activity, err)
+	}
+}
+
+func TestAssignedLegacySessionExportRetainsOriginalAttribution(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	addReadyProfile(t, stateStore, "profile-1", "Work")
+	addReadyProfile(t, stateStore, "profile-2", "Personal")
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{{
+		SourceSessionID: "legacy-linked", ProfileID: "profile-1", ProfileAlias: "Work",
+		Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := stateStore.ListActivity(ctx, activity.Filters{})
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %#v/%v", history, err)
+	}
+	if err := stateStore.AssignSessions(ctx, []string{history[0].ID}, "profile-2"); err != nil {
+		t.Fatal(err)
+	}
+	request := activity.ExportRequest{Format: "json", Datasets: []string{"activity"}, Scope: usage.ScopeSelectedProfile, ProfileID: "profile-2", ProjectID: "*", From: "all", To: "all"}
+	records, err := stateStore.ExportAnalytics(ctx, request)
+	if err != nil || records.Activity == nil || len(*records.Activity) != 1 {
+		t.Fatalf("activity export = %#v/%v", records.Activity, err)
+	}
+	row := (*records.Activity)[0]
+	if row.ProfileID != "profile-2" || row.AttributionProvenance != "user_assigned" || row.OriginalProfileID != "profile-1" || row.OriginalAttributionProvenance != "legacy_profile_observation" {
+		t.Fatalf("assigned legacy provenance = %#v", row)
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil || !strings.Contains(string(encoded), `"original_attribution_provenance":"legacy_profile_observation"`) {
+		t.Fatalf("normalized export = %s/%v", encoded, err)
+	}
+}
+
+func TestOverallExportPreservesUnassignedMetricEvidence(t *testing.T) {
+	stateStore, err := openProfileTestStore(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateStore.Close()
+	ctx := context.Background()
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	zero := int64(0)
+	if err := stateStore.SaveObservedSessions(ctx, []activity.ObservedSessionRecord{
+		{SourceSessionID: "zero", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at, TokensUsed: &zero},
+		{SourceSessionID: "absent", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: at, LastObservedAt: at},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := activity.NewExportService(stateStore)
+	for _, format := range []string{"json", "csv"} {
+		result, err := service.Export(ctx, activity.ExportRequest{Format: format, Datasets: []string{"activity"}, Scope: usage.ScopeOverallHistory, ProfileID: "*", ProjectID: "*", From: "all", To: "all"})
+		if err != nil || result.Records.Activity == nil || len(*result.Records.Activity) != 2 {
+			t.Fatalf("export = %#v, %v", result, err)
+		}
+		for _, row := range *result.Records.Activity {
+			if row.ProfileID != "" || row.MetricKey != "codex.local.tokens_used" || row.Unit != "tokens" || row.Freshness != "historical" || row.CoverageStartAt != exportTime(at) || row.CoverageEndAt != exportTime(at) {
+				t.Fatalf("metric evidence = %#v", row)
+			}
+			if row.SourceSessionID == "zero" && (row.Availability != "available" || row.TokensUsed == nil || *row.TokensUsed != 0) {
+				t.Fatalf("zero = %#v", row)
+			}
+			if row.SourceSessionID == "absent" && (row.Availability != "absent" || row.TokensUsed != nil) {
+				t.Fatalf("absent = %#v", row)
+			}
+		}
+	}
+}

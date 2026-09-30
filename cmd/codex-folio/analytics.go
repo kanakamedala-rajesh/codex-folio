@@ -189,6 +189,9 @@ func parseAnalyticsRequest(args []string) (httpapi.HistoryRequest, analyticsRunO
 		}
 		if export.ProfileID == "" {
 			export.ProfileID = "selected"
+			if export.Scope == usage.ScopeOverallHistory {
+				export.ProfileID = "*"
+			}
 		}
 		if export.ProjectID == "" {
 			export.ProjectID = "*"
@@ -310,9 +313,10 @@ func encodeAnalyticsExport(result httpapi.AnalyticsExportResult) ([]byte, error)
 		if result.Records.Activity != nil {
 			for _, record := range *result.Records.Activity {
 				row := []string{record.RecordType, record.Id, optionalString(record.SourceSessionId), record.ProfileId, record.ProfileAlias,
+					optionalString(record.OriginalProfileId), optionalString(record.AttributionProvenance), optionalString(record.OriginalAttributionProvenance),
 					optionalString(record.ProjectId), optionalString(record.ProjectAlias), optionalString(record.ProjectBasename), record.Source,
 					optionalString(record.SourceVersion), record.Provenance, record.StartedAt, record.LastObservedAt, optionalString(record.Lifecycle), optionalInt(record.ExitStatus),
-					optionalString(record.Model), optionalInt(record.TokensUsed), record.Correlation.State, optionalString(record.Correlation.ManagedLaunchId), optionalString(record.Correlation.EvidenceType), optionalString(record.Correlation.Confidence)}
+					optionalString(record.Model), optionalInt(record.TokensUsed), optionalString(record.MetricKey), optionalString(record.Unit), optionalString(record.Availability), optionalString(record.Freshness), optionalString(record.CoverageStartAt), optionalString(record.CoverageEndAt), record.Correlation.State, optionalString(record.Correlation.ManagedLaunchId), optionalString(record.Correlation.EvidenceType), optionalString(record.Correlation.Confidence)}
 				if result.Filters.IncludePaths {
 					row = append(row, optionalString(record.CanonicalPath))
 				}
@@ -372,6 +376,6 @@ func writeAnalyticsUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage: codex-folio analytics retention [13-months|DAYS|unlimited] [--run]")
 	fmt.Fprintln(output, "       codex-folio analytics purge --profile ID|* --project ID|*|none --from RFC3339|all --to RFC3339|all --classes usage,aggregates,observed_sessions,managed_launches,checkpoints [--dry-run|--confirm TOKEN] [--non-interactive]")
 	fmt.Fprintln(output, "       codex-folio analytics aggregates --profile ID|* --project ID|*|none --from RFC3339|all --to RFC3339|all")
-	fmt.Fprintln(output, "       codex-folio analytics export --format json|csv --datasets usage,availability,aggregates,activity [--scope selected_profile|combined_identity] [--profile selected|ID|*] [--project ID|*|none] [--from RFC3339|all] [--to RFC3339|all] [--include-paths] [--output FILE|--dry-run]")
+	fmt.Fprintln(output, "       codex-folio analytics export --format json|csv --datasets usage,availability,aggregates,activity [--scope selected_profile|combined_identity|overall_history] [--profile selected|ID|*] [--project ID|*|none] [--from RFC3339|all] [--to RFC3339|all] [--include-paths] [--output FILE|--dry-run]")
 	fmt.Fprintln(output, "All analytics commands accept --state-root PATH, --vault-mode MODE, and --json. Quote * in your shell.")
 }

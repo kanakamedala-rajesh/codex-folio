@@ -17,6 +17,7 @@ const (
 	LaunchProfileNotFound                    = "CF_LAUNCH_PROFILE_NOT_FOUND"
 	LaunchProfileUnavailable                 = "CF_LAUNCH_PROFILE_UNAVAILABLE"
 	LaunchProcessStartFailed                 = "CF_LAUNCH_PROCESS_START_FAILED"
+	LaunchDaemonUnsupported                  = "CF_LAUNCH_DAEMON_UNSUPPORTED"
 	LaunchProcessStatusInvalid               = "CF_LAUNCH_PROCESS_STATUS_INVALID"
 	ProfileSetupInvalid                      = "CF_PROFILE_SETUP_INVALID"
 	ProfileAliasInvalid                      = "CF_PROFILE_ALIAS_INVALID"
@@ -99,6 +100,7 @@ const (
 	StoreRecoveryCandidateNotFound           = "CF_STORE_RECOVERY_CANDIDATE_NOT_FOUND"
 	StoreRecoveryRestoreFailed               = "CF_STORE_RECOVERY_RESTORE_FAILED"
 	VaultUnavailable                         = "CF_VAULT_UNAVAILABLE"
+	VaultMigrationRequired                   = "CF_VAULT_MIGRATION_REQUIRED"
 	VaultLocked                              = "CF_VAULT_LOCKED"
 	VaultKeyInvalid                          = "CF_VAULT_KEY_INVALID"
 	VaultEnvelopeInvalid                     = "CF_VAULT_ENVELOPE_INVALID"
@@ -155,6 +157,7 @@ func IsRegistered(code string) bool {
 		LaunchProfileNotFound,
 		LaunchProfileUnavailable,
 		LaunchProcessStartFailed,
+		LaunchDaemonUnsupported,
 		LaunchProcessStatusInvalid,
 		ProfileSetupInvalid,
 		ProfileAliasInvalid,
@@ -237,6 +240,7 @@ func IsRegistered(code string) bool {
 		StoreRecoveryCandidateNotFound,
 		StoreRecoveryRestoreFailed,
 		VaultUnavailable,
+		VaultMigrationRequired,
 		VaultLocked,
 		VaultKeyInvalid,
 		VaultEnvelopeInvalid,

@@ -12,7 +12,6 @@ import (
 	"golang.org/x/term"
 
 	"venkatasudha.com/codex-folio/internal/apperrors"
-	"venkatasudha.com/codex-folio/internal/httpapi"
 	"venkatasudha.com/codex-folio/internal/platform"
 )
 
@@ -44,11 +43,15 @@ func runVault(args []string, input io.Reader, stdout, stderr io.Writer, resolveP
 	if err != nil {
 		return writeServiceError(stderr, err)
 	}
+	client, err := newServiceCommandClient(connection)
+	if err != nil {
+		return writeServiceError(stderr, err)
+	}
 	passphrase, err := readVaultUnlockPassphrase(input, stderr)
 	if err != nil {
 		return writeServiceError(stderr, err)
 	}
-	health, err := httpapi.NewCommandClient(connection.Origin, connection.Token, nil).UnlockVault(context.Background(), passphrase)
+	health, err := client.UnlockVault(context.Background(), passphrase)
 	passphrase = ""
 	if err != nil {
 		return writeServiceError(stderr, err)

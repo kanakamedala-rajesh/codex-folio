@@ -35,19 +35,47 @@ func (store *Store) CollectionSettings(ctx context.Context) (usage.CollectionSet
 }
 
 func (store *Store) SetCollectionSettings(ctx context.Context, settings usage.CollectionSettings) (usage.CollectionSettings, error) {
+	return store.SetCollectionSettingsWithConsent(ctx, settings, nil)
+}
+
+func (store *Store) CollectionConsent(ctx context.Context) (usage.CollectionConsent, error) {
+	if store == nil || store.db == nil {
+		return "", coded(apperrors.StoreReadFailed, usage.ErrPersistenceFailed)
+	}
+	ctx = contextOrBackground(ctx)
+	store.operationMu.RLock()
+	defer store.operationMu.RUnlock()
+	var consent usage.CollectionConsent
+	err := store.db.QueryRowContext(ctx, `SELECT collection_consent FROM settings WHERE settings_id = 1`).Scan(&consent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return usage.CollectionConsentUndecided, nil
+	}
+	if err != nil {
+		return "", coded(apperrors.StoreReadFailed, errors.Join(usage.ErrPersistenceFailed, err))
+	}
+	return consent, nil
+}
+
+func (store *Store) SetCollectionSettingsWithConsent(ctx context.Context, settings usage.CollectionSettings, consent *usage.CollectionConsent) (usage.CollectionSettings, error) {
 	if settings.ProviderMinimum == 0 {
 		settings.ProviderMinimum = usage.ProviderSafeMinimum
 	}
-	if store == nil || store.db == nil || usage.ValidateCollectionSettings(settings) != nil {
+	if store == nil || store.db == nil || usage.ValidateCollectionSettings(settings) != nil || (consent != nil && *consent != usage.CollectionConsentAccepted && *consent != usage.CollectionConsentDeclined) {
 		return usage.CollectionSettings{}, apperrors.New(apperrors.UsageRequestInvalid, usage.ErrScheduleInvalid)
 	}
 	ctx = contextOrBackground(ctx)
 	store.operationMu.Lock()
 	defer store.operationMu.Unlock()
-	_, err := store.db.ExecContext(ctx, `INSERT INTO settings (settings_id, collection_active_interval_seconds, collection_idle_interval_seconds, updated_at)
-		VALUES (1, ?, ?, ?) ON CONFLICT(settings_id) DO UPDATE SET collection_active_interval_seconds = excluded.collection_active_interval_seconds,
-		collection_idle_interval_seconds = excluded.collection_idle_interval_seconds, updated_at = excluded.updated_at`,
-		int64(settings.ActiveInterval/time.Second), int64(settings.IdleInterval/time.Second), formatStoredTime(store.clock.Now()))
+	choice := usage.CollectionConsentUndecided
+	if consent != nil {
+		choice = *consent
+	}
+	_, err := store.db.ExecContext(ctx, `INSERT INTO settings (settings_id, collection_active_interval_seconds, collection_idle_interval_seconds, collection_consent, updated_at)
+		VALUES (1, ?, ?, ?, ?) ON CONFLICT(settings_id) DO UPDATE SET collection_active_interval_seconds = excluded.collection_active_interval_seconds,
+		collection_idle_interval_seconds = excluded.collection_idle_interval_seconds,
+		collection_consent = CASE WHEN ? THEN excluded.collection_consent ELSE settings.collection_consent END,
+		updated_at = excluded.updated_at`,
+		int64(settings.ActiveInterval/time.Second), int64(settings.IdleInterval/time.Second), choice, formatStoredTime(store.clock.Now()), consent != nil)
 	if err != nil {
 		return usage.CollectionSettings{}, coded(apperrors.StoreWriteFailed, errors.Join(usage.ErrPersistenceFailed, err))
 	}

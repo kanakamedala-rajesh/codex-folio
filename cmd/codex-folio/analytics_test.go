@@ -314,3 +314,49 @@ func (doer *historyBrowserDoer) Do(request *http.Request) (*http.Response, error
 	}
 	return doer.composedBrowserDoer.Do(request)
 }
+
+func TestAnalyticsActivityCSVMatchesAttributionAndMetricPreview(t *testing.T) {
+	paths := launchTestPaths(t)
+	secureVault := seedReadyLaunchProfile(t, paths)
+	state, err := store.OpenWithVault(paths.DatabaseFile, secureVault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	now := time.Now().UTC()
+	tokens := int64(0)
+	if err := state.SaveObservedSessions(context.Background(), []activity.ObservedSessionRecord{{
+		SourceSessionID: "csv-session", Source: activity.SourceLocalMetadata, SourceVersion: "state_5", StartedAt: now, LastObservedAt: now, TokensUsed: &tokens,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := activity.NewExportService(state).Export(context.Background(), activity.ExportRequest{Format: "csv", Datasets: []string{"activity"}, Scope: usage.ScopeOverallHistory, ProfileID: "*", ProjectID: "*", From: "all", To: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projected httpapi.AnalyticsExportResult
+	if err := json.Unmarshal(encoded, &projected); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = encodeAnalyticsExport(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(bytes.NewReader(encoded)).ReadAll()
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("CSV rows=%v err=%v", rows, err)
+	}
+	fields := map[string]string{}
+	for i, field := range rows[0] {
+		fields[field] = rows[1][i]
+	}
+	for field, want := range map[string]string{"attribution_provenance": "unassigned", "original_attribution_provenance": "unassigned", "tokens_used": "0", "metric_key": "codex.local.tokens_used", "unit": "tokens", "availability": "available", "freshness": "historical", "correlation_state": "uncorrelated"} {
+		if fields[field] != want {
+			t.Errorf("%s=%q want %q", field, fields[field], want)
+		}
+	}
+}

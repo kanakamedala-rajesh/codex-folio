@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -57,8 +58,9 @@ type OwnerStatus struct {
 // ServiceClient is the private connection descriptor used by sibling CLI
 // processes. It is deliberately separate from owner status and its output.
 type ServiceClient struct {
-	Origin string `json:"origin"`
-	Token  string `json:"token"`
+	Origin            string `json:"origin"`
+	Token             string `json:"token"`
+	CertificateSHA256 string `json:"certificate_sha256,omitempty"`
 }
 
 // Owner is a process-local handle for the user-scoped state ownership lock.
@@ -440,11 +442,19 @@ func readPrivateJSON(filesystem FileSystem, path string, destination any) error 
 
 func validateServiceClient(client ServiceClient) error {
 	parsed, err := url.Parse(client.Origin)
-	if err != nil || parsed.Scheme != "http" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSpace(client.Token) == "" {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil || strings.TrimSpace(client.Token) == "" {
 		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
 	}
 	host, _, err := net.SplitHostPort(parsed.Host)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+	}
+	if parsed.Scheme == "https" {
+		fingerprint, err := hex.DecodeString(client.CertificateSHA256)
+		if err != nil || len(fingerprint) != 32 || hex.EncodeToString(fingerprint) != client.CertificateSHA256 {
+			return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
+		}
+	} else if client.CertificateSHA256 != "" {
 		return apperrors.New(apperrors.PlatformServiceMetadataInvalid, ErrOwnerMetadata)
 	}
 	return nil

@@ -21,6 +21,96 @@ import (
 type CommandActivityService interface {
 	Refresh(context.Context, string) ([]activity.TimelineRecord, error)
 	List(context.Context, activity.Filters) ([]activity.TimelineRecord, error)
+	ReviewSources(context.Context) ([]activity.SourceReview, error)
+	ImportSource(context.Context, string, bool) (activity.ImportResult, error)
+	Assign(context.Context, activity.Assignment) error
+}
+
+func (server *Server) assignActivity(response http.ResponseWriter, request *http.Request) {
+	if server.activities == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	if request.Method != http.MethodPost {
+		server.writeMethodError(response, http.MethodPost)
+		return
+	}
+	if !server.validCSRF(request) {
+		server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+		return
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	var input ActivityAssignmentRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+		return
+	}
+	if err := server.activities.Assign(request.Context(), activity.Assignment{SessionIDs: input.SessionIds, ProfileID: input.ProfileId}); err != nil {
+		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
+		return
+	}
+	writeJSON(response, http.StatusOK, ActivityAssignmentResponse{AssignedCount: int64(len(input.SessionIds))})
+}
+
+func (server *Server) activitySources(response http.ResponseWriter, request *http.Request) {
+	if server.activities == nil {
+		server.writeAPIError(response, http.StatusServiceUnavailable, apperrors.HTTPAPIServiceUnavailable)
+		return
+	}
+	switch request.Method {
+	case http.MethodGet:
+		sources, err := server.activities.ReviewSources(request.Context())
+		if err != nil {
+			server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
+			return
+		}
+		items := make([]ActivitySource, 0, len(sources))
+		for _, source := range sources {
+			items = append(items, ActivitySource{SourceId: source.SourceID, Label: source.Label, Status: source.Status, SessionCount: int64(source.SessionCount)})
+		}
+		writeJSON(response, http.StatusOK, ActivitySourcesResponse{Sources: items})
+	case http.MethodPost:
+		if !server.validCSRF(request) {
+			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
+			return
+		}
+		contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+		if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		var input ActivitySourceImportRequest
+		decoder := json.NewDecoder(io.LimitReader(request.Body, maxSelectionBodySize))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || input.Consent != true {
+			server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
+			return
+		}
+		result, err := server.activities.ImportSource(request.Context(), input.SourceId, input.Consent)
+		if err != nil {
+			server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
+			return
+		}
+		writeJSON(response, http.StatusOK, ActivitySourceImportResponse{ImportedCount: int64(result.ImportedCount), AlreadyPresentCount: int64(result.AlreadyPresentCount)})
+	default:
+		server.writeMethodError(response, "GET, POST")
+	}
 }
 
 type CommandActivityRequest struct {
@@ -28,10 +118,14 @@ type CommandActivityRequest struct {
 	Alias        string `json:"alias,omitempty"`
 	ProfileAlias string `json:"profile_alias,omitempty"`
 	ProjectID    string `json:"project_id,omitempty"`
+	SourceID     string `json:"source_id,omitempty"`
+	Consent      bool   `json:"consent,omitempty"`
 }
 
 type CommandActivityResponse struct {
 	Records []activity.TimelineRecord `json:"records"`
+	Sources []activity.SourceReview   `json:"sources,omitempty"`
+	Import  *activity.ImportResult    `json:"import,omitempty"`
 }
 
 func (client *CommandClient) Activity(ctx context.Context, input CommandActivityRequest) (CommandActivityResponse, error) {
@@ -98,19 +192,33 @@ func (server *Server) commandActivity(response http.ResponseWriter, request *htt
 		server.writeAPIError(response, http.StatusBadRequest, apperrors.ActivityRequestInvalid)
 		return
 	}
-	var records []activity.TimelineRecord
+	result := CommandActivityResponse{}
 	switch input.Action {
 	case "refresh":
-		if strings.TrimSpace(input.Alias) == "" || input.ProfileAlias != "" || input.ProjectID != "" {
+		if strings.TrimSpace(input.Alias) == "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID != "" || input.Consent {
 			err = activity.ErrActivityInvalid
 		} else {
-			records, err = server.activities.Refresh(request.Context(), input.Alias)
+			result.Records, err = server.activities.Refresh(request.Context(), input.Alias)
 		}
 	case "list":
-		if input.Alias != "" {
+		if input.Alias != "" || input.SourceID != "" || input.Consent {
 			err = activity.ErrActivityInvalid
 		} else {
-			records, err = server.activities.List(request.Context(), activity.Filters{ProfileAlias: input.ProfileAlias, ProjectID: input.ProjectID})
+			result.Records, err = server.activities.List(request.Context(), activity.Filters{ProfileAlias: input.ProfileAlias, ProjectID: input.ProjectID})
+		}
+	case "review_sources":
+		if input.Alias != "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID != "" || input.Consent {
+			err = activity.ErrActivityInvalid
+		} else {
+			result.Sources, err = server.activities.ReviewSources(request.Context())
+		}
+	case "import_source":
+		if input.Alias != "" || input.ProfileAlias != "" || input.ProjectID != "" || input.SourceID == "" || !input.Consent {
+			err = activity.ErrActivityInvalid
+		} else {
+			var imported activity.ImportResult
+			imported, err = server.activities.ImportSource(request.Context(), input.SourceID, true)
+			result.Import = &imported
 		}
 	default:
 		err = activity.ErrActivityInvalid
@@ -119,7 +227,7 @@ func (server *Server) commandActivity(response http.ResponseWriter, request *htt
 		server.writeAPIError(response, http.StatusConflict, diagnostics.CodeFor(err, apperrors.ActivityRequestInvalid))
 		return
 	}
-	writeJSON(response, http.StatusOK, CommandActivityResponse{Records: records})
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (server *Server) getActivity(response http.ResponseWriter, request *http.Request) {
@@ -161,6 +269,16 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 			LastObservedAt: formatUsageTime(record.LastObservedAt), Lifecycle: record.Lifecycle, Model: record.Model,
 			CorrelationState: record.Correlation.State, CorrelationManagedLaunchId: record.Correlation.ManagedLaunchID,
 			CorrelationEvidenceType: record.Correlation.EvidenceType, CorrelationConfidence: record.Correlation.Confidence,
+			HistoricalMetrics: []HistoricalSessionMetric{},
+		}
+		if record.AttributionProvenance != "" {
+			item.AttributionProvenance = &record.AttributionProvenance
+		}
+		if record.OriginalProfileID != "" {
+			item.OriginalProfileId = &record.OriginalProfileID
+		}
+		if record.OriginalAttributionProvenance != "" {
+			item.OriginalAttributionProvenance = &record.OriginalAttributionProvenance
 		}
 		if record.ContinuationCheckpointID != "" {
 			item.ContinuationCheckpointId = &record.ContinuationCheckpointID
@@ -173,6 +291,19 @@ func ActivityResponseFor(records []activity.TimelineRecord) ActivityResponse {
 		}
 		if record.TokensUsed != nil {
 			item.TokensUsed = strconv.FormatInt(*record.TokensUsed, 10)
+		}
+		if record.RecordType == activity.RecordTypeObservedSession && record.Source == activity.SourceLocalMetadata {
+			metric := HistoricalSessionMetric{
+				MetricKey: "codex.local.tokens_used", Unit: "tokens", Source: record.Source,
+				SourceVersion: record.SourceVersion, Availability: "absent", Freshness: "historical",
+				CoverageStartAt: formatUsageTime(record.StartedAt), CoverageEndAt: formatUsageTime(record.LastObservedAt),
+			}
+			if record.TokensUsed != nil {
+				value := strconv.FormatInt(*record.TokensUsed, 10)
+				metric.Value = &value
+				metric.Availability = "available"
+			}
+			item.HistoricalMetrics = append(item.HistoricalMetrics, metric)
 		}
 		result.Records = append(result.Records, item)
 	}

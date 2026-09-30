@@ -68,8 +68,37 @@ func TestUsageCollectorReadsDocumentedAccountAndRateLimitsThroughIdentityHome(t 
 			t.Fatalf("environment does not contain intended Identity Home: %v", environment)
 		}
 	}
-	if len(result.Observations) != len(usage.Registry()) || result.Observations[2].Metric.Key != "codex.local.tokens_used" || result.Observations[2].Value != 42 || result.Observations[3].Metric.Key != "codex.local.session_duration" || result.Observations[3].Value != 300 {
+	if len(result.Observations) != 2 || result.Availability[2].State != usage.AvailabilityTemporarilyUnavailable || result.Availability[2].Reason != usage.ReasonAttributionUnknown || result.Availability[3].State != usage.AvailabilityUnsupported {
 		t.Fatalf("observations = %#v", result.Observations)
+	}
+}
+
+func TestLocalUsageDistinguishesSupportedEmptyHistoryFromMissing(t *testing.T) {
+	at := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	home := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(home, localStateDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, model TEXT, cwd TEXT NOT NULL, tokens_used INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+	(&UsageCollector{}).addLocalUsage(context.Background(), usage.CollectionRequest{IdentityHome: home, CapturedAt: at}, &snapshot)
+	if len(snapshot.Observations) != 0 || snapshot.Availability[2].State != usage.AvailabilityNoActivity || snapshot.Availability[2].Reason != usage.ReasonNoActivity {
+		t.Fatalf("supported empty source = %#v", snapshot.Availability[2])
+	}
+}
+
+func TestLocalUsageDoesNotTurnMissingHistoryIntoZeroOrElapsedTimeIntoDuration(t *testing.T) {
+	at := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	snapshot := usage.NewUnavailableSnapshot("0.153.4", at, usage.AvailabilityUnsupported, usage.ReasonUnsupported)
+	(&UsageCollector{}).addLocalUsage(context.Background(), usage.CollectionRequest{IdentityHome: t.TempDir(), CapturedAt: at}, &snapshot)
+	if len(snapshot.Observations) != 0 || snapshot.Availability[2].State != usage.AvailabilityTemporarilyUnavailable || snapshot.Availability[2].Reason != usage.ReasonHistoryAbsent || snapshot.Availability[3].State != usage.AvailabilityUnsupported {
+		t.Fatalf("missing history = %#v", snapshot)
 	}
 }
 

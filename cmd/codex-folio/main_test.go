@@ -123,6 +123,7 @@ func TestServiceVaultModeSelectionIsExplicitAndValidated(t *testing.T) {
 		mode platform.VaultMode
 	}{
 		{name: "secret service", args: []string{"--vault-mode", "secret-service"}, mode: platform.VaultModeSecretService},
+		{name: "WSL DPAPI", args: []string{"--vault-mode", "wsl-dpapi"}, mode: platform.VaultModeWSLDPAPI},
 		{name: "passphrase equals", args: []string{"--vault-mode=passphrase"}, mode: platform.VaultModePassphrase},
 	}
 	for _, tt := range tests {
@@ -143,6 +144,26 @@ func TestServiceVaultModeSelectionIsExplicitAndValidated(t *testing.T) {
 	} {
 		if _, err := parseServiceOptions(args); err == nil {
 			t.Fatalf("parseServiceOptions(%q) accepted an invalid or duplicate vault mode", args)
+		}
+	}
+}
+
+func TestServiceMigrationTargetRequiresLockedPassphraseSource(t *testing.T) {
+	options, err := parseServiceOptions([]string{"--vault-mode", "passphrase", "--migrate-to=wsl-dpapi"})
+	if err != nil {
+		t.Fatalf("parseServiceOptions() error = %v", err)
+	}
+	if options.vaultMode != platform.VaultModePassphrase || options.migrationTarget != platform.VaultModeWSLDPAPI {
+		t.Fatalf("migration options = %#v", options)
+	}
+	for _, args := range [][]string{
+		{"--migrate-to", "secret-service"},
+		{"--vault-mode", "secret-service", "--migrate-to", "wsl-dpapi"},
+		{"--vault-mode", "passphrase", "--migrate-to", "passphrase"},
+		{"--vault-mode", "passphrase", "--migrate-to", "secret-service", "--migrate-to=wsl-dpapi"},
+	} {
+		if _, err := parseServiceOptions(args); err == nil {
+			t.Fatalf("parseServiceOptions(%q) accepted invalid migration options", args)
 		}
 	}
 }
@@ -584,4 +605,14 @@ func testServiceTempDir(t *testing.T) string {
 		}
 	})
 	return directory
+}
+
+func TestHelpAdvertisesPlainPickerOptions(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--help"}, &stdout, &stderr, buildinfo.Metadata{}); code != exitSuccess {
+		t.Fatalf("help exit=%d stderr=%q", code, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("codex-folio [--state-root PATH] [--vault-mode MODE]")) {
+		t.Fatalf("help omits plain picker options: %s", stdout.String())
+	}
 }

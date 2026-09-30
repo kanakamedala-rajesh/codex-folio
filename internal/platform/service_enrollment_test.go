@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func TestServiceEnrollmentDefinitionsKeepExecutableAndArgumentsIntact(t *testing
 		contains  []string
 	}{
 		{name: "linux systemd user", platform: PlatformLinux, mechanism: "systemd-user", contains: []string{"ExecStart=" + systemdQuote(executable), systemdQuote(stateRoot), "WantedBy=default.target"}},
-		{name: "macOS LaunchAgent", platform: PlatformDarwin, mechanism: "launch-agent", contains: []string{"<key>ProgramArguments</key>", "Codex Folio &#34;preview&#34;", "state &amp; local", "RunAtLoad"}},
+		{name: "macOS LaunchAgent", platform: PlatformDarwin, mechanism: "launch-agent", contains: []string{"<key>ProgramArguments</key>", "Codex Folio &#34;preview&#34;", "state &amp; local", "RunAtLoad", "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -399,6 +400,49 @@ func TestLaunchAgentInstallRecoversBootstrapFailureAndReloadsChangedDefinition(t
 	}
 	if bootstrapCalls != 3 || bootoutCalls != 1 {
 		t.Fatalf("bootstrap calls = %d, bootout calls = %d; want 3, 1", bootstrapCalls, bootoutCalls)
+	}
+}
+
+func TestLaunchAgentStopCurrentSessionPreservesLoginDefinition(t *testing.T) {
+	home := t.TempDir()
+	loaded := true
+	runner := &recordingEnrollmentRunner{available: true}
+	runner.run = func(name string, args ...string) ([]byte, error) {
+		command := name + " " + strings.Join(args, " ")
+		switch command {
+		case "launchctl print gui/501/" + launchAgentLabel:
+			if loaded {
+				return []byte("state = running\n"), nil
+			}
+			return nil, enrollmentExitError{code: 113, err: errors.New("service not found")}
+		case "launchctl bootout gui/501/" + launchAgentLabel:
+			loaded = false
+		}
+		return nil, nil
+	}
+	manager, err := NewServiceEnrollment(ServiceEnrollmentOptions{
+		Platform: PlatformDarwin, HomeDir: home, UID: 501, Executable: filepath.Join(home, "codex-folio"),
+		Arguments: []string{"service", "start", "--enrolled"}, Runner: runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDefinition := []byte("<key>KeepAlive</key><true/>")
+	if err := os.MkdirAll(filepath.Dir(manager.DefinitionPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manager.DefinitionPath(), oldDefinition, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StopCurrentSession(); err != nil {
+		t.Fatal(err)
+	}
+	if loaded {
+		t.Fatal("previously loaded LaunchAgent remains active")
+	}
+	definition, err := os.ReadFile(manager.DefinitionPath())
+	if err != nil || !bytes.Equal(definition, oldDefinition) {
+		t.Fatalf("login definition = %q, %v", definition, err)
 	}
 }
 

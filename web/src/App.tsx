@@ -2,6 +2,8 @@ import { quotaWindowLabel } from "./quotaWindow";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   createCodexFolioApiClient,
+  BootstrapPath,
+  BrowserTrustPath,
   UsageRefreshError,
   type AnalyticsResponse,
   type AlertActionRequest,
@@ -47,9 +49,68 @@ import { Telemetry } from "./Telemetry";
 import { ConfigurationTransfer } from "./ConfigurationTransfer";
 import "./styles.css";
 
+let renewSessionForRequest: (() => Promise<string | null>) | null = null;
+const trustStorageKey = "codex-folio.browser-trust.v1";
+const secureBrowser = window.location.protocol === "https:";
+const sessionStorageKey = "codex-folio.browser-session.v1";
+function browserSessionCredential(key = sessionStorageKey) {
+  try {
+    return sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+let browserSession = secureBrowser ? "" : browserSessionCredential();
+function saveBrowserSessionCredential(value: string, csrf = "") {
+  browserSession = value;
+  try {
+    if (value) {
+      sessionStorage.setItem(sessionStorageKey, value);
+      sessionStorage.setItem(`${sessionStorageKey}.csrf`, csrf);
+    } else {
+      sessionStorage.removeItem(sessionStorageKey);
+      sessionStorage.removeItem(`${sessionStorageKey}.csrf`);
+    }
+  } catch {
+    /* Keep this page usable when browser storage is disabled. */
+  }
+}
+if (!secureBrowser) saveBrowserTrustCredential(null);
+function browserTrustCredential() {
+  if (!secureBrowser) return "";
+  try {
+    return localStorage.getItem(trustStorageKey) || "";
+  } catch {
+    return "";
+  }
+}
+function saveBrowserTrustCredential(value: string | null) {
+  try {
+    if (value && secureBrowser) localStorage.setItem(trustStorageKey, value);
+    else localStorage.removeItem(trustStorageKey);
+  } catch {
+    /* Browser storage may be disabled. */
+  }
+}
 const api = createCodexFolioApiClient("", async (input, init) => {
-  const response = await fetch(input, init);
+  const headers = new Headers(init?.headers);
+  const credential = browserTrustCredential();
+  if (credential) headers.set("X-CodexFolio-Trust", credential);
+  if (!secureBrowser && browserSession) headers.set("X-CodexFolio-Session", browserSession);
+  const request = { ...init, headers, ...(!secureBrowser ? { credentials: "omit" as const } : {}) };
+  let response = await fetch(input, request);
+  const renewedCsrf =
+    response.status === 401 &&
+    renewSessionForRequest &&
+    !String(input).includes(BrowserTrustPath) &&
+    !String(input).includes(BootstrapPath) &&
+    (await renewSessionForRequest());
+  if (renewedCsrf) {
+    if (headers.has("X-CodexFolio-CSRF")) headers.set("X-CodexFolio-CSRF", renewedCsrf);
+    response = await fetch(input, request);
+  }
   if (!response.ok) {
+    if (!secureBrowser && [401, 403].includes(response.status)) saveBrowserSessionCredential("");
     const failure = (await response.json()) as { code: string; message: string };
     throw new UsageRefreshError(failure.code, response.status, failure.message);
   }
@@ -476,6 +537,8 @@ export function App() {
   const serviceState = serviceHealth?.service_state;
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
+  const [analyticsState, setAnalyticsState] = useState("loading");
+  const [alertsState, setAlertsState] = useState("loading");
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [packs, setPacks] = useState<ConfigurationPackSummary[]>([]);
@@ -499,6 +562,9 @@ export function App() {
     to: "",
   });
   const [busy, setBusy] = useState(false);
+  const [trusted, setTrusted] = useState(false);
+  const [trustBusy, setTrustBusy] = useState(false);
+  const [trustMessage, setTrustMessage] = useState("");
   const [message, setMessage] = useState("");
   const [warning, setWarning] = useState("");
   const [guidance, setGuidance] = useState("");
@@ -527,7 +593,8 @@ export function App() {
   });
   const heading = useRef<HTMLHeadingElement>(null);
   const more = useRef<HTMLDetailsElement>(null);
-  const csrf = useRef("");
+  const csrf = useRef(secureBrowser ? "" : browserSessionCredential(`${sessionStorageKey}.csrf`));
+  const renewal = useRef<Promise<string | null> | null>(null);
   const startup = useRef<Promise<void> | null>(null);
   const operation = useRef(false);
   const failure = useCallback((error: unknown) => {
@@ -537,6 +604,55 @@ export function App() {
     } else if (error instanceof TypeError) setStatus("unavailable");
     else setMessage(c.refreshFailed);
   }, []);
+  const renewSession = useCallback(async () => {
+    if (!secureBrowser) return null;
+    renewal.current ??= (async () => {
+      try {
+        const result = await api.manageBrowserTrust(
+          { action: "renew" },
+          { headers: { "X-CodexFolio-Renew": "1" } },
+        );
+        if (!result.csrf_token || !result.trusted) return null;
+        csrf.current = result.csrf_token;
+        setTrusted(true);
+        return result.csrf_token;
+      } catch {
+        return null;
+      }
+    })();
+    try {
+      return await renewal.current;
+    } finally {
+      renewal.current = null;
+    }
+  }, []);
+  async function changeBrowserTrust(action: "grant" | "forget" | "revoke_all") {
+    if (!secureBrowser) return;
+    setTrustBusy(true);
+    setTrustMessage("");
+    try {
+      const result = await api.manageBrowserTrust(
+        { action },
+        { headers: { "X-CodexFolio-CSRF": csrf.current } },
+      );
+      setTrusted(result.trusted);
+      if (action === "grant") {
+        if (result.credential) saveBrowserTrustCredential(result.credential);
+        setTrustMessage(c.browserTrustGranted);
+      } else {
+        saveBrowserTrustCredential(null);
+        csrf.current = "";
+        setData(null);
+        setStatus("expired");
+        requestAnimationFrame(() => heading.current?.focus());
+      }
+    } catch (error) {
+      failure(error);
+      setTrustMessage(c.browserTrustFailed);
+    } finally {
+      setTrustBusy(false);
+    }
+  }
   const readAnalyticsHistory = async (profileId: string, projectId: string, from: string) =>
     api.manageAnalyticsHistory(
       {
@@ -557,31 +673,44 @@ export function App() {
     });
   const editAnalyticsProject = (request: { project_id: string; alias: string }) =>
     api.editProject(request, { headers: { "X-CodexFolio-CSRF": csrf.current } });
-  async function load(includeProfiles = false) {
-    const [next, selected, alertData, inventory] = await Promise.all([
-      api.getAnalytics("combined_identity"),
-      api.getSelection().catch((e) => {
-        if (e instanceof UsageRefreshError && e.status === 409) return null;
-        throw e;
+  async function loadAnalytics() {
+    setAnalyticsState("loading");
+    try {
+      const next = await api.getAnalytics("combined_identity");
+      setData(next);
+      setNow(Date.now());
+      setAnalyticsState("ready");
+      return next;
+    } catch (error) {
+      setAnalyticsState("unavailable");
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) failure(error);
+      return null;
+    }
+  }
+  async function loadAlerts() {
+    setAlertsState("loading");
+    try {
+      setAlerts(await api.getAlerts());
+      setAlertsState("ready");
+    } catch (error) {
+      setAlertsState("unavailable");
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) failure(error);
+    }
+  }
+  async function loadInventory() {
+    const inventory = await Promise.all([
+      api.getProfiles().then((result) => {
+        setProfiles(result.profiles);
+        return result;
       }),
-      api.getAlerts(),
-      includeProfiles
-        ? Promise.all([
-            api.getProfiles(),
-            api.listProfileQuarantine(),
-            api.getConfigurationPacks(),
-            api.getCollectionSettings(),
-            api.getDiagnostics(),
-            api.getUpdates(),
-            api.getTelemetry().catch(() => null),
-            api.previewConfigurationExport(),
-          ])
-        : null,
+      api.listProfileQuarantine(),
+      api.getConfigurationPacks(),
+      api.getCollectionSettings(),
+      api.getDiagnostics(),
+      api.getUpdates(),
+      api.getTelemetry().catch(() => null),
+      api.previewConfigurationExport(),
     ]);
-    setNow(Date.now());
-    setData(next);
-    setAlerts(alertData);
-    setSelection(selected);
     if (inventory) {
       setProfiles(inventory[0].profiles);
       setQuarantined(inventory[1].quarantined);
@@ -602,6 +731,20 @@ export function App() {
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
+  }
+  async function load(includeProfiles = false) {
+    void loadAlerts();
+    const [next] = await Promise.all([
+      loadAnalytics(),
+      api
+        .getSelection()
+        .catch((error) => {
+          if (error instanceof UsageRefreshError && error.status === 409) return null;
+          throw error;
+        })
+        .then(setSelection),
+      includeProfiles ? loadInventory() : null,
+    ]);
     return next;
   }
   async function manageAlerts(request: AlertActionRequest) {
@@ -730,14 +873,14 @@ export function App() {
         if (r.reason instanceof UsageRefreshError && [401, 403].includes(r.reason.status))
           throw r.reason;
       const next = await load(true);
-      const hasConflict = next.activity.some(
+      const hasConflict = next?.activity.some(
         (item) =>
           item.record_type === "managed_launch" &&
           ["running", "pending"].includes(item.lifecycle) &&
           item.profile_id !== selection?.profile_id,
       );
       if (!hasConflict) setWarning("");
-      setMessage(rejected.length ? c.refreshFailed : c.refreshDone);
+      setMessage(rejected.length || !next ? c.refreshFailed : c.refreshDone);
     } catch (e) {
       failure(e);
     } finally {
@@ -748,21 +891,31 @@ export function App() {
   const start = useEffectEvent(() => {
     startup.current ??= (async () => {
       const url = new URL(window.location.href),
-        token = url.searchParams.get("bootstrap");
+        token = secureBrowser
+          ? url.searchParams.get("bootstrap")
+          : new URLSearchParams(url.hash.slice(1)).get("bootstrap");
       window.history.replaceState(null, "", window.location.pathname);
-      if (!token) {
-        setStatus("missing");
-        return;
-      }
       try {
-        const auth = await api.exchangeBootstrap({ bootstrap_token: token });
-        csrf.current = auth.csrf_token;
+        if (token) {
+          if (!secureBrowser) saveBrowserSessionCredential("");
+          const auth = await api.exchangeBootstrap({ bootstrap_token: token });
+          csrf.current = auth.csrf_token;
+          if (!secureBrowser)
+            saveBrowserSessionCredential(auth.session_token || "", auth.csrf_token);
+        } else if (secureBrowser ? !(await renewSession()) : !browserSession) {
+          setStatus("missing");
+          return;
+        }
         const health = await api.getMetadata();
         setServiceHealth(health);
         setStatus("authorized");
         if (health.service_state === "ready") {
+          if (secureBrowser) {
+            const trust = await api.getBrowserTrust();
+            setTrusted(trust.trusted);
+          }
           const next = await load(true);
-          void refresh("dashboard_open", next);
+          if (next) void refresh("dashboard_open", next);
         } else {
           setRoute("Settings");
           requestAnimationFrame(() => heading.current?.focus());
@@ -783,19 +936,41 @@ export function App() {
       if (cancelled()) return;
       setServiceHealth(health);
       if (health.service_state === "ready") {
+        if (secureBrowser) {
+          const trust = await api.getBrowserTrust();
+          setTrusted(trust.trusted);
+        }
         const next = await load(true);
         setMessage(serviceHealthCopy.ready);
-        void refresh("dashboard_open", next);
+        if (next) void refresh("dashboard_open", next);
       }
     } catch (error) {
       if (!cancelled()) failure(error);
     }
   });
   useEffect(() => {
+    const reopen = () => {
+      if (!secureBrowser && new URLSearchParams(window.location.hash.slice(1)).has("bootstrap")) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener("hashchange", reopen);
+    return () => window.removeEventListener("hashchange", reopen);
+  }, []);
+  useEffect(() => {
+    renewSessionForRequest = secureBrowser ? renewSession : null;
     start();
     const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      renewSessionForRequest = null;
+      clearInterval(timer);
+    };
+  }, [renewSession]);
+  useEffect(() => {
+    if (status !== "authorized" || !trusted) return;
+    const timer = setInterval(() => void renewSession(), 5 * 60 * 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [status, trusted, renewSession]);
   useEffect(() => {
     if (status !== "authorized" || !serviceState || serviceState === "ready") return;
     let cancelled = false;
@@ -913,6 +1088,32 @@ export function App() {
     } catch (error) {
       failure(error);
       setMessage(c.collectionScheduleFailed);
+    } finally {
+      operation.current = false;
+      setBusy(false);
+    }
+  }
+  async function chooseCollectionConsent(consent: "accepted" | "declined") {
+    if (operation.current || !collectionSettings) return;
+    operation.current = true;
+    setBusy(true);
+    setMessage(c.collectionConsentSaving);
+    try {
+      const saved = await api.setCollectionSettings(
+        {
+          active_interval_seconds: collectionSettings.active_interval_seconds,
+          idle_interval_seconds: collectionSettings.idle_interval_seconds,
+          consent,
+        },
+        { headers: { "X-CodexFolio-CSRF": csrf.current } },
+      );
+      setCollectionSettings(saved);
+      setMessage(
+        consent === "accepted" ? c.collectionConsentAccepted : c.collectionConsentDeclined,
+      );
+    } catch (error) {
+      failure(error);
+      setMessage(c.collectionConsentFailed);
     } finally {
       operation.current = false;
       setBusy(false);
@@ -1226,7 +1427,7 @@ export function App() {
         className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink w-full min-w-0 cursor-pointer"
       >
         {!selection && <option value="">{c.none}</option>}
-        {data?.candidates.map((p) => (
+        {(data?.candidates ?? profiles).map((p) => (
           <option key={p.profile_id} value={p.alias}>
             {p.alias}
           </option>
@@ -1298,6 +1499,63 @@ export function App() {
             </small>
           </div>
           <main id="content">
+            {secureBrowser && status === "authorized" && serviceState === "ready" && !trusted ? (
+              <section
+                className="mb-6 rounded border border-rule bg-panel p-4"
+                aria-labelledby="browser-trust-prompt"
+              >
+                <h2 id="browser-trust-prompt" className="mb-2 text-[1.25rem] font-bold">
+                  {c.browserTrustTitle}
+                </h2>
+                <p className="mb-3 max-w-[75ch] text-muted">{c.browserTrustPrompt}</p>
+                <button
+                  type="button"
+                  disabled={trustBusy}
+                  onClick={() => void changeBrowserTrust("grant")}
+                  className="min-h-11 rounded border border-accent bg-accent px-3 py-2 font-semibold text-canvas disabled:opacity-60"
+                >
+                  {c.browserTrustGrant}
+                </button>
+                <p role="status" className="mt-2 mb-0">
+                  {trustMessage}
+                </p>
+              </section>
+            ) : null}
+            {status === "authorized" && trusted && trustMessage ? (
+              <p role="status" className="mb-4 max-w-[75ch]">
+                {trustMessage}
+              </p>
+            ) : null}
+            {status === "authorized" && serviceState === "ready" && (
+              <div className="mb-4 grid gap-3">
+                {(
+                  [
+                    ["analytics", analyticsState, loadAnalytics],
+                    ["alerts", alertsState, loadAlerts],
+                  ] as const
+                ).map(
+                  ([resource, state, retry]) =>
+                    state !== "ready" && (
+                      <section key={resource} className="rounded border border-rule bg-panel p-4">
+                        <p role="status" className="mb-2 max-w-[75ch]">
+                          {state === "loading"
+                            ? c[`${resource}Loading`]
+                            : c[`${resource}Unavailable`]}
+                        </p>
+                        {state === "unavailable" && (
+                          <button
+                            type="button"
+                            className="min-h-11 rounded border border-rule px-3 py-2"
+                            onClick={() => void retry()}
+                          >
+                            {c[`${resource}Retry`]}
+                          </button>
+                        )}
+                      </section>
+                    ),
+                )}
+              </div>
+            )}
             {status !== "authorized" ? (
               <>
                 <header className="mb-7 border-b border-rule pb-5 [&_p]:mb-0">
@@ -1401,12 +1659,42 @@ export function App() {
                 filters={sessionFilters}
                 setFilters={setSessionFilters}
                 read={() => api.getActivity()}
+                reviewSources={() => api.getActivitySources()}
+                importSource={(sourceId) =>
+                  api.importActivitySource(
+                    { source_id: sourceId, consent: true },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
+                profiles={profiles}
+                assign={(sessionIds, profileId) =>
+                  api.assignActivity(
+                    { session_ids: sessionIds, profile_id: profileId },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
                 expired={failure}
                 heading={heading}
               />
             ) : route === "Profiles" ? (
               <Profiles
                 profiles={profiles}
+                refreshProfiles={async () => {
+                  const inventory = await api.getProfiles();
+                  setProfiles(inventory.profiles);
+                  return inventory.profiles;
+                }}
+                completeSetup={async () => {
+                  await load(true);
+                }}
+                reviewSources={() => api.getActivitySources()}
+                importSource={(sourceId) =>
+                  api.importActivitySource(
+                    { source_id: sourceId, consent: true },
+                    { headers: { "X-CodexFolio-CSRF": csrf.current } },
+                  )
+                }
+                expired={failure}
                 packs={packs}
                 quarantined={quarantined}
                 busy={busy}
@@ -1530,6 +1818,7 @@ export function App() {
                     >
                       {[
                         ["settings-top", serviceHealthCopy.vaultAndRecovery],
+                        ...(secureBrowser ? [["settings-browser-trust", c.browserTrustTitle]] : []),
                         ["settings-configuration", "Configuration transfer"],
                         ["settings-background", c.backgroundService],
                         ["settings-schedule", c.collectionSchedule],
@@ -1563,6 +1852,46 @@ export function App() {
                           : serviceHealthCopy.locked}
                       </p>
                     </section>
+                    {secureBrowser ? (
+                      <section
+                        className="border-b border-rule py-6"
+                        aria-labelledby="settings-browser-trust"
+                      >
+                        <h2
+                          id="settings-browser-trust"
+                          tabIndex={-1}
+                          className="mb-4 text-[1.4rem] font-bold leading-[1.3] tracking-[-0.015em]"
+                        >
+                          {c.browserTrustTitle}
+                        </h2>
+                        <p className="mb-4 max-w-[75ch] text-muted">
+                          {trusted ? c.browserTrustActive : c.browserTrustInactive}
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          {trusted ? (
+                            <button
+                              type="button"
+                              disabled={trustBusy}
+                              onClick={() => void changeBrowserTrust("forget")}
+                              className="min-h-11 rounded border border-rule bg-panel px-3 py-2 disabled:opacity-60"
+                            >
+                              {c.browserTrustForget}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            disabled={trustBusy}
+                            onClick={() => void changeBrowserTrust("revoke_all")}
+                            className="min-h-11 rounded border border-rule bg-panel px-3 py-2 disabled:opacity-60"
+                          >
+                            {c.browserTrustRevokeAll}
+                          </button>
+                        </div>
+                        <p role="status" className="mt-2 mb-0">
+                          {trustMessage}
+                        </p>
+                      </section>
+                    ) : null}
                     {alerts ? (
                       <NotificationPrivacy data={alerts} busy={busy} manage={manageAlerts} />
                     ) : null}
@@ -1620,10 +1949,35 @@ export function App() {
                         {c.collectionSchedule}
                       </h2>
                       <p className="mb-4 max-w-[75ch]">
-                        {collectionSettings?.scheduler_enabled
+                        {collectionSettings?.consent === "accepted"
                           ? c.collectionScheduleEnabled
-                          : c.collectionScheduleDisabled}
+                          : collectionSettings?.consent === "declined"
+                            ? c.collectionScheduleDisabled
+                            : c.collectionConsentUndecided}
                       </p>
+                      <p className="mb-3 max-w-[75ch] text-muted">{c.collectionConsentScope}</p>
+                      <div className="mb-5 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            busy || !collectionSettings || collectionSettings.consent === "accepted"
+                          }
+                          onClick={() => void chooseCollectionConsent("accepted")}
+                          className="min-h-11 rounded border border-rule px-4 py-2 font-semibold hover:border-accent disabled:opacity-60"
+                        >
+                          {c.collectionConsentEnable}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            busy || !collectionSettings || collectionSettings.consent === "declined"
+                          }
+                          onClick={() => void chooseCollectionConsent("declined")}
+                          className="min-h-11 rounded border border-rule px-4 py-2 font-semibold hover:border-accent disabled:opacity-60"
+                        >
+                          {c.collectionConsentDecline}
+                        </button>
+                      </div>
                       <p className="mb-4 max-w-[75ch] text-muted">
                         {c.collectionScheduleFloor(
                           (collectionSettings?.provider_minimum_seconds ?? 300) / 60,
@@ -1723,11 +2077,11 @@ export function App() {
                     </section>
                     <CheckpointManagement manage={manageCheckpoints} />
                   </section>
-                ) : route !== "Overview" ? (
+                ) : route === "Analytics" || route === "Alerts" ? null : route !== "Overview" ? (
                   <p className="mb-4 max-w-[75ch]">{c.later}</p>
                 ) : (
                   <>
-                    {!selection && !combined ? (
+                    {!data ? null : !selection && !combined ? (
                       <p className="mb-4 max-w-[75ch]">{c.emptyDetail}</p>
                     ) : (
                       <>

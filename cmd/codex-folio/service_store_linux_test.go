@@ -88,3 +88,48 @@ func TestLinuxServiceStoreUsesPassphraseVaultForEncryptedFields(t *testing.T) {
 		t.Fatalf("vault file permissions = %o, want 600", got)
 	}
 }
+
+func TestWSLServiceStoreReopensThroughWindowsUserDPAPI(t *testing.T) {
+	if os.Getenv("CODEX_FOLIO_WSL_VAULT_NATIVE_TEST") != "1" {
+		t.Skip("set CODEX_FOLIO_WSL_VAULT_NATIVE_TEST=1 for native WSL service composition")
+	}
+	if !platform.IsWSL2() {
+		t.Skip("native WSL service composition requires WSL2")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	override := root
+	paths, err := platform.ResolvePaths(platform.PathOptions{Platform: platform.PlatformLinux, HomeDir: filepath.Join(root, "home"), OwnerHomeDir: filepath.Join(root, "owner"), StateRootOverride: &override})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := store.ProjectIdentity{ProjectIdentityID: "wsl-project", ProjectAlias: "wsl", CanonicalPath: "/private/wsl/project", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	first, err := openServiceStoreWithVaultMode(paths, platform.VaultModeWSLDPAPI, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.PutProjectIdentity(context.Background(), project); err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := openServiceStoreWithVaultMode(paths, platform.VaultModeWSLDPAPI, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	got, err := second.GetProjectIdentity(context.Background(), project.ProjectIdentityID)
+	if err != nil || got.CanonicalPath != project.CanonicalPath {
+		t.Fatalf("reopened project = %#v, %v", got, err)
+	}
+	if _, err := os.Stat(paths.WSLVaultFile); err != nil {
+		t.Fatalf("WSL vault file: %v", err)
+	}
+	if _, err := os.Stat(paths.VaultFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy vault file unexpectedly used: %v", err)
+	}
+}

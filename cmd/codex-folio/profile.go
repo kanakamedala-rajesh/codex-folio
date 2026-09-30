@@ -112,7 +112,11 @@ func runProfileWithInputAndDependenciesAndOwnerOptions(args []string, input io.R
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		result, err := httpapi.NewCommandClient(connection.Origin, connection.Token, nil).AuthenticateProfile(context.Background(), httpapi.CommandProfileAuthenticationRequest{
+		client, err := newServiceCommandClient(connection)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		result, err := client.AuthenticateProfile(context.Background(), httpapi.CommandProfileAuthenticationRequest{
 			Action: command, Alias: alias, DisplayName: options.displayName, CodexOverride: options.codexBin,
 			ReferencedHomePath: options.identityHome, AuthMethod: options.authMethod, NonInteractive: options.nonInteractive,
 			ConfigurationPackID: options.configPackID, ConfigurationPackVersion: options.configVersion,

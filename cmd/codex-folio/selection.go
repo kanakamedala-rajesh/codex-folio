@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -79,8 +78,14 @@ func runInteractiveSelectionWithDependencies(input io.Reader, stdout, stderr io.
 }
 
 func runInteractiveSelectionWithOptions(input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, launchSelected func(string) int, diagnosticSink diagnostics.Sink, options selectionOptions) int {
-	chosen := ""
-	code := withSelectionService(input, stderr, resolvePaths, openStore, diagnosticSink, options, platform.OwnerOptions{}, false, func(client *httpapi.CommandClient) error {
+	return runInteractiveSelectionWithOptionsAndAuthenticator(input, stdout, stderr, resolvePaths, openStore, launchSelected, diagnosticSink, options, nil)
+}
+
+func runInteractiveSelectionWithOptionsAndAuthenticator(input io.Reader, stdout, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, launchSelected func(string) int, diagnosticSink diagnostics.Sink, options selectionOptions, authenticator profile.Authenticator) int {
+	inputReader := bufferedReader(input)
+	launchCode := exitSuccess
+	launched := false
+	code := withSelectionServiceAndLaunchAuthenticator(inputReader, stderr, resolvePaths, openStore, diagnosticSink, options, platform.OwnerOptions{}, false, authenticator, func(client *httpapi.CommandClient) error {
 		response, err := client.GetSelection(context.Background())
 		if err != nil {
 			return err
@@ -89,50 +94,75 @@ func runInteractiveSelectionWithOptions(input io.Reader, stdout, stderr io.Write
 		if len(profiles) == 0 {
 			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
 		}
-		_, _ = io.WriteString(stdout, "Choose an Identity Profile (q to cancel):\n")
-		for index, candidate := range profiles {
-			marker := " "
-			if candidate.Selected {
-				marker = "*"
+		for {
+			_, _ = io.WriteString(stdout, "Choose an Identity Profile (q to cancel):\n")
+			for index, candidate := range profiles {
+				marker := " "
+				if candidate.Selected {
+					marker = "*"
+				}
+				_, _ = fmt.Fprintf(stdout, "%s %d. %s (%s)\n", marker, index+1, candidate.DisplayName, candidate.Alias)
 			}
-			_, _ = fmt.Fprintf(stdout, "%s %d. %s (%s)\n", marker, index+1, candidate.DisplayName, candidate.Alias)
-		}
-		_, _ = io.WriteString(stdout, "> ")
-		scanner := bufio.NewScanner(input)
-		if !scanner.Scan() {
-			return scanner.Err()
-		}
-		choice := strings.TrimSpace(scanner.Text())
-		if strings.EqualFold(choice, "q") || choice == "" {
+			_, _ = io.WriteString(stdout, "> ")
+			line, err := inputReader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			if errors.Is(err, io.EOF) && line == "" {
+				return nil
+			}
+			choice := strings.TrimSpace(line)
+			if strings.EqualFold(choice, "q") {
+				return nil
+			}
+			chosen := ""
+			if choice == "" {
+				for _, candidate := range profiles {
+					if candidate.Selected {
+						chosen = candidate.Alias
+						break
+					}
+				}
+				if chosen == "" {
+					return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+				}
+			} else {
+				index, parseErr := strconv.Atoi(choice)
+				if parseErr != nil || index < 1 || index > len(profiles) {
+					_, _ = io.WriteString(stderr, "codex-folio: choose a listed number or q to cancel\n")
+					continue
+				}
+				chosen = profiles[index-1].Alias
+			}
+			result, err := client.SetSelection(context.Background(), chosen)
+			if err != nil {
+				return err
+			}
+			if result.Selected == nil {
+				return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
+			}
+			if result.Warning != "" {
+				_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", result.Warning)
+			}
+			if launchSelected == nil {
+				return apperrors.New(apperrors.LaunchPlanInvalid, errors.New("foreground launcher is unavailable"))
+			}
+			launched = true
+			launchCode = launchSelected(result.Selected.Alias)
 			return nil
 		}
-		index, err := strconv.Atoi(choice)
-		if err != nil || index < 1 || index > len(profiles) {
-			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
-		}
-		result, err := client.SetSelection(context.Background(), profiles[index-1].Alias)
-		if err != nil {
-			return err
-		}
-		if result.Selected == nil {
-			return apperrors.New(apperrors.ProfileNotSelectable, profile.ErrNotSelectable)
-		}
-		chosen = result.Selected.Alias
-		if result.Warning != "" {
-			_, _ = fmt.Fprintf(stderr, "codex-folio: warning: %s\n", result.Warning)
-		}
-		return nil
 	})
-	if code != exitSuccess || chosen == "" {
+	if !launched {
 		return code
 	}
-	if launchSelected == nil {
-		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchPlanInvalid, errors.New("foreground launcher is unavailable")), diagnosticSink)
-	}
-	return launchSelected(chosen)
+	return launchCode
 }
 
 func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, options selectionOptions, ownerOptions platform.OwnerOptions, includeLifecycle bool, action func(*httpapi.CommandClient) error) (resultCode int) {
+	return withSelectionServiceAndLaunchAuthenticator(input, stderr, resolvePaths, openStore, diagnosticSink, options, ownerOptions, includeLifecycle, nil, action)
+}
+
+func withSelectionServiceAndLaunchAuthenticator(input io.Reader, stderr io.Writer, resolvePaths servicePathResolver, openStore profileStoreOpener, diagnosticSink diagnostics.Sink, options selectionOptions, ownerOptions platform.OwnerOptions, includeLifecycle bool, authenticator profile.Authenticator, action func(*httpapi.CommandClient) error) (resultCode int) {
 	paths, err := resolvePaths(options.stateRoot)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -146,7 +176,11 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		if err := action(httpapi.NewCommandClient(connection.Origin, connection.Token, nil)); err != nil {
+		client, err := newServiceCommandClient(connection)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		if err := action(client); err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
 		return exitSuccess
@@ -160,6 +194,11 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 			resultCode = writeServiceErrorWithDiagnostics(stderr, closeErr, diagnosticSink)
 		}
 	}()
+	resolved, err := resolveServiceSecureStorage(paths, options.serviceOptions)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	options.serviceOptions = resolved
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {
 		passphrase, err = readServiceVaultPassphrase(input)
@@ -212,6 +251,11 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
+	launches, err := newLaunchCommandService(stateStore, configurationPacks, authenticator, projects, usageCommands)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	launches.continuations = checkpoints
 	diagnosticService, err := newDiagnosticService(stateStore, false)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
@@ -239,7 +283,7 @@ func withSelectionService(input io.Reader, stderr io.Writer, resolvePaths servic
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
+	server, err := httpapi.NewServer(httpapi.Options{Diagnostics: diagnosticSink, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, Selection: selector, Profiles: registry, ProfileLifecycle: lifecycle, ConfigurationPacks: configurationPacks, Launches: launches, Usage: usageCommands, Projects: projects, Activities: activities, History: usage.NewHistoryService(stateStore), Exports: activity.NewExportService(stateStore), Checkpoints: checkpoints, CommandToken: commandToken})
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}

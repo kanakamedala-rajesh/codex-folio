@@ -23,6 +23,15 @@ const (
 )
 
 var ErrScheduleInvalid = errors.New("collection schedule is invalid")
+var ErrCollectionNotConsented = errors.New("periodic collection is not consented")
+
+type CollectionConsent string
+
+const (
+	CollectionConsentUndecided CollectionConsent = "undecided"
+	CollectionConsentAccepted  CollectionConsent = "accepted"
+	CollectionConsentDeclined  CollectionConsent = "declined"
+)
 
 type CollectionSettings struct {
 	ActiveInterval  time.Duration `json:"active_interval"`
@@ -152,6 +161,9 @@ func (scheduler *Scheduler) Tick(ctx context.Context) (TickResult, error) {
 		}
 
 		snapshot, refreshErr := scheduler.refresher.Refresh(ctx, target.Profile.Alias, trigger)
+		if errors.Is(refreshErr, ErrCollectionNotConsented) {
+			continue
+		}
 		result.Collected++
 		target.State.LastAttemptAt = now
 		if refreshErr != nil {

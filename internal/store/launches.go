@@ -294,6 +294,20 @@ func (store *Store) MarkManagedLaunchAbandoned(ctx context.Context, leaseID stri
 	return nil
 }
 
+// ActiveManagedLaunchCount includes pending leases because their foreground
+// process may start after the query. A read failure cannot prove idle state.
+func (store *Store) ActiveManagedLaunchCount(ctx context.Context) (int, error) {
+	if store == nil || store.db == nil {
+		return 0, coded(apperrors.StoreReadFailed, ErrLaunchState)
+	}
+	var count int
+	err := store.db.QueryRowContext(contextOrBackground(ctx), `SELECT COUNT(*) FROM managed_launches WHERE state IN ('pending', 'running')`).Scan(&count)
+	if err != nil {
+		return 0, coded(apperrors.StoreReadFailed, errors.Join(ErrLaunchState, err))
+	}
+	return count, nil
+}
+
 func (store *Store) ReconcileManagedLaunches(ctx context.Context, inspector launch.ProcessInspector) error {
 	if store == nil || store.db == nil {
 		return coded(apperrors.StoreReadFailed, ErrLaunchState)

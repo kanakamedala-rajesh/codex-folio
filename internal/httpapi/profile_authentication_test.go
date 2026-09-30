@@ -27,4 +27,7 @@ func TestCommandProfileAuthenticationStreamsOutputAndResult(t *testing.T) {
 	if output.String() != "device code: ABCD\n" || result.Setup == nil || result.Setup.Profile.Alias != "Work" {
 		t.Fatalf("output/result = %q/%#v", output.String(), result)
 	}
+	if operation := server.getProfileOperation("work"); operation.State != "ready" || operation.Code != "" {
+		t.Fatalf("operation = %#v, want safe ready state", operation)
+	}
 }

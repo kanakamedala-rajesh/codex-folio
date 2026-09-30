@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,6 +135,9 @@ func runForegroundLaunch(client *httpapi.CommandClient, plan launch.Plan, report
 	process, err := newProcess(plan, input, stdout, stderr)
 	if err != nil || process == nil {
 		abandon()
+		if apperrors.Code(err) == apperrors.LaunchDaemonUnsupported {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink), nil
+		}
 		return writeServiceErrorWithDiagnostics(stderr, apperrors.New(apperrors.LaunchProcessStartFailed, errors.Join(launch.ErrProcessStartFailed, err)), diagnosticSink), nil
 	}
 	if err := process.Start(); err != nil {
@@ -213,13 +217,22 @@ func withLaunchCommandServiceAndUsage(input io.Reader, stderr io.Writer, paths p
 		if err != nil {
 			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 		}
-		return action(httpapi.NewCommandClient(connection.Origin, connection.Token, nil), input)
+		client, err := newServiceCommandClient(connection)
+		if err != nil {
+			return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+		}
+		return action(client, input)
 	}
 	owner, err := platform.Acquire(paths, ownerOptions)
 	if err != nil {
 		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
 	}
 	defer func() { _ = owner.Close() }()
+	resolved, err := resolveServiceSecureStorage(paths, options.serviceOptions)
+	if err != nil {
+		return writeServiceErrorWithDiagnostics(stderr, err, diagnosticSink)
+	}
+	options.serviceOptions = resolved
 	childInput := input
 	passphrase := ""
 	if options.vaultMode == platform.VaultModePassphrase {
@@ -388,6 +401,10 @@ func writeLaunchUsageDiagnostic(stderr io.Writer, code, message string, diagnost
 type nativeForegroundProcess struct{ command *exec.Cmd }
 
 func newForegroundProcess(plan launch.Plan, stdin io.Reader, stdout, stderr io.Writer) (foregroundProcess, error) {
+	arguments, err := foregroundCodexArguments(plan, runtime.GOOS, codexSupportsNoDaemon)
+	if err != nil {
+		return nil, err
+	}
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
@@ -397,7 +414,7 @@ func newForegroundProcess(plan launch.Plan, stdin io.Reader, stdout, stderr io.W
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	command := foregroundCommand(plan.Executable, plan.Arguments...)
+	command := foregroundCommand(plan.Executable, arguments...)
 	command.Dir = plan.WorkingDirectory
 	command.Env = environmentWithDelta(plan.Environment)
 	command.Stdin = stdin

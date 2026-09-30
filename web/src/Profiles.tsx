@@ -1,9 +1,11 @@
-import { useEffect, useId, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useId, useState, type RefObject } from "react";
 import {
   UsageRefreshError,
   type ConfigurationPackRequest,
   type ConfigurationPackResponse,
   type ConfigurationPackSummary,
+  type ActivitySourceImportResponse,
+  type ActivitySourcesResponse,
   type ProfileAuthenticationRequest,
   type ProfileAuthenticationResponse,
   type ProfileEditRequest,
@@ -13,9 +15,15 @@ import {
 } from "./generated/openapi";
 import { profileCopy as c, profileErrorCopy, stateCopy } from "./copy";
 import { ConfigurationPacks } from "./ConfigurationPacks";
+import { HistorySourceReview } from "./HistorySourceReview";
 
 type Props = {
   profiles: ProfileSummary[];
+  refreshProfiles: () => Promise<ProfileSummary[]>;
+  completeSetup: () => Promise<void>;
+  reviewSources: () => Promise<ActivitySourcesResponse>;
+  importSource: (sourceId: string) => Promise<ActivitySourceImportResponse>;
+  expired: (error: unknown) => void;
   packs: ConfigurationPackSummary[];
   quarantined: ProfileLifecycleRecord[];
   busy: boolean;
@@ -89,6 +97,11 @@ function profileFailure(error: unknown) {
 
 export function Profiles({
   profiles,
+  refreshProfiles,
+  completeSetup,
+  reviewSources,
+  importSource,
+  expired,
   packs,
   quarantined,
   busy,
@@ -111,6 +124,25 @@ export function Profiles({
   const [form, setForm] = useState<Form>(emptyForm);
   const [result, setResult] = useState<ProfileAuthenticationResponse | null>(null);
   const [localMessage, setLocalMessage] = useState("");
+  const [historyOfferAlias, setHistoryOfferAlias] = useState("");
+  const pollProfiles = useEffectEvent(async () => {
+    const inventory = await refreshProfiles();
+    if (!result?.terminal_command) return;
+    const item = inventory.find((profile) => profile.alias === result.profile.alias);
+    if (item?.setup_operation === "ready" && item.status === "ready") {
+      setResult(null);
+      setLocalMessage(c.readyMessage);
+      setHistoryOfferAlias(item.alias);
+      close();
+      await completeSetup();
+    } else if (item?.setup_operation === "failed") {
+      setLocalMessage(profileErrorCopy[item.setup_error_code ?? ""] ?? c.failed);
+    } else if (item?.setup_operation === "running") {
+      setLocalMessage(c.terminalRunning);
+    }
+  });
+  const setupProfile = profiles.find((item) => item.alias === result?.profile.alias);
+  const historyOfferProfile = profiles.find((item) => item.alias === historyOfferAlias);
   const current =
     profiles.find((item) => item.alias === selectedAlias) ??
     profiles.find((item) => item.selected) ??
@@ -120,6 +152,15 @@ export function Profiles({
   useEffect(() => {
     heading.current?.focus();
   }, [heading, view]);
+
+  useEffect(() => {
+    if (!result?.terminal_command) return;
+    const timer = window.setInterval(
+      () => void pollProfiles().catch(() => setLocalMessage(c.failed)),
+      1500,
+    );
+    return () => window.clearInterval(timer);
+  }, [result?.terminal_command]);
 
   function open(next: typeof view, item?: ProfileSummary) {
     setSelectedAlias(item?.alias ?? "");
@@ -209,7 +250,10 @@ export function Profiles({
     }
   }
 
-  async function runAuthentication(action: "add" | "prepare" | "reauthenticate") {
+  async function runAuthentication(
+    action: "add" | "prepare" | "reauthenticate",
+    closeAfterPrepare = false,
+  ) {
     try {
       const response = await authenticate({
         action,
@@ -229,7 +273,12 @@ export function Profiles({
             ? c.pendingMessage
             : c.terminalRequired,
       );
-      if (response.outcome === "pending") close();
+      if (closeAfterPrepare || response.outcome === "ready" || response.outcome === "pending")
+        close();
+      if (response.outcome === "ready" && action !== "reauthenticate") {
+        setHistoryOfferAlias(response.profile.alias);
+        await completeSetup();
+      }
     } catch (error) {
       setLocalMessage(profileFailure(error));
     }
@@ -502,7 +551,7 @@ export function Profiles({
                   <button
                     className={buttonClass}
                     disabled={busy || !form.alias || !form.displayName}
-                    onClick={() => void runAuthentication("prepare")}
+                    onClick={() => void runAuthentication("prepare", true)}
                   >
                     {c.saveClose}
                   </button>
@@ -513,15 +562,21 @@ export function Profiles({
               </div>
               {result?.terminal_command && (
                 <section className="mt-5 max-w-[75ch] border-y border-warning py-4 text-warning">
+                  <p role="status" aria-live="polite">
+                    {setupProfile?.setup_operation === "running"
+                      ? c.terminalRunning
+                      : c.terminalWaiting}
+                  </p>
                   <code className="wrap-anywhere text-ink">{result.terminal_command}</code>
                   <button
                     className={`${buttonClass} mt-4 block`}
-                    disabled={busy}
                     onClick={() =>
-                      void runAuthentication(reauthentication ? "reauthenticate" : "add")
+                      void navigator.clipboard
+                        .writeText(result.terminal_command)
+                        .catch(() => setLocalMessage(c.copyFailed))
                     }
                   >
-                    {c.checkTerminal}
+                    {c.copyCommand}
                   </button>
                 </section>
               )}
@@ -565,6 +620,33 @@ export function Profiles({
       <p role="status" className="mb-4 min-h-[1.5em] max-w-[75ch] text-muted">
         {localMessage || message}
       </p>
+      {historyOfferProfile && (
+        <section className="mb-7 border-y border-rule py-5" aria-label={c.historyOfferTitle}>
+          <h2 className="mb-3 text-[1.4rem] font-bold">{c.historyOfferTitle}</h2>
+          <p className="mb-4 max-w-[75ch] text-muted">{c.historyOfferDetail}</p>
+          <HistorySourceReview
+            automaticReview
+            reviewSources={reviewSources}
+            importSource={importSource}
+            expired={expired}
+            onImported={() =>
+              void completeSetup().catch(() => setLocalMessage(c.historyRefreshFailed))
+            }
+          />
+          <div className="flex flex-wrap gap-3">
+            <button
+              className={primaryClass}
+              disabled={busy || !launchable(historyOfferProfile)}
+              onClick={() => launch(historyOfferProfile)}
+            >
+              {c.continueLaunch}
+            </button>
+            <button className={buttonClass} onClick={() => setHistoryOfferAlias("")}>
+              {c.notNow}
+            </button>
+          </div>
+        </section>
+      )}
       <button className={primaryClass} disabled={busy} onClick={() => open("setup")}>
         {c.add}
       </button>

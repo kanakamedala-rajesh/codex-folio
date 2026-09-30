@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,7 +26,7 @@ func (server *Server) alertsHandler(response http.ResponseWriter, request *http.
 			return
 		}
 		records, err := server.alerts.Evaluate(request.Context(), "")
-		server.writeAlerts(response, records, err)
+		server.writeAlerts(request.Context(), response, records, err)
 	case http.MethodPost:
 		contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 		if err != nil || contentType != "application/json" || request.ContentLength > maxSelectionBodySize {
@@ -74,23 +75,23 @@ func (server *Server) alertsHandler(response http.ResponseWriter, request *http.
 			server.writeAPIError(response, http.StatusBadRequest, apperrors.UsageRequestInvalid)
 			return
 		}
-		server.writeAlerts(response, records, err)
+		server.writeAlerts(request.Context(), response, records, err)
 	default:
 		server.writeMethodError(response, http.MethodGet+", "+http.MethodPost)
 	}
 }
 
-func (server *Server) writeAlerts(response http.ResponseWriter, records []alertfeature.Record, err error) {
+func (server *Server) writeAlerts(ctx context.Context, response http.ResponseWriter, records []alertfeature.Record, err error) {
 	if err != nil {
 		server.writeAPIError(response, http.StatusBadRequest, diagnostics.CodeFor(err, apperrors.UsageRequestInvalid))
 		return
 	}
-	thresholds, err := server.alerts.Thresholds(nil)
+	thresholds, err := server.alerts.Thresholds(ctx)
 	if err != nil {
 		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
 		return
 	}
-	health, err := server.alerts.DeliveryHealth(nil)
+	health, err := server.alerts.DeliveryHealth(ctx)
 	if err != nil {
 		server.writeAPIError(response, http.StatusInternalServerError, diagnostics.CodeFor(err, apperrors.StoreReadFailed))
 		return

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,6 +93,9 @@ func (authenticator dashboardProfileAuthenticator) Authenticate(_ context.Contex
 	if string(mode) == "profile-auth-fail" {
 		return profile.ErrAuthenticationFailed
 	}
+	if string(mode) == "profile-auth-cancel" {
+		return profile.ErrAuthCancelled
+	}
 	_, _ = io.WriteString(request.Stdout, "browser-auth-secret-must-not-reach-dashboard")
 	if string(mode) == "profile-needs-auth" {
 		return os.WriteFile(authenticator.control, []byte("supported"), 0600)
@@ -132,11 +137,16 @@ func TestOverviewBrowser(t *testing.T) {
 	if suite == "" {
 		suite = "deep"
 	}
-	if suite != "deep" && suite != "smoke" {
+	if suite != "deep" && suite != "smoke" && suite != "startup-partial" && suite != "http-dashboard" {
 		t.Fatalf("unknown browser suite %q", suite)
 	}
 	if suite == "deep" {
 		runServiceHealthBrowser(t)
+		runOverviewBrowser(t, "startup-partial")
+	}
+	if suite == "smoke" {
+		runTrustedBrowserRestart(t)
+		runOverviewBrowser(t, "http-dashboard")
 	}
 	runOverviewBrowser(t, suite)
 }
@@ -152,7 +162,7 @@ func runServiceHealthBrowser(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			lifecycle := &vaultCommandLifecycle{health: scenario.health}
-			server, err := httpapi.NewServer(httpapi.Options{CommandToken: "health-browser-command", ServiceLifecycle: lifecycle, StartLocked: true})
+			server, err := httpapi.NewServer(httpapi.Options{BrowserOnly: true, ServiceLifecycle: lifecycle, StartLocked: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,10 +244,10 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 	t.Setenv("CODEX_FOLIO_TEST_CONTROL", control)
 	t.Setenv("CODEX_FOLIO_TEST_LAUNCH_LOG", logPath)
 	executable := filepath.Join(directory, "codex")
-	content := "#!/bin/sh\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile :; do mode=$(cat \"$CODEX_FOLIO_TEST_CONTROL\"); [ \"$mode\" = \"launch-exit-23\" ] && exit 23; [ \"$mode\" = \"handoff-exit-0\" ] && exit 0; sleep 0.01; done\n"
+	content := "#!/bin/sh\nif [ \"$1\" = --help ]; then printf '      --no-daemon  Run without shared server\\n'; exit 0; fi\n{ pwd; printf '%s\\n' \"$@\"; } > \"$CODEX_FOLIO_TEST_LAUNCH_LOG\"\nwhile :; do mode=$(cat \"$CODEX_FOLIO_TEST_CONTROL\"); [ \"$mode\" = \"launch-exit-23\" ] && exit 23; [ \"$mode\" = \"handoff-exit-0\" ] && exit 0; sleep 0.01; done\n"
 	if runtime.GOOS == "windows" {
 		executable += ".cmd"
-		content = "@echo off\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif \"%launch_mode%\"==\"launch-exit-23\" exit /b 23\r\nif \"%launch_mode%\"==\"handoff-exit-0\" exit /b 0\r\n>nul ping 127.0.0.1 -n 2\r\ngoto wait\r\n"
+		content = "@echo off\r\nif \"%~1\"==\"--help\" (echo       --no-daemon  Run without shared server& exit /b 0)\r\n> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %CD%\r\n:args\r\nif \"%~1\"==\"\" goto wait\r\n>> \"%CODEX_FOLIO_TEST_LAUNCH_LOG%\" echo %~1\r\nshift\r\ngoto args\r\n:wait\r\nset \"launch_mode=\"\r\nset /p launch_mode=<\"%CODEX_FOLIO_TEST_CONTROL%\"\r\nif \"%launch_mode%\"==\"launch-exit-23\" exit /b 23\r\nif \"%launch_mode%\"==\"handoff-exit-0\" exit /b 0\r\n>nul ping 127.0.0.1 -n 2\r\ngoto wait\r\n"
 	}
 	if err := os.WriteFile(executable, []byte(content), 0700); err != nil {
 		t.Fatal(err)
@@ -248,6 +258,32 @@ func writeDashboardFakeCodex(t *testing.T, control string) (string, string) {
 func runOverviewBrowser(t *testing.T, suite string) []byte {
 	t.Helper()
 	paths := launchTestPaths(t)
+	if suite == "deep" {
+		userHome := t.TempDir()
+		configuredHome := filepath.Join(userHome, "configured-codex")
+		t.Setenv("HOME", userHome)
+		t.Setenv("USERPROFILE", userHome)
+		t.Setenv("CODEX_HOME", configuredHome)
+		for _, fixture := range []struct{ path, schema string }{
+			{filepath.Join(userHome, ".codex"), `CREATE TABLE unrelated (id TEXT)`},
+			{configuredHome, `CREATE TABLE threads (id TEXT PRIMARY KEY, created_at_ms INTEGER)`},
+		} {
+			if err := os.MkdirAll(fixture.path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			database, err := sql.Open("sqlite", filepath.Join(fixture.path, "state_5.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(fixture.schema); err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	secureVault := seedReadyLaunchProfile(t, paths)
 	personalHome := seedReferencedReadyProfile(t, paths, secureVault)
 	referencedMarker := filepath.Join(personalHome, "browser-removal-marker")
@@ -259,6 +295,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	fakeCodex, launchLog := writeDashboardFakeCodex(t, control)
+	handoffLaunchLog := filepath.Join(t.TempDir(), "handoff-launch.log")
 	clock := dashboardClock{control: control}
 	state, err := store.OpenWithOptions(store.Options{Path: paths.DatabaseFile, Vault: secureVault, Clock: clock})
 	if err != nil {
@@ -384,6 +421,12 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	activities := seedDashboardActivity(t, state, projects, project, repository)
+	if suite == "startup-partial" {
+		seedDashboardRetainedHistory(t, state)
+	}
+	if suite == "deep" {
+		seedUnimportedDashboardSessions(t, state, repository)
+	}
 	plan, err := state.PrepareLaunch(context.Background(), launch.PrepareRequest{Alias: "Work", Executable: filepath.Join(paths.Root, "codex"), WorkingDirectory: repository, ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -506,9 +549,30 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state, enabled: false}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	var dashboardCertificate *tls.Certificate
+	var trustedSPKI, trustedFingerprint, trustedRoot string
+	if suite != "http-dashboard" {
+		identity, err := state.LoadOrCreateDashboardTLSIdentity(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dashboardCertificate = &identity.Certificate
+		trustedSPKI = identity.LeafSPKISHA256Base64
+		trustedFingerprint = identity.LeafFingerprintSHA256
+		trustedRoot = filepath.Join(t.TempDir(), "browser-root.pem")
+		if err := os.WriteFile(trustedRoot, identity.RootCertificatePEM, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	options := httpapi.Options{TLSCertificate: dashboardCertificate, BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
-	}})
+	}}
+	if suite == "http-dashboard" {
+		options.BrowserOnly = true
+		options.BrowserTrust = nil
+		options.CommandToken = ""
+	}
+	server, err := httpapi.NewServer(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +587,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "browser-fixture-command"}); err != nil {
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "browser-fixture-command", CertificateSHA256: trustedFingerprint}); err != nil {
 		t.Fatal(err)
 	}
 	stopLaunches := make(chan struct{})
@@ -647,7 +711,17 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				var handoffStderr bytes.Buffer
 				code := runHandoffWithDependencies(
 					[]string{"Personal", "--checkpoint", parts[1], "--revision", parts[2], "--codex-bin", fakeCodex}, strings.NewReader(""), io.Discard, &handoffStderr,
-					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, newForegroundProcess, nil, nil,
+					func(*string) (platform.Paths, error) { return paths, nil }, launchTestResolver{candidate: launch.Candidate{Path: fakeCodex, Version: "0.153.4"}}, nil, func(plan launch.Plan, stdin io.Reader, stdout, stderr io.Writer) (foregroundProcess, error) {
+						// cmd.exe cannot losslessly carry the JSON context through the batch fixture's
+						// %~1 expansion. Capture the prepared argument here, while the native shim
+						// continues to exercise the foreground start, wait, and exit lifecycle.
+						content := strings.Join(append([]string{plan.WorkingDirectory}, plan.Arguments...), "\n") + "\n"
+						if err := os.WriteFile(handoffLaunchLog, []byte(content), 0600); err != nil {
+							return nil, err
+						}
+						plan.Arguments = nil
+						return newForegroundProcess(plan, stdin, stdout, stderr)
+					}, nil, nil,
 					func() profile.Authenticator { return dashboardProfileAuthenticator{control: control} }, platform.OwnerOptions{},
 				)
 				if code != 0 {
@@ -742,7 +816,19 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 				if string(mode) == "analytics-activity-seed" && seeded && !activitySeeded {
 					_, seedErr := state.SetAnalyticsRetention(context.Background(), "90")
 					if seedErr == nil {
-						_, seedErr = activities.Refresh(context.Background(), "Personal")
+						var sources []activity.SourceReview
+						sources, seedErr = activities.ReviewSources(context.Background())
+						if seedErr == nil {
+							for _, source := range sources {
+								if source.Label != "Work" && source.Label != "Personal" {
+									continue
+								}
+								_, seedErr = activities.ImportSource(context.Background(), source.SourceID, true)
+								if seedErr != nil {
+									break
+								}
+							}
+						}
 					}
 					if seedErr != nil {
 						analyticsSeedErrors <- seedErr
@@ -774,10 +860,23 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			}
 		}()
 	}
+	if suite == "http-dashboard" {
+		second, err := server.NewDashboardURL()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "http-dashboard-browser-test.mjs"), server.BootstrapURL(), second, t.TempDir())
+		runner.Stdout, runner.Stderr = os.Stdout, os.Stderr
+		if err := runner.Run(); err != nil {
+			t.Fatal("HTTP dashboard browser journey failed:", err)
+		}
+		return nil
+	}
 	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
+	runner.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI, "NODE_EXTRA_CA_CERTS="+trustedRoot)
 	if suite == "benchmark" {
-		runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
+		runner.Env = append(runner.Env, "CODEX_FOLIO_BROWSER_OUTPUT="+output)
 	}
 	runner.Stdout = os.Stdout
 	runner.Stderr = os.Stderr
@@ -823,7 +922,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		if len(lines) != 3 || filepath.Clean(lines[0]) != filepath.Clean(repository) || !slices.Equal(lines[1:], []string{"--model", "gpt-5"}) {
 			t.Fatalf("native fake Codex launch = %q, want working directory %q and transported arguments", content, repository)
 		}
-		handoffContent, err := os.ReadFile(launchLog)
+		handoffContent, err := os.ReadFile(handoffLaunchLog)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -839,6 +938,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		}
 		return result
 	}
+	if suite == "startup-partial" {
+		return nil
+	}
 	aliases := []string{"Work", "Personal"}
 	if suite == "deep" {
 		aliases = []string{"Work"}
@@ -848,17 +950,22 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			t.Fatal(err)
 		}
 	}
-	link, err := httpapi.NewCommandClient(server.Origin(), "browser-fixture-command", nil).Dashboard(context.Background())
+	commandClient, err := httpapi.NewPinnedCommandClient(server.Origin(), "browser-fixture-command", trustedFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := commandClient.Dashboard(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reentry := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), link, control, "reentry", referencedHome)
+	reentry.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI, "NODE_EXTRA_CA_CERTS="+trustedRoot)
 	reentry.Stdout = os.Stdout
 	reentry.Stderr = os.Stderr
 	if err := reentry.Run(); err != nil {
 		t.Fatal("reentry journey failed:", err)
 	}
-	selected, err := httpapi.NewCommandClient(server.Origin(), "browser-fixture-command", nil).ListProfiles(context.Background())
+	selected, err := commandClient.ListProfiles(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -890,6 +997,37 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal("browser selection changed the running Work launch")
 	}
 	return nil
+}
+
+func seedUnimportedDashboardSessions(t *testing.T, state *store.Store, repository string) {
+	t.Helper()
+	at := time.Now().UTC().Truncate(24 * time.Hour).Add(-23 * time.Hour)
+	for _, fixture := range []struct {
+		alias string
+		ids   []string
+	}{
+		{"Work", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc52"}},
+		{"Personal", []string{"018f4f70-6f77-7c3f-9b77-93aa087dfc51", "018f4f70-6f77-7c3f-9b77-93aa087dfc53"}},
+	} {
+		target, err := state.ResolveActivityProfile(context.Background(), fixture.alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		database, err := sql.Open("sqlite", filepath.Join(target.IdentityHome, "state_5.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range fixture.ids {
+			_, err = database.Exec(`INSERT INTO threads (id, created_at_ms, updated_at_ms, source, model, cwd, tokens_used, title, preview, first_user_message) VALUES (?, ?, ?, 'cli', 'gpt-5', ?, 7, 'private title', 'private preview', 'private prompt')`, id, at.UnixMilli(), at.Add(time.Minute).UnixMilli(), repository)
+			if err != nil {
+				_ = database.Close()
+				t.Fatal(err)
+			}
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func dashboardPaginationRecords(state *store.Store, start time.Time, seed bool) error {
@@ -1010,4 +1148,47 @@ func (collector dashboardCollector) Collect(ctx context.Context, request usage.C
 		snapshot.Observations = append(snapshot.Observations, other)
 	}
 	return snapshot, err
+}
+
+// Representative retained history for concurrent HTTPS dashboard reads. Every
+// identity and observation is synthetic; no installed Codex homes are opened.
+func seedDashboardRetainedHistory(t *testing.T, state *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, alias := range []string{"Work", "Personal"} {
+		target, err := state.ResolveUsageProfile(ctx, alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target.LoginIdentity = alias + "@example.test"
+		target.Workspace = "retained-fixture"
+		snapshot, err := state.LatestUsageSnapshot(ctx, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index := 1; index <= 14; index++ {
+			historical := snapshot
+			historical.CapturedAt = snapshot.CapturedAt.Add(-time.Duration(index) * time.Minute)
+			historical.Observations = append([]usage.Observation(nil), snapshot.Observations...)
+			for i := range historical.Observations {
+				historical.Observations[i].CapturedAt = historical.CapturedAt
+			}
+			if _, err := state.SaveUsageSnapshot(ctx, target, historical); err != nil {
+				t.Fatal(err)
+			}
+		}
+		records := make([]activity.ObservedSessionRecord, 403)
+		for index := range records {
+			at := time.Now().UTC().Add(-time.Duration(index+1) * time.Minute)
+			records[index] = activity.ObservedSessionRecord{
+				SourceSessionID: fmt.Sprintf("retained-%s-%04d", alias, index),
+				ProfileID:       target.ID, ProfileAlias: target.Alias,
+				Source: activity.SourceLocalMetadata, SourceVersion: "retained-fixture-v1",
+				StartedAt: at, LastObservedAt: at,
+			}
+		}
+		if err := state.SaveObservedSessions(ctx, records); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

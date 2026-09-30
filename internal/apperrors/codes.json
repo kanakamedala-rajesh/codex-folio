@@ -80,6 +80,12 @@
       "introduced_in": "0.0.1-alpha"
     },
     {
+      "code": "CF_LAUNCH_DAEMON_UNSUPPORTED",
+      "owner": "launch",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
       "code": "CF_LAUNCH_PROCESS_STATUS_INVALID",
       "owner": "launch",
       "lifecycle": "active",
@@ -567,6 +573,12 @@
     },
     {
       "code": "CF_VAULT_UNAVAILABLE",
+      "owner": "vault",
+      "lifecycle": "active",
+      "introduced_in": "0.0.1-alpha"
+    },
+    {
+      "code": "CF_VAULT_MIGRATION_REQUIRED",
       "owner": "vault",
       "lifecycle": "active",
       "introduced_in": "0.0.1-alpha"

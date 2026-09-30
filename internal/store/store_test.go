@@ -31,6 +31,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 	wantTables := []string{
 		"alert_thresholds",
 		"alerts",
+		"browser_trust",
 		"checkpoints",
 		"cli_aliases",
 		"collection_schedule_state",
@@ -39,6 +40,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"configuration_pack_versions",
 		"configuration_packs",
 		"correlation_evidence",
+		"dashboard_tls_identity",
 		"diagnostic_aggregates",
 		"experimental_transactions",
 		"identity_homes",
@@ -46,6 +48,7 @@ func TestOpenInitializesAllowlistedFoundationSchema(t *testing.T) {
 		"managed_launches",
 		"metric_availability",
 		"metric_provenance",
+		"observed_session_assignments",
 		"observed_sessions",
 		"pending_profiles",
 		"profile_quarantine",
