@@ -9,19 +9,31 @@ import { join } from "node:path";
 import { cpus, release, totalmem, tmpdir } from "node:os";
 import { chromium } from "playwright";
 import axe from "axe-core";
+import { testPartialStartup } from "./startup-browser-test.mjs";
 import { testSessions } from "./sessions-browser-test.mjs";
 import { testAnalytics } from "./analytics-browser-test.mjs";
 import { testSettingsNarrowReflow, testNarrowFocusVisibility } from "./narrow-browser-checks.mjs";
 
 const [link, control, phase = "deep", referencedHome] = process.argv.slice(2);
 assert.ok(
-  ["deep", "smoke", "benchmark", "reentry", "health-locked", "health-recovery"].includes(phase),
+  [
+    "deep",
+    "smoke",
+    "benchmark",
+    "reentry",
+    "health-locked",
+    "health-recovery",
+    "startup-partial",
+  ].includes(phase),
   "unknown browser phase",
 );
 const output =
   process.env.CODEX_FOLIO_BROWSER_OUTPUT ?? join(tmpdir(), "codex-folio-overview-browser");
 mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({
+  ...(phase === "startup-partial"
+    ? { args: [`--ignore-certificate-errors-spki-list=${process.env.CODEX_FOLIO_TEST_SPKI}`] }
+    : {}),
   executablePath: process.env.CODEX_FOLIO_CHROMIUM || undefined,
   headless: true,
 });
@@ -226,7 +238,18 @@ async function assertFocusedHeading(name) {
   );
 }
 try {
-  if (phase === "health-locked" || phase === "health-recovery") {
+  if (phase === "startup-partial") {
+    await testPartialStartup({
+      page,
+      link,
+      capture,
+      check,
+      scanAccessibility: async (name) => {
+        await page.evaluate(axe.source);
+        await scanAccessibility(name);
+      },
+    });
+  } else if (phase === "health-locked" || phase === "health-recovery") {
     await page.goto(link);
     const recovery = phase === "health-recovery";
     await assertFocusedHeading(

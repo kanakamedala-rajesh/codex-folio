@@ -750,7 +750,7 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		if !server.authorizeCommand(response, request) {
 			return
 		}
-		server.analytics(response, request)
+		dashboardReadHandler(server.analytics, dashboardReadTimeout).ServeHTTP(response, request)
 	case CommandProjectsPath:
 		if !server.authorizeCommand(response, request) {
 			return
@@ -839,7 +839,7 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 		if !server.authorize(response, request) {
 			return
 		}
-		server.analytics(response, request)
+		dashboardReadHandler(server.analytics, dashboardReadTimeout).ServeHTTP(response, request)
 	case AlertsPath:
 		if !server.authorize(response, request) {
 			return
@@ -848,7 +848,11 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 			server.writeAPIError(response, http.StatusForbidden, apperrors.HTTPAPICSRFInvalid)
 			return
 		}
-		server.alertsHandler(response, request)
+		if request.Method == http.MethodGet {
+			dashboardReadHandler(server.alertsHandler, dashboardReadTimeout).ServeHTTP(response, request)
+		} else {
+			server.alertsHandler(response, request)
+		}
 	case CollectionSettingsPath:
 		if !server.authorize(response, request) {
 			return

@@ -508,6 +508,8 @@ export function App() {
   const serviceState = serviceHealth?.service_state;
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
+  const [analyticsState, setAnalyticsState] = useState("loading");
+  const [alertsState, setAlertsState] = useState("loading");
   const [selection, setSelection] = useState<SelectionResponse | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [packs, setPacks] = useState<ConfigurationPackSummary[]>([]);
@@ -640,31 +642,44 @@ export function App() {
     });
   const editAnalyticsProject = (request: { project_id: string; alias: string }) =>
     api.editProject(request, { headers: { "X-CodexFolio-CSRF": csrf.current } });
-  async function load(includeProfiles = false) {
-    const [next, selected, alertData, inventory] = await Promise.all([
-      api.getAnalytics("combined_identity"),
-      api.getSelection().catch((e) => {
-        if (e instanceof UsageRefreshError && e.status === 409) return null;
-        throw e;
+  async function loadAnalytics() {
+    setAnalyticsState("loading");
+    try {
+      const next = await api.getAnalytics("combined_identity");
+      setData(next);
+      setNow(Date.now());
+      setAnalyticsState("ready");
+      return next;
+    } catch (error) {
+      setAnalyticsState("unavailable");
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) failure(error);
+      return null;
+    }
+  }
+  async function loadAlerts() {
+    setAlertsState("loading");
+    try {
+      setAlerts(await api.getAlerts());
+      setAlertsState("ready");
+    } catch (error) {
+      setAlertsState("unavailable");
+      if (error instanceof UsageRefreshError && [401, 403].includes(error.status)) failure(error);
+    }
+  }
+  async function loadInventory() {
+    const inventory = await Promise.all([
+      api.getProfiles().then((result) => {
+        setProfiles(result.profiles);
+        return result;
       }),
-      api.getAlerts(),
-      includeProfiles
-        ? Promise.all([
-            api.getProfiles(),
-            api.listProfileQuarantine(),
-            api.getConfigurationPacks(),
-            api.getCollectionSettings(),
-            api.getDiagnostics(),
-            api.getUpdates(),
-            api.getTelemetry().catch(() => null),
-            api.previewConfigurationExport(),
-          ])
-        : null,
+      api.listProfileQuarantine(),
+      api.getConfigurationPacks(),
+      api.getCollectionSettings(),
+      api.getDiagnostics(),
+      api.getUpdates(),
+      api.getTelemetry().catch(() => null),
+      api.previewConfigurationExport(),
     ]);
-    setNow(Date.now());
-    setData(next);
-    setAlerts(alertData);
-    setSelection(selected);
     if (inventory) {
       setProfiles(inventory[0].profiles);
       setQuarantined(inventory[1].quarantined);
@@ -685,6 +700,20 @@ export function App() {
       setActiveMinutes(inventory[3].active_interval_seconds / 60);
       setIdleMinutes(inventory[3].idle_interval_seconds / 60);
     }
+  }
+  async function load(includeProfiles = false) {
+    void loadAlerts();
+    const [next] = await Promise.all([
+      loadAnalytics(),
+      api
+        .getSelection()
+        .catch((error) => {
+          if (error instanceof UsageRefreshError && error.status === 409) return null;
+          throw error;
+        })
+        .then(setSelection),
+      includeProfiles ? loadInventory() : null,
+    ]);
     return next;
   }
   async function manageAlerts(request: AlertActionRequest) {
@@ -813,14 +842,14 @@ export function App() {
         if (r.reason instanceof UsageRefreshError && [401, 403].includes(r.reason.status))
           throw r.reason;
       const next = await load(true);
-      const hasConflict = next.activity.some(
+      const hasConflict = next?.activity.some(
         (item) =>
           item.record_type === "managed_launch" &&
           ["running", "pending"].includes(item.lifecycle) &&
           item.profile_id !== selection?.profile_id,
       );
       if (!hasConflict) setWarning("");
-      setMessage(rejected.length ? c.refreshFailed : c.refreshDone);
+      setMessage(rejected.length || !next ? c.refreshFailed : c.refreshDone);
     } catch (e) {
       failure(e);
     } finally {
@@ -848,7 +877,7 @@ export function App() {
           const trust = await api.getBrowserTrust();
           setTrusted(trust.trusted);
           const next = await load(true);
-          void refresh("dashboard_open", next);
+          if (next) void refresh("dashboard_open", next);
         } else {
           setRoute("Settings");
           requestAnimationFrame(() => heading.current?.focus());
@@ -873,7 +902,7 @@ export function App() {
         setTrusted(trust.trusted);
         const next = await load(true);
         setMessage(serviceHealthCopy.ready);
-        void refresh("dashboard_open", next);
+        if (next) void refresh("dashboard_open", next);
       }
     } catch (error) {
       if (!cancelled()) failure(error);
@@ -1349,7 +1378,7 @@ export function App() {
         className="min-h-11 max-w-full rounded border border-rule bg-panel px-[0.8rem] py-[0.55rem] text-ink w-full min-w-0 cursor-pointer"
       >
         {!selection && <option value="">{c.none}</option>}
-        {data?.candidates.map((p) => (
+        {(data?.candidates ?? profiles).map((p) => (
           <option key={p.profile_id} value={p.alias}>
             {p.alias}
           </option>
@@ -1448,6 +1477,36 @@ export function App() {
                 {trustMessage}
               </p>
             ) : null}
+            {status === "authorized" && serviceState === "ready" && (
+              <div className="mb-4 grid gap-3">
+                {(
+                  [
+                    ["analytics", analyticsState, loadAnalytics],
+                    ["alerts", alertsState, loadAlerts],
+                  ] as const
+                ).map(
+                  ([resource, state, retry]) =>
+                    state !== "ready" && (
+                      <section key={resource} className="rounded border border-rule bg-panel p-4">
+                        <p role="status" className="mb-2 max-w-[75ch]">
+                          {state === "loading"
+                            ? c[`${resource}Loading`]
+                            : c[`${resource}Unavailable`]}
+                        </p>
+                        {state === "unavailable" && (
+                          <button
+                            type="button"
+                            className="min-h-11 rounded border border-rule px-3 py-2"
+                            onClick={() => void retry()}
+                          >
+                            {c[`${resource}Retry`]}
+                          </button>
+                        )}
+                      </section>
+                    ),
+                )}
+              </div>
+            )}
             {status !== "authorized" ? (
               <>
                 <header className="mb-7 border-b border-rule pb-5 [&_p]:mb-0">
@@ -1967,11 +2026,11 @@ export function App() {
                     </section>
                     <CheckpointManagement manage={manageCheckpoints} />
                   </section>
-                ) : route !== "Overview" ? (
+                ) : route === "Analytics" || route === "Alerts" ? null : route !== "Overview" ? (
                   <p className="mb-4 max-w-[75ch]">{c.later}</p>
                 ) : (
                   <>
-                    {!selection && !combined ? (
+                    {!data ? null : !selection && !combined ? (
                       <p className="mb-4 max-w-[75ch]">{c.emptyDetail}</p>
                     ) : (
                       <>

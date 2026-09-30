@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -136,11 +137,12 @@ func TestOverviewBrowser(t *testing.T) {
 	if suite == "" {
 		suite = "deep"
 	}
-	if suite != "deep" && suite != "smoke" {
+	if suite != "deep" && suite != "smoke" && suite != "startup-partial" {
 		t.Fatalf("unknown browser suite %q", suite)
 	}
 	if suite == "deep" {
 		runServiceHealthBrowser(t)
+		runOverviewBrowser(t, "startup-partial")
 	}
 	if suite == "smoke" {
 		runTrustedBrowserRestart(t)
@@ -418,6 +420,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	activities := seedDashboardActivity(t, state, projects, project, repository)
+	if suite == "startup-partial" {
+		seedDashboardRetainedHistory(t, state)
+	}
 	if suite == "deep" {
 		seedUnimportedDashboardSessions(t, state, repository)
 	}
@@ -543,7 +548,18 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := httpapi.NewServer(httpapi.Options{BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
+	var dashboardCertificate *tls.Certificate
+	var trustedSPKI, trustedFingerprint string
+	if suite == "startup-partial" {
+		identity, err := state.LoadOrCreateDashboardTLSIdentity(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dashboardCertificate = &identity.Certificate
+		trustedSPKI = identity.LeafSPKISHA256Base64
+		trustedFingerprint = identity.LeafFingerprintSHA256
+	}
+	server, err := httpapi.NewServer(httpapi.Options{TLSCertificate: dashboardCertificate, BrowserTrust: state, Clock: clock, Usage: service, Selection: selector, Profiles: registry, ProfileLifecycle: profileLifecycle, ProfileAuthentication: profileAuthentication, ConfigurationPacks: configurationPacks, ConfigurationBundles: configurationBundles, Launches: launches, Projects: projects, Activities: activities, History: usage.NewHistoryService(state), Exports: activity.NewExportService(state), Checkpoints: checkpoints, CheckpointHistory: dashboardCheckpointHistory{calls: &historyCalls}, CollectionSettings: &collectionSettingsCommandService{store: state}, Alerts: alertService, DiagnosticService: diagnosticService, Updates: updateService, Telemetry: telemetryService, CommandToken: "browser-fixture-command", ServiceEnrollment: func() (string, string, bool) {
 		return platform.EnrollmentNotInstalled, "systemd-user", true
 	}})
 	if err != nil {
@@ -560,7 +576,7 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "browser-fixture-command"}); err != nil {
+	if err := owner.PublishClient(platform.ServiceClient{Origin: server.Origin(), Token: "browser-fixture-command", CertificateSHA256: trustedFingerprint}); err != nil {
 		t.Fatal(err)
 	}
 	stopLaunches := make(chan struct{})
@@ -835,6 +851,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 	}
 	runner := exec.Command("node", filepath.Join("..", "..", "web", "scripts", "browser-test.mjs"), server.BootstrapURL(), control, suite, referencedHome)
 	output := t.TempDir()
+	if suite == "startup-partial" {
+		runner.Env = append(os.Environ(), "CODEX_FOLIO_TEST_SPKI="+trustedSPKI)
+	}
 	if suite == "benchmark" {
 		runner.Env = append(os.Environ(), "CODEX_FOLIO_BROWSER_OUTPUT="+output)
 	}
@@ -897,6 +916,9 @@ func runOverviewBrowser(t *testing.T, suite string) []byte {
 			t.Fatal(err)
 		}
 		return result
+	}
+	if suite == "startup-partial" {
+		return nil
 	}
 	aliases := []string{"Work", "Personal"}
 	if suite == "deep" {
@@ -1100,4 +1122,47 @@ func (collector dashboardCollector) Collect(ctx context.Context, request usage.C
 		snapshot.Observations = append(snapshot.Observations, other)
 	}
 	return snapshot, err
+}
+
+// Representative retained history for concurrent HTTPS dashboard reads. Every
+// identity and observation is synthetic; no installed Codex homes are opened.
+func seedDashboardRetainedHistory(t *testing.T, state *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, alias := range []string{"Work", "Personal"} {
+		target, err := state.ResolveUsageProfile(ctx, alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target.LoginIdentity = alias + "@example.test"
+		target.Workspace = "retained-fixture"
+		snapshot, err := state.LatestUsageSnapshot(ctx, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index := 1; index <= 14; index++ {
+			historical := snapshot
+			historical.CapturedAt = snapshot.CapturedAt.Add(-time.Duration(index) * time.Minute)
+			historical.Observations = append([]usage.Observation(nil), snapshot.Observations...)
+			for i := range historical.Observations {
+				historical.Observations[i].CapturedAt = historical.CapturedAt
+			}
+			if _, err := state.SaveUsageSnapshot(ctx, target, historical); err != nil {
+				t.Fatal(err)
+			}
+		}
+		records := make([]activity.ObservedSessionRecord, 403)
+		for index := range records {
+			at := time.Now().UTC().Add(-time.Duration(index+1) * time.Minute)
+			records[index] = activity.ObservedSessionRecord{
+				SourceSessionID: fmt.Sprintf("retained-%s-%04d", alias, index),
+				ProfileID:       target.ID, ProfileAlias: target.Alias,
+				Source: activity.SourceLocalMetadata, SourceVersion: "retained-fixture-v1",
+				StartedAt: at, LastObservedAt: at,
+			}
+		}
+		if err := state.SaveObservedSessions(ctx, records); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

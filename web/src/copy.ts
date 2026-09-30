@@ -38,6 +38,14 @@ export const copy = {
   details: "Open details",
   refreshStart: "Refreshing capacity. Last-known evidence remains visible with its original age.",
   refreshDone: "Capacity refreshed.",
+  analyticsLoading: "Loading analytics. Profiles and service settings remain available.",
+  analyticsUnavailable:
+    "Analytics could not load. Profiles and service settings remain available. Any previous values retain their original capture times; missing data does not mean zero usage.",
+  analyticsRetry: "Retry analytics",
+  alertsLoading: "Loading alerts. Profiles and service settings remain available.",
+  alertsUnavailable:
+    "Alerts could not load. Profiles and service settings remain available. Previous alerts may be out of date; unavailable alerts do not mean there are no active conditions.",
+  alertsRetry: "Retry alerts",
   refreshFailed: "Refresh failed. Last-known values keep their original capture times.",
   selectedDone: "Selected Profile updated for future interactive launches.",
   combinedDetail: "Separate profile windows; quotas are not pooled. Selected Profile is unchanged.",

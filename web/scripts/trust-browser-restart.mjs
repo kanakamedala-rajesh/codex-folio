@@ -67,7 +67,11 @@ try {
         null,
       );
     } finally {
-      await new Promise((resolve) => other.close(resolve));
+      await new Promise((resolve) => {
+        other.close(resolve);
+        // Chromium can leave a speculative connection open to this test server.
+        other.closeAllConnections();
+      });
     }
     console.log("browser PASS: explicit trust persisted in a real browser profile");
   } else {
